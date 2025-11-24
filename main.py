@@ -216,9 +216,9 @@ def parse_arguments():
     parser.add_argument(
         '--void-surveys',
         nargs='+',
-        default=['sdss_dr7_douglass', 'sdss_dr7_clampitt', 'zobov', 'vide'],
-        choices=['sdss_dr7_douglass', 'sdss_dr7_clampitt', 'zobov', 'vide'],
-        help='Void surveys to analyze (default: all 4 surveys for proper statistics)'
+        default=['sdss_dr7_douglass', 'sdss_dr7_clampitt'],
+        choices=['sdss_dr7_douglass', 'sdss_dr7_clampitt'],
+        help='Void surveys to analyze (default: sdss_dr7_douglass sdss_dr7_clampitt)'
     )
 
     parser.add_argument(

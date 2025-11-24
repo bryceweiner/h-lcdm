@@ -840,8 +840,10 @@ class AnalysisPipeline(ABC):
             self._log_file_handle.write(log_line + "\n")
             self._log_file_handle.flush()
         except Exception as e:
-            # Don't fail if logging fails
-            pass
+            # Log to stderr if file logging fails, but don't crash
+            import sys
+            sys.stderr.write(f"Warning: Failed to write to log file {self.log_file}: {e}\n")
+            sys.stderr.write(f"Original message: {log_line}\n")
     
     def close_log_file(self):
         """Close the log file handle."""

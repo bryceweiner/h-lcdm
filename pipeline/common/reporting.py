@@ -201,7 +201,6 @@ The H-ΛCDM model predicts cosmological observables from fundamental information
             void_summary = void_results['analysis_summary']
             summary += f"**Cosmic Void Structures:**\n"
             summary += f"- Voids analyzed: {void_summary.get('total_voids_analyzed', 0)}\n"
-            summary += f"- E8 alignment detection: {void_summary.get('e8_alignment_summary', {}).get('detection_strength', 'N/A')}\n"
             summary += f"- Overall conclusion: {void_summary.get('overall_conclusion', 'N/A')}\n\n"
 
         # Overall assessment
@@ -334,7 +333,7 @@ The Holographic Lambda Model (H-ΛCDM) derives cosmological predictions from fun
 
 #### Void Analysis
 - **Methods**: E8×E8 heterotic alignment testing (17-angle hierarchical analysis), network clustering coefficient analysis
-- **Datasets**: SDSS DR7, Clampitt & Jain catalogs, ZOBOV, VIDE
+- **Datasets**: SDSS DR7 Douglass et al., SDSS DR7 Clampitt & Jain catalogs
 - **Validation**: Randomization testing, bootstrap, null hypothesis testing
 
 ### Statistical Validation
@@ -451,8 +450,6 @@ The H-ΛCDM framework makes specific, parameter-free predictions across multiple
             summary = results['analysis_summary']
             formatted += f"- **Voids analyzed:** {summary.get('total_voids_analyzed', 0)}\n"
 
-            alignment = summary.get('e8_alignment_summary', {})
-            formatted += f"- **E8 alignment strength:** {alignment.get('detection_strength', 'N/A')}\n"
             formatted += f"- **Detection rate:** {alignment.get('detection_rate', 0):.1%}\n"
 
             clustering = summary.get('clustering_summary', {})
@@ -763,9 +760,9 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                 'prediction': 'H-ΛCDM predicts discrete phase transitions, specific non-Gaussian patterns, and E8×E8 heterotic signatures in CMB structure'
             },
             'void': {
-                'question': 'Do cosmic voids show E8×E8 heterotic geometric alignment in their orientations?',
-                'looking_for': 'Void orientations aligned with 17 characteristic angles from E8×E8 heterotic structure, and clustering coefficient C_G = 25/32',
-                'prediction': 'H-ΛCDM predicts voids should exhibit preferred orientations matching E8×E8 characteristic angles with clustering coefficient 25/32'
+                'question': 'Does the observed clustering coefficient of cosmic void networks match thermodynamic efficiency, representing the processing cost to precipitate baryonic matter from pure information?',
+                'looking_for': 'Comparison of observed clustering coefficient (C_obs) with three fundamental values: thermodynamic efficiency (η_natural = (1-ln(2))/ln(2) ≈ 0.443), E8×E8 pure substrate (C_E8 = 25/32 ≈ 0.781), and ΛCDM prediction (C ≈ 0.42). If C_obs matches η_natural, this confirms clustering represents processing cost to precipitate baryonic matter. The difference C_E8 - η_natural ≈ 0.338 represents the thermodynamic cost of the information processing system without baryonic matter.',
+                'prediction': 'H-ΛCDM predicts the observed clustering coefficient should match thermodynamic efficiency (η_natural ≈ 0.443), confirming that baryonic matter operates at thermodynamic efficiency rather than full E8×E8 substrate capacity. The clustering coefficient represents the processing cost required to precipitate baryonic matter from pure information, with the difference between E8×E8 pure substrate and thermodynamic efficiency quantifying the thermodynamic cost of the information processing system (causal diamond/light cone structure) without baryonic matter.'
             },
             'hlcdm': {
                 'question': 'Do high-redshift observations (JWST, Lyman-alpha, FRB) support H-ΛCDM predictions?',
@@ -1596,7 +1593,6 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
         
         elif pipeline_name == 'void':
             analysis_summary = main_results.get('analysis_summary', {})
-            e8_alignment = main_results.get('e8_alignment', {})
             void_data = main_results.get('void_data', {})
             clustering_analysis = main_results.get('clustering_analysis', {})
             surveys_analyzed = main_results.get('surveys_analyzed', [])
@@ -1618,51 +1614,86 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                         results_section += f"- {survey}: {count:,} voids\n"
                     results_section += "\n"
             
-            # E8 Alignment Analysis
-            if e8_alignment:
-                results_section += "### E8×E8 Alignment Analysis\n\n"
-                
-                detection_metrics = e8_alignment.get('detection_metrics', {})
-                if detection_metrics:
-                    detection_rate = detection_metrics.get('detection_rate', 0)
-                    significance_rate = detection_metrics.get('significance_rate', 0)
-                    total_angles = detection_metrics.get('total_angles', 0)
-                    detected_angles = detection_metrics.get('detected_angles', 0)
-                    
-                    results_section += f"**E8 Characteristic Angles Tested:** {total_angles}\n\n"
-                    results_section += f"**Angles with Detections:** {detected_angles}\n\n"
-                    results_section += f"**Detection Rate:** {detection_rate:.1%}\n\n"
-                    results_section += f"**Significant Alignments:** {significance_rate:.1%}\n\n"
-                
-                # Detailed alignment results
-                alignments = e8_alignment.get('alignments', {})
-                if alignments and isinstance(alignments, dict):
-                    results_section += "**Alignment Results by E8 Level:**\n\n"
-                    for level_name, level_results in alignments.items():
-                        if isinstance(level_results, dict):
-                            n_alignments = level_results.get('n_alignments', 0)
-                            n_expected = level_results.get('n_expected_random', 0)
-                            significance = level_results.get('significance', 0)
-                            results_section += f"- **{level_name.replace('_', ' ').title()}**: "
-                            results_section += f"{n_alignments} alignments (expected: {n_expected:.1f}), "
-                            results_section += f"significance ratio: {significance:.2f}\n"
-                    results_section += "\n"
-                
-                if detection_rate > 0.3:
-                    results_section += "**Finding:** ✓ Evidence for E8×E8 geometric alignment in void orientations\n\n"
-                else:
-                    results_section += "**Finding:** ✗ No significant E8×E8 alignment detected\n\n"
-            
             # Clustering Analysis
             if clustering_analysis and 'error' not in clustering_analysis:
                 results_section += "### Network Clustering Analysis\n\n"
-                observed_cc = clustering_analysis.get('observed_clustering_coefficient', 'N/A')
-                theoretical_cc = clustering_analysis.get('theoretical_clustering_coefficient', 25/32)
-                is_consistent = clustering_analysis.get('is_consistent_with_theory', False)
                 
-                results_section += f"**Observed Clustering Coefficient:** {observed_cc:.4f}\n\n"
-                results_section += f"**Theoretical E8×E8 Value:** {theoretical_cc:.4f} (25/32)\n\n"
-                results_section += f"**Consistent with Theory:** {'✓ YES' if is_consistent else '✗ NO'}\n\n"
+                clustering_comparison = clustering_analysis.get('clustering_comparison', {})
+                processing_costs = clustering_analysis.get('processing_costs', {})
+                
+                # Observed clustering coefficient
+                observed = clustering_comparison.get('observed', {})
+                observed_cc = observed.get('value', 'N/A')
+                observed_std = observed.get('std', 0.03)
+                
+                results_section += f"**Observed Clustering Coefficient:** C_obs = {observed_cc:.3f} ± {observed_std:.3f}\n\n"
+                
+                # Three fundamental clustering coefficient values
+                results_section += "**Fundamental Clustering Coefficient Values:**\n\n"
+                
+                # Thermodynamic Efficiency
+                eta_data = clustering_comparison.get('thermodynamic_efficiency', {})
+                if eta_data:
+                    eta_val = eta_data.get('value', 0.443)
+                    eta_sigma = eta_data.get('sigma', 0)
+                    results_section += f"- **Thermodynamic Efficiency:** η_natural = {eta_val:.4f} = (1-ln(2))/ln(2), difference: {eta_sigma:.1f}σ\n"
+                    results_section += f"  *Physical meaning:* Processing required to precipitate baryonic matter from pure information\n\n"
+                
+                # E8×E8 Pure Substrate
+                e8_data = clustering_comparison.get('e8_pure_substrate', {})
+                if e8_data:
+                    e8_val = e8_data.get('value', 0.781)
+                    e8_sigma = e8_data.get('sigma', 0)
+                    results_section += f"- **E8×E8 Pure Substrate:** C_E8 = {e8_val:.4f} (25/32), difference: {e8_sigma:.1f}σ\n"
+                    results_section += f"  *Physical meaning:* Pure computational substrate potential without thermodynamic constraints\n\n"
+                
+                # ΛCDM
+                lcdm_data = clustering_comparison.get('lcdm', {})
+                if lcdm_data:
+                    lcdm_val = lcdm_data.get('value', 0.42)
+                    lcdm_std = lcdm_data.get('std', 0.08)
+                    lcdm_sigma = lcdm_data.get('sigma', 0)
+                    results_section += f"- **ΛCDM Prediction:** C = {lcdm_val:.2f} ± {lcdm_std:.2f}, difference: {lcdm_sigma:.1f}σ\n"
+                    results_section += f"  *Physical meaning:* Standard cosmological model prediction from gravitational structure formation\n\n"
+                
+                # Processing Costs
+                if processing_costs:
+                    results_section += "**Processing Cost Analysis:**\n\n"
+                    
+                    baryonic_cost = processing_costs.get('baryonic_precipitation', {})
+                    if baryonic_cost:
+                        results_section += f"- **Baryonic Matter Precipitation:** ΔC = {baryonic_cost.get('value', 'N/A'):.4f}\n"
+                        results_section += f"  *Interpretation:* {baryonic_cost.get('interpretation', '')}\n\n"
+                    
+                    causal_diamond_cost = processing_costs.get('causal_diamond_structure', {})
+                    if causal_diamond_cost:
+                        results_section += f"- **Thermodynamic Cost of Information Processing System (without baryonic matter):** ΔC = {causal_diamond_cost.get('value', 'N/A'):.4f}\n"
+                        results_section += f"  *Interpretation:* {causal_diamond_cost.get('interpretation', '')}\n"
+                        results_section += f"  *Physical meaning:* {causal_diamond_cost.get('physical_meaning', '')}\n\n"
+                    
+                    total_signature = processing_costs.get('total_processing_signature', {})
+                    if total_signature:
+                        results_section += f"- **Total Processing Signature:** ΔC = {total_signature.get('value', 'N/A'):.4f}\n"
+                        results_section += f"  *Interpretation:* {total_signature.get('interpretation', '')}\n"
+                        results_section += f"  *Physical meaning:* {total_signature.get('physical_meaning', '')}\n\n"
+                
+                # Interpretation
+                interpretation = clustering_analysis.get('interpretation', '')
+                if interpretation:
+                    results_section += f"**Interpretation:** {interpretation}\n\n"
+                
+                # Match status
+                matches_eta = clustering_analysis.get('matches_thermodynamic_efficiency', False)
+                matches_lcdm = clustering_analysis.get('matches_lcdm', False)
+                
+                if matches_eta:
+                    results_section += f"**Finding:** ✓ Observed clustering coefficient matches thermodynamic efficiency. "
+                    results_section += f"This confirms that the clustering coefficient represents the processing cost required "
+                    results_section += f"to precipitate baryonic matter from pure information.\n\n"
+                elif matches_lcdm:
+                    results_section += f"**Finding:** Observed clustering coefficient is consistent with ΛCDM prediction.\n\n"
+                else:
+                    results_section += f"**Finding:** Observed clustering coefficient shows tension with theoretical predictions.\n\n"
             
             # Overall summary
             if analysis_summary:
@@ -1830,6 +1861,253 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
             validation += f"### Extended Validation\n\n"
             ext_status = extended_val.get('overall_status', 'UNKNOWN')
             validation += f"**Overall Status:** {ext_status}\n\n"
+            
+            # Void-specific clustering validation
+            if pipeline_name == 'void' and 'bootstrap' in extended_val:
+                bootstrap = extended_val['bootstrap']
+                if isinstance(bootstrap, dict) and bootstrap.get('test') == 'bootstrap_clustering_validation':
+                    validation += f"#### Bootstrap Clustering Validation (10,000 iterations)\n\n"
+                    validation += f"**Status:** {'✓ PASSED' if bootstrap.get('passed', False) else '✗ FAILED'}\n\n"
+                    obs_cc = bootstrap.get('observed_clustering_coefficient', 'N/A')
+                    bootstrap_mean = bootstrap.get('bootstrap_mean', 'N/A')
+                    bootstrap_std = bootstrap.get('bootstrap_std', 'N/A')
+                    z_score = bootstrap.get('z_score', 'N/A')
+                    validation += f"- Observed clustering coefficient: {obs_cc:.4f}\n" if isinstance(obs_cc, (int, float)) else f"- Observed clustering coefficient: {obs_cc}\n"
+                    validation += f"- Bootstrap mean: {bootstrap_mean:.4f} ± {bootstrap_std:.4f}\n" if isinstance(bootstrap_mean, (int, float)) and isinstance(bootstrap_std, (int, float)) else f"- Bootstrap mean: {bootstrap_mean} ± {bootstrap_std}\n"
+                    validation += f"- z-score (stability): {z_score:.2f}σ\n" if isinstance(z_score, (int, float)) else f"- z-score (stability): {z_score}σ\n"
+                    if 'ci_68' in bootstrap:
+                        ci_68 = bootstrap['ci_68']
+                        validation += f"- 68% CI: [{ci_68[0]:.4f}, {ci_68[1]:.4f}]\n"
+                    if 'ci_95' in bootstrap:
+                        ci_95 = bootstrap['ci_95']
+                        validation += f"- 95% CI: [{ci_95[0]:.4f}, {ci_95[1]:.4f}]\n"
+                    
+                    comparison = bootstrap.get('comparison_to_fundamental_values', {})
+                    if comparison:
+                        validation += f"\n**Comparison to Fundamental Values:**\n"
+                        eta_comp = comparison.get('thermodynamic_efficiency', {})
+                        lcdm_comp = comparison.get('lcdm', {})
+                        e8_comp = comparison.get('e8_pure_substrate', {})
+                        
+                        if eta_comp:
+                            eta_val = eta_comp.get('value', 'N/A')
+                            eta_sig = eta_comp.get('sigma', 'N/A')
+                            eta_str = f"{eta_val:.4f}" if isinstance(eta_val, (int, float)) else str(eta_val)
+                            sig_str = f"{eta_sig:.1f}" if isinstance(eta_sig, (int, float)) else str(eta_sig)
+                            validation += f"- Thermodynamic efficiency (η_natural = {eta_str}): "
+                            validation += f"{sig_str}σ, "
+                            validation += f"{'within 95% CI' if eta_comp.get('within_ci_95', False) else 'outside 95% CI'}\n"
+                        if lcdm_comp:
+                            lcdm_val = lcdm_comp.get('value', 'N/A')
+                            lcdm_sig = lcdm_comp.get('sigma', 'N/A')
+                            lcdm_str = f"{lcdm_val:.2f}" if isinstance(lcdm_val, (int, float)) else str(lcdm_val)
+                            sig_str = f"{lcdm_sig:.1f}" if isinstance(lcdm_sig, (int, float)) else str(lcdm_sig)
+                            validation += f"- ΛCDM (C = {lcdm_str}): "
+                            validation += f"{sig_str}σ, "
+                            validation += f"{'within 95% CI' if lcdm_comp.get('within_ci_95', False) else 'outside 95% CI'}\n"
+                        if e8_comp:
+                            e8_val = e8_comp.get('value', 'N/A')
+                            e8_sig = e8_comp.get('sigma', 'N/A')
+                            e8_str = f"{e8_val:.4f}" if isinstance(e8_val, (int, float)) else str(e8_val)
+                            sig_str = f"{e8_sig:.1f}" if isinstance(e8_sig, (int, float)) else str(e8_sig)
+                            validation += f"- E8×E8 pure substrate (C_E8 = {e8_str}): "
+                            validation += f"{sig_str}σ, "
+                            validation += f"{'within 95% CI' if e8_comp.get('within_ci_95', False) else 'outside 95% CI'}\n"
+                    
+                    if 'interpretation' in bootstrap:
+                        validation += f"\n{bootstrap['interpretation']}\n"
+                    validation += "\n"
+            
+            if pipeline_name == 'void' and 'jackknife' in extended_val:
+                jackknife = extended_val['jackknife']
+                if isinstance(jackknife, dict) and jackknife.get('test') == 'jackknife_clustering_validation':
+                    validation += f"#### Jackknife Clustering Validation (100 subsamples)\n\n"
+                    validation += f"**Status:** {'✓ PASSED' if jackknife.get('passed', False) else '✗ FAILED'}\n\n"
+                    orig_cc = jackknife.get('original_clustering_coefficient', 'N/A')
+                    jk_mean = jackknife.get('jackknife_mean', 'N/A')
+                    jk_std = jackknife.get('jackknife_std_error', 'N/A')
+                    bias = jackknife.get('bias', 'N/A')
+                    bias_pct = jackknife.get('bias_percent', 'N/A')
+                    validation += f"- Original clustering coefficient: {orig_cc:.4f}\n" if isinstance(orig_cc, (int, float)) else f"- Original clustering coefficient: {orig_cc}\n"
+                    validation += f"- Jackknife mean: {jk_mean:.4f} ± {jk_std:.4f}\n" if isinstance(jk_mean, (int, float)) and isinstance(jk_std, (int, float)) else f"- Jackknife mean: {jk_mean} ± {jk_std}\n"
+                    validation += f"- Bias: {bias:.4f} ({bias_pct:.2f}%)\n" if isinstance(bias, (int, float)) and isinstance(bias_pct, (int, float)) else f"- Bias: {bias} ({bias_pct}%)\n"
+                    
+                    comparison = jackknife.get('comparison_to_fundamental_values', {})
+                    if comparison:
+                        validation += f"\n**Comparison to Fundamental Values:**\n"
+                        eta_comp = comparison.get('thermodynamic_efficiency', {})
+                        lcdm_comp = comparison.get('lcdm', {})
+                        e8_comp = comparison.get('e8_pure_substrate', {})
+                        
+                        if eta_comp:
+                            eta_val = eta_comp.get('value', 'N/A')
+                            eta_sig = eta_comp.get('sigma', 'N/A')
+                            eta_dist = eta_comp.get('distance', 'N/A')
+                            eta_val_str = f"{eta_val:.4f}" if isinstance(eta_val, (int, float)) else str(eta_val)
+                            eta_sig_str = f"{eta_sig:.1f}" if isinstance(eta_sig, (int, float)) else str(eta_sig)
+                            eta_dist_str = f"{eta_dist:.4f}" if isinstance(eta_dist, (int, float)) else str(eta_dist)
+                            validation += f"- Thermodynamic efficiency (η_natural = {eta_val_str}): "
+                            validation += f"{eta_sig_str}σ, distance = {eta_dist_str}\n"
+                        if lcdm_comp:
+                            lcdm_val = lcdm_comp.get('value', 'N/A')
+                            lcdm_sig = lcdm_comp.get('sigma', 'N/A')
+                            lcdm_dist = lcdm_comp.get('distance', 'N/A')
+                            lcdm_val_str = f"{lcdm_val:.2f}" if isinstance(lcdm_val, (int, float)) else str(lcdm_val)
+                            lcdm_sig_str = f"{lcdm_sig:.1f}" if isinstance(lcdm_sig, (int, float)) else str(lcdm_sig)
+                            lcdm_dist_str = f"{lcdm_dist:.4f}" if isinstance(lcdm_dist, (int, float)) else str(lcdm_dist)
+                            validation += f"- ΛCDM (C = {lcdm_val_str}): "
+                            validation += f"{lcdm_sig_str}σ, distance = {lcdm_dist_str}\n"
+                        if e8_comp:
+                            e8_val = e8_comp.get('value', 'N/A')
+                            e8_sig = e8_comp.get('sigma', 'N/A')
+                            e8_dist = e8_comp.get('distance', 'N/A')
+                            e8_val_str = f"{e8_val:.4f}" if isinstance(e8_val, (int, float)) else str(e8_val)
+                            e8_sig_str = f"{e8_sig:.1f}" if isinstance(e8_sig, (int, float)) else str(e8_sig)
+                            e8_dist_str = f"{e8_dist:.4f}" if isinstance(e8_dist, (int, float)) else str(e8_dist)
+                            validation += f"- E8×E8 pure substrate (C_E8 = {e8_val_str}): "
+                            validation += f"{e8_sig_str}σ, distance = {e8_dist_str}\n"
+                    
+                    if 'interpretation' in jackknife:
+                        validation += f"\n{jackknife['interpretation']}\n"
+                    validation += "\n"
+            
+            if pipeline_name == 'void' and 'loo_cv' in extended_val:
+                loo = extended_val['loo_cv']
+                if isinstance(loo, dict) and loo.get('test') == 'leave_every_other_void_cv':
+                    validation += f"#### Leave-Every-Other-Void Cross-Validation (10 folds)\n\n"
+                    validation += f"**Status:** {'✓ PASSED' if loo.get('passed', False) else '✗ FAILED'}\n\n"
+                    loo_orig = loo.get('original_clustering_coefficient', 'N/A')
+                    loo_mean = loo.get('cv_mean', 'N/A')
+                    loo_std = loo.get('cv_std', 'N/A')
+                    loo_cv = loo.get('coefficient_of_variation', 'N/A')
+                    validation += f"- Original clustering coefficient: {loo_orig:.4f}\n" if isinstance(loo_orig, (int, float)) else f"- Original clustering coefficient: {loo_orig}\n"
+                    validation += f"- CV mean: {loo_mean:.4f} ± {loo_std:.4f}\n" if isinstance(loo_mean, (int, float)) and isinstance(loo_std, (int, float)) else f"- CV mean: {loo_mean} ± {loo_std}\n"
+                    validation += f"- Coefficient of variation: {loo_cv*100:.1f}%\n" if isinstance(loo_cv, (int, float)) else f"- Coefficient of variation: {loo_cv}\n"
+                    
+                    consistency = loo.get('consistency_with_values', {})
+                    if consistency:
+                        eta_consistency = consistency.get('thermodynamic_efficiency', {})
+                        lcdm_consistency = consistency.get('lcdm', {})
+                        e8_consistency = consistency.get('e8_pure_substrate', {})
+                        
+                        validation += f"\n**Consistency with Fundamental Values:**\n"
+                        if eta_consistency:
+                            eta_val = eta_consistency.get('value', 'N/A')
+                            eta_folds = eta_consistency.get('consistent_folds', 'N/A')
+                            eta_rate = eta_consistency.get('consistency_rate', 0)
+                            eta_val_str = f"{eta_val:.4f}" if isinstance(eta_val, (int, float)) else str(eta_val)
+                            eta_rate_str = f"{eta_rate*100:.0f}" if isinstance(eta_rate, (int, float)) else str(eta_rate)
+                            validation += f"- Thermodynamic efficiency (η_natural = {eta_val_str}): "
+                            validation += f"{eta_folds}/{loo.get('n_folds', 'N/A')} folds ({eta_rate_str}%)\n"
+                        if lcdm_consistency:
+                            lcdm_val = lcdm_consistency.get('value', 'N/A')
+                            lcdm_folds = lcdm_consistency.get('consistent_folds', 'N/A')
+                            lcdm_rate = lcdm_consistency.get('consistency_rate', 0)
+                            lcdm_val_str = f"{lcdm_val:.2f}" if isinstance(lcdm_val, (int, float)) else str(lcdm_val)
+                            lcdm_rate_str = f"{lcdm_rate*100:.0f}" if isinstance(lcdm_rate, (int, float)) else str(lcdm_rate)
+                            validation += f"- ΛCDM (C = {lcdm_val_str}): "
+                            validation += f"{lcdm_folds}/{loo.get('n_folds', 'N/A')} folds ({lcdm_rate_str}%)\n"
+                        if e8_consistency:
+                            e8_val = e8_consistency.get('value', 'N/A')
+                            e8_folds = e8_consistency.get('consistent_folds', 'N/A')
+                            e8_rate = e8_consistency.get('consistency_rate', 0)
+                            e8_val_str = f"{e8_val:.4f}" if isinstance(e8_val, (int, float)) else str(e8_val)
+                            e8_rate_str = f"{e8_rate*100:.0f}" if isinstance(e8_rate, (int, float)) else str(e8_rate)
+                            validation += f"- E8×E8 pure substrate (C_E8 = {e8_val_str}): "
+                            validation += f"{e8_folds}/{loo.get('n_folds', 'N/A')} folds ({e8_rate_str}%)\n"
+                    
+                    if 'interpretation' in loo:
+                        validation += f"\n{loo['interpretation']}\n"
+                    validation += "\n"
+            
+            if pipeline_name == 'void' and 'null_hypothesis' in extended_val:
+                null_test = extended_val['null_hypothesis']
+                if isinstance(null_test, dict) and null_test.get('test') == 'null_hypothesis_random_networks':
+                    validation += f"#### Null Hypothesis Testing (10,000 random networks)\n\n"
+                    validation += f"**Status:** {'✓ PASSED' if null_test.get('passed', False) else '✗ FAILED'}\n\n"
+                    null_obs = null_test.get('observed_clustering_coefficient', 'N/A')
+                    null_mean = null_test.get('random_mean', 'N/A')
+                    null_std = null_test.get('random_std', 'N/A')
+                    null_pval = null_test.get('p_value', 'N/A')
+                    null_sig = null_test.get('sigma', 'N/A')
+                    validation += f"- Observed clustering coefficient: {null_obs:.4f}\n" if isinstance(null_obs, (int, float)) else f"- Observed clustering coefficient: {null_obs}\n"
+                    validation += f"- Random network mean: {null_mean:.4f} ± {null_std:.4f}\n" if isinstance(null_mean, (int, float)) and isinstance(null_std, (int, float)) else f"- Random network mean: {null_mean} ± {null_std}\n"
+                    validation += f"- p-value: {null_pval:.5f}\n" if isinstance(null_pval, (int, float)) else f"- p-value: {null_pval}\n"
+                    validation += f"- Significance: {null_sig:.1f}σ\n" if isinstance(null_sig, (int, float)) else f"- Significance: {null_sig}σ\n"
+                    if 'interpretation' in null_test:
+                        validation += f"\n{null_test['interpretation']}\n"
+                    validation += "\n"
+            
+            if pipeline_name == 'void' and 'model_comparison' in extended_val:
+                model_comp = extended_val['model_comparison']
+                if isinstance(model_comp, dict) and model_comp.get('test') == 'clustering_model_comparison':
+                    validation += f"#### Bayesian Model Comparison\n\n"
+                    models = model_comp.get('models', {})
+                    best_model = model_comp.get('best_model', 'N/A')
+                    validation += f"**Best Model:** {best_model}\n\n"
+                    
+                    for model_name, model_data in models.items():
+                        if isinstance(model_data, dict):
+                            model_label = model_data.get('label', {
+                                'thermodynamic_efficiency': 'Thermodynamic Efficiency (η_natural)',
+                                'e8_pure_substrate': 'E8×E8 Pure Substrate (C_E8)',
+                                'lcdm': 'ΛCDM'
+                            }.get(model_name, model_name))
+                            
+                            pred = model_data.get('prediction', 'N/A')
+                            chi2 = model_data.get('chi2', 'N/A')
+                            bic = model_data.get('bic', 'N/A')
+                            delta_bic = model_data.get('delta_bic', 'N/A')
+                            bf = model_data.get('bayes_factor_vs_lcdm', 'N/A')
+                            
+                            validation += f"**{model_label}:**\n"
+                            validation += f"- Prediction: {pred:.4f}\n" if isinstance(pred, (int, float)) else f"- Prediction: {pred}\n"
+                            if 'physical_meaning' in model_data:
+                                validation += f"- Physical meaning: {model_data['physical_meaning']}\n"
+                            validation += f"- χ²: {chi2:.3f}\n" if isinstance(chi2, (int, float)) else f"- χ²: {chi2}\n"
+                            validation += f"- BIC: {bic:.2f}\n" if isinstance(bic, (int, float)) else f"- BIC: {bic}\n"
+                            validation += f"- ΔBIC: {delta_bic:.2f}\n" if isinstance(delta_bic, (int, float)) else f"- ΔBIC: {delta_bic}\n"
+                            validation += f"- Bayes factor vs ΛCDM: {bf:.2e}\n" if isinstance(bf, (int, float)) else f"- Bayes factor vs ΛCDM: {bf}\n\n"
+                    
+                    if 'interpretation' in model_comp:
+                        validation += f"{model_comp['interpretation']}\n\n"
+            
+            if pipeline_name == 'void' and 'processing_cost_validation' in extended_val:
+                pc_val = extended_val['processing_cost_validation']
+                if isinstance(pc_val, dict) and pc_val.get('test') == 'processing_cost_validation':
+                    validation += f"#### Processing Cost Validation\n\n"
+                    validation += f"**Status:** {'✓ PASSED' if pc_val.get('passed', False) else '✗ FAILED'}\n\n"
+                    
+                    validation += f"**Test 1: Match with Thermodynamic Efficiency**\n"
+                    validation += f"- Status: {'✓ PASSED' if pc_val.get('matches_thermodynamic_efficiency', False) else '✗ FAILED'}\n"
+                    sigma_eta_val = pc_val.get('sigma_eta', 'N/A')
+                    validation += f"- Significance: {sigma_eta_val:.1f}σ\n" if isinstance(sigma_eta_val, (int, float)) else f"- Significance: {sigma_eta_val}σ\n"
+                    validation += f"- Interpretation: {'Observed clustering matches thermodynamic efficiency. Confirms clustering represents processing cost to precipitate baryonic matter.' if pc_val.get('matches_thermodynamic_efficiency', False) else 'Observed clustering does not match thermodynamic efficiency.'}\n\n"
+                    
+                    validation += f"**Test 2: Thermodynamic Cost of Information Processing System (without baryonic matter)**\n"
+                    causal_diamond = pc_val.get('processing_cost_causal_diamond', {})
+                    if causal_diamond:
+                        obs_val = causal_diamond.get('observed', 'N/A')
+                        exp_val = causal_diamond.get('expected', 'N/A')
+                        diff_val = causal_diamond.get('difference', 'N/A')
+                        sig_val = causal_diamond.get('sigma', 'N/A')
+                        validation += f"- Observed: {obs_val:.4f}\n" if isinstance(obs_val, (int, float)) else f"- Observed: {obs_val}\n"
+                        validation += f"- Expected: {exp_val:.4f}\n" if isinstance(exp_val, (int, float)) else f"- Expected: {exp_val}\n"
+                        validation += f"- Difference: {diff_val:.4f}\n" if isinstance(diff_val, (int, float)) else f"- Difference: {diff_val}\n"
+                        validation += f"- Significance: {sig_val:.1f}σ\n" if isinstance(sig_val, (int, float)) else f"- Significance: {sig_val}σ\n"
+                        validation += f"- Status: {'✓ PASSED' if causal_diamond.get('consistent', False) else '✗ FAILED'}\n"
+                        validation += f"- Interpretation: Thermodynamic cost of the information processing system without baryonic matter\n\n"
+                    
+                    validation += f"**Processing Costs:**\n"
+                    baryonic_cost = pc_val.get('processing_cost_baryonic', 'N/A')
+                    validation += f"- Baryonic precipitation: {baryonic_cost:.4f}\n" if isinstance(baryonic_cost, (int, float)) else f"- Baryonic precipitation: {baryonic_cost}\n"
+                    if causal_diamond:
+                        cd_obs = causal_diamond.get('observed', 'N/A')
+                        validation += f"- Thermodynamic cost of information processing system (without baryonic matter): {cd_obs:.4f}\n" if isinstance(cd_obs, (int, float)) else f"- Thermodynamic cost of information processing system (without baryonic matter): {cd_obs}\n"
+                    
+                    if 'interpretation' in pc_val:
+                        validation += f"\n{pc_val['interpretation']}\n"
+                    validation += "\n"
             
             # Add extended validation components with detailed results
             if 'bootstrap' in extended_val:
@@ -2173,19 +2451,63 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
             conclusion += f"Results provide {strength.lower()} evidence for H-ΛCDM theoretical predictions.\n\n"
         
         elif pipeline_name == 'void':
-            e8_alignment = main_results.get('e8_alignment', {})
-            detection_metrics = e8_alignment.get('detection_metrics', {}) if e8_alignment else {}
-            detection_rate = detection_metrics.get('detection_rate', 0)
+            clustering_analysis = main_results.get('clustering_analysis', {})
+            clustering_comparison = clustering_analysis.get('clustering_comparison', {}) if clustering_analysis else {}
+            processing_costs = clustering_analysis.get('processing_costs', {}) if clustering_analysis else {}
+            
+            eta_data = clustering_comparison.get('thermodynamic_efficiency', {}) if clustering_comparison else {}
+            eta_sigma = eta_data.get('sigma', np.inf) if eta_data else np.inf
+            matches_eta = clustering_analysis.get('matches_thermodynamic_efficiency', False) if clustering_analysis else False
             
             conclusion += f"### Did We Find What We Were Looking For?\n\n"
-            if detection_rate > 0.3:
-                conclusion += f"**YES** - Evidence for E8×E8 geometric alignment in void orientations (detection rate: {detection_rate:.1%}).\n\n"
+            
+            # Check clustering coefficient match with thermodynamic efficiency
+            if matches_eta and eta_sigma < 0.5:
+                conclusion += f"**YES** - Observed clustering coefficient C_obs matches thermodynamic efficiency η_natural within {eta_sigma:.1f}σ. "
+                conclusion += f"This confirms that the clustering coefficient represents the processing cost required to precipitate "
+                conclusion += f"baryonic matter from pure information.\n\n"
+            elif matches_eta and eta_sigma < 1.0:
+                conclusion += f"**YES** - Observed clustering coefficient is consistent with thermodynamic efficiency ({eta_sigma:.1f}σ). "
+                conclusion += f"The clustering coefficient likely represents the processing cost to precipitate baryonic matter.\n\n"
+            elif eta_sigma < 2.0:
+                conclusion += f"**PARTIAL** - Observed clustering coefficient shows marginal consistency with thermodynamic efficiency ({eta_sigma:.1f}σ). "
+                conclusion += f"Further analysis needed to confirm interpretation.\n\n"
             else:
-                conclusion += f"**NO** - No significant E8×E8 alignment detected in void orientations (detection rate: {detection_rate:.1%}).\n\n"
+                conclusion += f"**NO** - Observed clustering coefficient shows tension with thermodynamic efficiency ({eta_sigma:.1f}σ). "
+                conclusion += f"The interpretation may require revision.\n\n"
+            
+            # Processing costs
+            if processing_costs:
+                baryonic_cost = processing_costs.get('baryonic_precipitation', {}).get('value', None)
+                causal_diamond_cost = processing_costs.get('causal_diamond_structure', {}).get('value', None)
+                
+                if baryonic_cost is not None and causal_diamond_cost is not None:
+                    conclusion += f"**Processing Cost Analysis:**\n\n"
+                    conclusion += f"- Processing cost to precipitate baryonic matter: ΔC = {baryonic_cost:.4f}\n"
+                    conclusion += f"- Thermodynamic cost of information processing system (without baryonic matter): ΔC = {causal_diamond_cost:.4f}\n\n"
+                    conclusion += f"The difference between E8×E8 pure substrate (C_E8 = 0.781) and thermodynamic efficiency "
+                    conclusion += f"(η_natural = 0.443) represents the thermodynamic cost of the information processing system "
+                    conclusion += f"(causal diamond/light cone structure) without baryonic matter.\n\n"
+            
+            # Add model comparison summary
+            model_comp = validation.get('model_comparison', {}) if isinstance(validation, dict) else {}
+            if model_comp.get('test') == 'clustering_model_comparison':
+                best_model = model_comp.get('best_model', 'N/A')
+                models = model_comp.get('models', {})
+                thermodynamic_model = models.get('thermodynamic_efficiency', {})
+                delta_bic = thermodynamic_model.get('delta_bic', 0)
+                bayes_factor = thermodynamic_model.get('bayes_factor_vs_lcdm', 1.0)
+                
+                conclusion += f"**Model Comparison:** Bayesian analysis favors {best_model} model. "
+                conclusion += f"Thermodynamic efficiency has ΔBIC = {delta_bic:.1f} and Bayes factor = {bayes_factor:.2e} relative to ΛCDM.\n\n"
             
             void_data = main_results.get('void_data', {})
             total_voids = void_data.get('total_voids', 0) if void_data else 0
-            conclusion += f"Analyzed {total_voids:,} cosmic voids for alignment with 17 E8×E8 characteristic angles. "
+            observed_cc = clustering_analysis.get('observed_clustering_coefficient', 'N/A') if clustering_analysis else 'N/A'
+            if isinstance(observed_cc, (int, float)):
+                conclusion += f"Analyzed {total_voids:,} cosmic voids with observed clustering coefficient C_obs = {observed_cc:.3f}. "
+            else:
+                conclusion += f"Analyzed {total_voids:,} cosmic voids with observed clustering coefficient C_obs = {observed_cc}. "
             conclusion += f"Validation status: **{overall_status}**.\n\n"
         
         elif pipeline_name == 'hlcdm':
@@ -2462,7 +2784,7 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
         """Generate detailed E8 ML results section."""
         results = f"### E8×E8 Machine Learning Pattern Recognition\n\n"
         results += f"**Test Type:** E8×E8 Heterotic Machine Learning Pattern Recognition\n\n"
-        results += f"**H-ΛCDM Prediction:** E8×E8 geometry manifests in cosmic data patterns\n\n"
+        results += f"**H-ΛCDM Prediction:** The observed clustering coefficient of cosmic void networks represents the processing cost required to precipitate baryonic matter from pure information. If the observed clustering coefficient matches thermodynamic efficiency (η_natural = (1-ln(2))/ln(2) ≈ 0.443), this confirms that baryonic matter operates at thermodynamic efficiency rather than full E8×E8 substrate capacity (C_E8 = 25/32 ≈ 0.781). The difference between E8×E8 pure substrate and thermodynamic efficiency (ΔC ≈ 0.338) represents the thermodynamic cost of the information processing system (causal diamond/light cone structure) without baryonic matter.\n\n"
 
         pattern_score = test_result.get('e8_pattern_score', 'N/A')
         confidence = test_result.get('pattern_confidence', 'N/A')
