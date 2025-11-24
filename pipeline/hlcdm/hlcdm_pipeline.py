@@ -53,7 +53,7 @@ class HLCDMPipeline(AnalysisPipeline):
             'all': 'Run all H-ΛCDM extension tests'
         }
 
-        self.data_loader = DataLoader()
+        self.data_loader = DataLoader(log_file=self.log_file)
 
         self.update_metadata('description', 'Specialized H-ΛCDM extension tests')
         self.update_metadata('available_tests', list(self.available_tests.keys()))

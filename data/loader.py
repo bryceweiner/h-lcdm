@@ -63,7 +63,8 @@ class DataLoader:
 
     def __init__(self, downloaded_data_dir: str = "downloaded_data",
                  processed_data_dir: str = "processed_data",
-                 use_cache: bool = True):
+                 use_cache: bool = True,
+                 log_file: Optional[Path] = None):
         """
         Initialize DataLoader.
         
@@ -71,6 +72,7 @@ class DataLoader:
             downloaded_data_dir (str): Directory for raw downloaded data
             processed_data_dir (str): Directory for processed data
             use_cache (bool): Whether to use caching
+            log_file (Path, optional): Path to log file for writing logs
         """
         self.downloaded_data_dir = Path(downloaded_data_dir)
         self.processed_data_dir = Path(processed_data_dir)
@@ -86,18 +88,42 @@ class DataLoader:
         
         # Cache directory for void catalogs (compatible with old codebase)
         self.cache_dir = str(self.downloaded_data_dir)
+        
+        # Set up log file (shared with pipeline if provided)
+        self.log_file = log_file
+        self._log_file_handle = None
+
+    def _write_to_log(self, message: str, level: str = "INFO"):
+        """Write message to log file if available."""
+        if self.log_file is not None:
+            try:
+                if self._log_file_handle is None:
+                    self._log_file_handle = open(self.log_file, 'a', encoding='utf-8')
+                
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                log_line = f"[{timestamp}] [{level}] DataLoader: {message}"
+                self._log_file_handle.write(log_line + "\n")
+                self._log_file_handle.flush()
+            except Exception:
+                pass  # Don't fail if logging fails
 
     def info(self, message: str):
         """Log info message."""
-        print(f"[INFO] DataLoader: {message}")
+        log_line = f"[INFO] DataLoader: {message}"
+        print(log_line)
+        self._write_to_log(message, "INFO")
 
     def warning(self, message: str):
         """Log warning message."""
-        print(f"[WARNING] DataLoader: {message}")
+        log_line = f"[WARNING] DataLoader: {message}"
+        print(log_line)
+        self._write_to_log(message, "WARNING")
 
     def log_message(self, message: str):
         """Log message (compatibility with old codebase)."""
-        print(f"[INFO] DataLoader: {message}")
+        log_line = f"[INFO] DataLoader: {message}"
+        print(log_line)
+        self._write_to_log(message, "INFO")
 
     # ========================================================================
     # CMB DATA LOADING
@@ -701,6 +727,234 @@ class DataLoader:
         except Exception as e:
             self.warning(f"Error parsing Clampitt & Jain catalog: {e}")
             raise
+
+    def download_zobov_catalog(self) -> pd.DataFrame:
+        """
+        Download ZOBOV void catalog from astronomical archives.
+        
+        ZOBOV (ZOnes Bordering On Voidness) is a watershed-based void finder.
+        Attempts to download from Vizier/CDS, falls back to empty DataFrame if unavailable.
+        
+        Common ZOBOV catalogs:
+        - Sutter et al. 2012, 2014 (SDSS DR7): J/ApJ/761/44
+        - Pan et al. 2012 (SDSS DR7): J/MNRAS/421/926
+        - BOSS/eBOSS ZOBOV catalogs
+        
+        Returns:
+            pd.DataFrame: ZOBOV void catalog (empty if download fails)
+        """
+        cached_file = self.downloaded_data_dir / "zobov_void_catalog.fits"
+        
+        # Check if already cached
+        if cached_file.exists():
+            self.log_message(f"✓ ZOBOV catalog already cached: {cached_file}")
+            try:
+                if ASTROPY_AVAILABLE:
+                    from astropy.io import fits
+                    from astropy.table import Table
+                    with fits.open(cached_file) as hdul:
+                        data = hdul[1].data
+                        table = Table(data)
+                        df = table.to_pandas()
+                        # Standardize column names
+                        column_mapping = {
+                            'ra': 'ra_deg',
+                            'dec': 'dec_deg',
+                            'z': 'redshift',
+                            'R_v': 'radius_mpc',
+                            'vol': 'volume_mpc3'
+                        }
+                        df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+                        df['survey'] = 'ZOBOV'
+                        df['algorithm'] = 'ZOBOV'
+                        return df
+            except Exception as e:
+                self.warning(f"Error loading cached ZOBOV catalog: {e}")
+        
+        # Try to download from Vizier/CDS
+        if ASTROQUERY_AVAILABLE:
+            try:
+                from astroquery.vizier import Vizier
+                vizier = Vizier(columns=['**'], row_limit=-1)
+                
+                # Try multiple known ZOBOV catalog sources
+                zobov_catalogs = [
+                    'J/ApJ/761/44',  # Sutter et al. 2012 SDSS DR7
+                    'J/MNRAS/421/926',  # Pan et al. 2012 SDSS DR7
+                ]
+                
+                for catalog_id in zobov_catalogs:
+                    try:
+                        self.log_message(f"  Trying Vizier catalog {catalog_id}...")
+                        catalogs = vizier.query_constraints(catalog=catalog_id, timeout=300)
+                        
+                        if catalogs and len(catalogs) > 0:
+                            # Convert to DataFrame
+                            table = catalogs[0]
+                            df = table.to_pandas()
+                            
+                            if len(df) == 0:
+                                self.log_message(f"    Catalog {catalog_id} returned empty table")
+                                continue
+                            
+                            # Standardize column names
+                            column_mapping = {
+                                'RAJ2000': 'ra_deg',
+                                'DEJ2000': 'dec_deg',
+                                'z': 'redshift',
+                                'R_v': 'radius_mpc',
+                                'Vol': 'volume_mpc3',
+                                'RA': 'ra_deg',
+                                'DE': 'dec_deg'
+                            }
+                            df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+                            df['survey'] = 'ZOBOV'
+                            df['algorithm'] = 'ZOBOV'
+                            
+                            # Cache the catalog
+                            try:
+                                if ASTROPY_AVAILABLE:
+                                    from astropy.io import fits
+                                    table.write(str(cached_file), format='fits', overwrite=True)
+                                    self.log_message(f"✓ Cached ZOBOV catalog: {cached_file}")
+                            except Exception as cache_error:
+                                self.log_message(f"    Warning: Failed to cache catalog: {cache_error}")
+                            
+                            self.log_message(f"✓ Downloaded ZOBOV catalog: {len(df)} voids")
+                            return df
+                        else:
+                            self.log_message(f"    Catalog {catalog_id} returned no results")
+                    except Exception as e:
+                        error_type = type(e).__name__
+                        error_msg = str(e)
+                        self.log_message(f"    Catalog {catalog_id} failed: {error_type}: {error_msg}")
+                        if hasattr(e, '__cause__') and e.__cause__:
+                            self.log_message(f"      Caused by: {type(e.__cause__).__name__}: {str(e.__cause__)}")
+                        continue
+                        
+            except Exception as e:
+                error_type = type(e).__name__
+                error_msg = str(e)
+                self.log_message(f"ZOBOV catalog download failed: {error_type}: {error_msg}")
+                if hasattr(e, '__cause__') and e.__cause__:
+                    self.log_message(f"  Caused by: {type(e.__cause__).__name__}: {str(e.__cause__)}")
+        
+        # Return empty DataFrame if download fails (processor will use mock)
+        self.log_message("ZOBOV catalog download failed, will use mock catalog")
+        return pd.DataFrame()
+
+    def download_vide_catalog(self) -> pd.DataFrame:
+        """
+        Download VIDE void catalog from astronomical archives.
+        
+        VIDE (Void IDentification and Examination) is a void finder pipeline.
+        Attempts to download from Vizier/CDS, falls back to empty DataFrame if unavailable.
+        
+        Common VIDE catalogs:
+        - Sutter et al. 2012 (SDSS DR7): J/MNRAS/441/2981
+        - BOSS/eBOSS VIDE catalogs
+        
+        Returns:
+            pd.DataFrame: VIDE void catalog (empty if download fails)
+        """
+        cached_file = self.downloaded_data_dir / "vide_void_catalog.fits"
+        
+        # Check if already cached
+        if cached_file.exists():
+            self.log_message(f"✓ VIDE catalog already cached: {cached_file}")
+            try:
+                if ASTROPY_AVAILABLE:
+                    from astropy.io import fits
+                    from astropy.table import Table
+                    with fits.open(cached_file) as hdul:
+                        data = hdul[1].data
+                        table = Table(data)
+                        df = table.to_pandas()
+                        # Standardize column names
+                        column_mapping = {
+                            'ra': 'ra_deg',
+                            'dec': 'dec_deg',
+                            'z': 'redshift',
+                            'R_v': 'radius_mpc',
+                            'vol': 'volume_mpc3'
+                        }
+                        df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+                        df['survey'] = 'VIDE'
+                        df['algorithm'] = 'VIDE'
+                        return df
+            except Exception as e:
+                self.warning(f"Error loading cached VIDE catalog: {e}")
+        
+        # Try to download from Vizier/CDS
+        if ASTROQUERY_AVAILABLE:
+            try:
+                from astroquery.vizier import Vizier
+                vizier = Vizier(columns=['**'], row_limit=-1)
+                
+                # Try multiple known VIDE catalog sources
+                vide_catalogs = [
+                    'J/MNRAS/441/2981',  # Sutter et al. 2012 SDSS DR7 VIDE
+                ]
+                
+                for catalog_id in vide_catalogs:
+                    try:
+                        self.log_message(f"  Trying Vizier catalog {catalog_id}...")
+                        catalogs = vizier.query_constraints(catalog=catalog_id, timeout=300)
+                        
+                        if catalogs and len(catalogs) > 0:
+                            # Convert to DataFrame
+                            table = catalogs[0]
+                            df = table.to_pandas()
+                            
+                            if len(df) == 0:
+                                self.log_message(f"    Catalog {catalog_id} returned empty table")
+                                continue
+                            
+                            # Standardize column names
+                            column_mapping = {
+                                'RAJ2000': 'ra_deg',
+                                'DEJ2000': 'dec_deg',
+                                'z': 'redshift',
+                                'R_v': 'radius_mpc',
+                                'Vol': 'volume_mpc3',
+                                'RA': 'ra_deg',
+                                'DE': 'dec_deg'
+                            }
+                            df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+                            df['survey'] = 'VIDE'
+                            df['algorithm'] = 'VIDE'
+                            
+                            # Cache the catalog
+                            try:
+                                if ASTROPY_AVAILABLE:
+                                    from astropy.io import fits
+                                    table.write(str(cached_file), format='fits', overwrite=True)
+                                    self.log_message(f"✓ Cached VIDE catalog: {cached_file}")
+                            except Exception as cache_error:
+                                self.log_message(f"    Warning: Failed to cache catalog: {cache_error}")
+                            
+                            self.log_message(f"✓ Downloaded VIDE catalog: {len(df)} voids")
+                            return df
+                        else:
+                            self.log_message(f"    Catalog {catalog_id} returned no results")
+                    except Exception as e:
+                        error_type = type(e).__name__
+                        error_msg = str(e)
+                        self.log_message(f"    Catalog {catalog_id} failed: {error_type}: {error_msg}")
+                        if hasattr(e, '__cause__') and e.__cause__:
+                            self.log_message(f"      Caused by: {type(e.__cause__).__name__}: {str(e.__cause__)}")
+                        continue
+                        
+            except Exception as e:
+                error_type = type(e).__name__
+                error_msg = str(e)
+                self.log_message(f"VIDE catalog download failed: {error_type}: {error_msg}")
+                if hasattr(e, '__cause__') and e.__cause__:
+                    self.log_message(f"  Caused by: {type(e.__cause__).__name__}: {str(e.__cause__)}")
+        
+        # Return empty DataFrame if download fails (processor will use mock)
+        self.log_message("VIDE catalog download failed, will use mock catalog")
+        return pd.DataFrame()
 
     # ========================================================================
     # BAO DATA LOADING (Published literature values)

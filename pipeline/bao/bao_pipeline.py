@@ -58,7 +58,7 @@ class BAOPipeline(AnalysisPipeline):
         self.scale_factor = self.rs_lcdm / self.rs_theory  # ~0.9787
 
         # Initialize data loader for astronomical data sourcing
-        self.data_loader = DataLoader()
+        self.data_loader = DataLoader(log_file=self.log_file)
 
         self.update_metadata('description', 'BAO prediction testing across multiple datasets')
         self.update_metadata('theoretical_prediction', f'Enhanced sound horizon r_s = {self.rs_theory} Mpc (parameter-free)')

@@ -91,7 +91,7 @@ class MLPipeline(AnalysisPipeline):
         self.blind_protocol = None
 
         # Data components
-        self.data_loader = DataLoader()
+        self.data_loader = DataLoader(log_file=self.log_file)
         self.mock_generator = MockDatasetGenerator()
 
         # Pipeline state
@@ -125,7 +125,7 @@ class MLPipeline(AnalysisPipeline):
 
         self.logger.info(f"Using device: {self.device}")
 
-        self.data_loader = DataLoader()
+        self.data_loader = DataLoader(log_file=self.log_file)
         self.e8_system = E8HeteroticSystem(precision='double', validate=True)
 
         self.update_metadata('description', 'Machine learning pattern recognition for H-ΛCDM signatures')
@@ -807,7 +807,7 @@ class MLPipeline(AnalysisPipeline):
         # Use CMB data as primary source for E8 pattern detection
         try:
             from data.loader import DataLoader
-            loader = DataLoader()
+            loader = DataLoader(log_file=self.log_file)
             ell, C_ell, C_ell_err = loader.load_act_dr6()
             self.log_progress(f"  Loaded {len(ell)} CMB multipoles for pattern matching")
         except Exception:

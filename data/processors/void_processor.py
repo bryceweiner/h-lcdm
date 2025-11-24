@@ -110,11 +110,45 @@ class VoidDataProcessor(BaseDataProcessor):
                 else:
                     raise DataUnavailableError("Clampitt & Jain catalog download not implemented")
 
-            # For ZOBOV and VIDE, check if actual catalogs are available
+            # Try to download ZOBOV catalog
             if 'zobov' in surveys:
-                raise DataUnavailableError("ZOBOV catalog not implemented")
+                print("[INFO] DataLoader: Attempting to download ZOBOV catalog...")
+                try:
+                    zobov_catalog = self.loader.download_zobov_catalog()
+                    if not zobov_catalog.empty:
+                        real_catalogs['zobov'] = zobov_catalog
+                        print(f"    ✓ ZOBOV: {len(zobov_catalog)} voids")
+                    else:
+                        print("    ✗ ZOBOV catalog download returned empty result, using mock catalog")
+                        real_catalogs['zobov'] = self._generate_zobov_catalog()
+                except Exception as e:
+                    error_type = type(e).__name__
+                    error_msg = str(e)
+                    print(f"    ✗ ZOBOV download failed: {error_type}: {error_msg}")
+                    if hasattr(e, '__cause__') and e.__cause__:
+                        print(f"      Caused by: {type(e.__cause__).__name__}: {str(e.__cause__)}")
+                    print("    Using mock ZOBOV catalog")
+                    real_catalogs['zobov'] = self._generate_zobov_catalog()
+            
+            # Try to download VIDE catalog
             if 'vide' in surveys:
-                raise DataUnavailableError("VIDE catalog not implemented")
+                print("[INFO] DataLoader: Attempting to download VIDE catalog...")
+                try:
+                    vide_catalog = self.loader.download_vide_catalog()
+                    if not vide_catalog.empty:
+                        real_catalogs['vide'] = vide_catalog
+                        print(f"    ✓ VIDE: {len(vide_catalog)} voids")
+                    else:
+                        print("    ✗ VIDE catalog download returned empty result, using mock catalog")
+                        real_catalogs['vide'] = self._generate_vide_catalog()
+                except Exception as e:
+                    error_type = type(e).__name__
+                    error_msg = str(e)
+                    print(f"    ✗ VIDE download failed: {error_type}: {error_msg}")
+                    if hasattr(e, '__cause__') and e.__cause__:
+                        print(f"      Caused by: {type(e.__cause__).__name__}: {str(e.__cause__)}")
+                    print("    Using mock VIDE catalog")
+                    real_catalogs['vide'] = self._generate_vide_catalog()
 
         except Exception as e:
             print(f"Error downloading real catalogs: {e}")

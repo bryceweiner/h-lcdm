@@ -55,6 +55,8 @@ class CMBPipeline(AnalysisPipeline):
         }
 
         self.data_processor = CMBDataProcessor()
+        # Set up DataLoader with log file for shared logging
+        self.data_processor.loader.log_file = self.log_file
 
         self.update_metadata('description', 'Comprehensive information-theoretic CMB analysis')
         self.update_metadata('analysis_methods', list(self.available_methods.keys()))
