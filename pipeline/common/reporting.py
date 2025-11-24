@@ -1033,10 +1033,10 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                         results_section += f"**Finding:** ✗ BAO measurements show tension with H-ΛCDM prediction ({dataset_consistency_rate:.1%} of datasets consistent)\n\n"
                 else:
                     # Fallback to individual measurement rate if dataset consistency not available
-                if success_rate > 0.5:
-                    results_section += "**Finding:** ✓ BAO measurements show consistency with H-ΛCDM prediction\n\n"
-                else:
-                    results_section += "**Finding:** ✗ BAO measurements show tension with H-ΛCDM prediction\n\n"
+                    if success_rate > 0.5:
+                        results_section += "**Finding:** ✓ BAO measurements show consistency with H-ΛCDM prediction\n\n"
+                    else:
+                        results_section += "**Finding:** ✗ BAO measurements show tension with H-ΛCDM prediction\n\n"
             
             # Forward predictions (preregistered predictions for future data)
             if forward_predictions:
