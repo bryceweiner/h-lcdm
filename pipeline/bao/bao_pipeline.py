@@ -609,7 +609,7 @@ class BAOPipeline(AnalysisPipeline):
         else:
             # Default: Comoving angular diameter distance (D_M/r_d)
             # Used by BOSS, DESI, eBOSS, DES photometric
-        theoretical_value = self._calculate_theoretical_bao_value(z)
+            theoretical_value = self._calculate_theoretical_bao_value(z)
         
         # Calculate gamma and lambda at the calibrated redshift
         # This ensures proper redshift calibration for each survey
@@ -2235,12 +2235,12 @@ class BAOPipeline(AnalysisPipeline):
             # Get dataset names
             dataset_names = list(bao_data.keys())
             if len(dataset_names) < 2:
-            return {
-                'passed': True,
-                'method': 'loo_cv',
-                        'note': 'Insufficient datasets for LOO-CV (need at least 2)',
-                        'n_datasets': len(dataset_names)
-                    }
+                return {
+                    'passed': True,
+                    'method': 'loo_cv',
+                    'note': 'Insufficient datasets for LOO-CV (need at least 2)',
+                    'n_datasets': len(dataset_names)
+                }
                 
             # Original consistency rate
             overall_consistency = consistency_results.get('overall_consistency', {})
@@ -2777,11 +2777,11 @@ class BAOPipeline(AnalysisPipeline):
                     continue
             
             if len(simulated_consistent_rates) == 0:
-            return {
-                        'passed': False,
-                        'error': 'Monte Carlo simulation failed',
-                        'test': 'monte_carlo_validation'
-                    }
+                return {
+                    'passed': False,
+                    'error': 'Monte Carlo simulation failed',
+                    'test': 'monte_carlo_validation'
+                }
                 
             # Under H-ΛCDM (the null hypothesis), we expect:
             # - Consistency rate should be reasonably high (model is correct)

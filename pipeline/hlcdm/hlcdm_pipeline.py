@@ -441,7 +441,7 @@ class HLCDMPipeline(AnalysisPipeline):
         try:
             # Search in Lyman-α forest range
             z_trans = brentq(objective, 1.5, 6.0)
-        return z_trans
+            return z_trans
         except ValueError:
             # If no crossing found, use theoretical estimate
             # Based on information processing rate evolution
@@ -478,7 +478,7 @@ class HLCDMPipeline(AnalysisPipeline):
                     flux_bin = flux[mask]
                     # Correlation strength = 1 - variance (higher variance = lower correlation)
                     correlation_strength.append(1.0 - np.var(flux_bin))
-        else:
+                else:
                     correlation_strength.append(np.nan)
         else:
             correlation_strength = [np.nan] * (len(z_bins) - 1)
@@ -755,7 +755,7 @@ class HLCDMPipeline(AnalysisPipeline):
             frb_times = np.sort(frb_data[time_col].values)
         else:
             # Use redshift as time proxy
-        redshifts = frb_data['redshift'].values
+            redshifts = frb_data['redshift'].values
             frb_times = np.sort(redshifts)
 
         # Calculate time differences
