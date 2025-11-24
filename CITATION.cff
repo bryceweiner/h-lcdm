@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Quantum Anti-Viscosity at Cosmic Recombination: Parameter-Free Prediction of Baryon Acoustic Oscillations from Holographic Information Theory"
+version: "1.0.0"
+date-released: "2025-11-21"
+authors:
+  - given-names: "Bryce"
+    family-names: "Weiner"
+    affiliation: "Information Physics Institute"
+    address: "Sibalom, Antique, Philippines"
+    email: "bryce.weiner@informationphysicsinstitute.net"
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+keywords:
+  - "cosmic microwave background"
+  - "recombination"
+  - "baryon acoustic oscillations"
+  - "information theory"
+  - "quantum measurement"
+  - "superfluidity"
+  - "holographic principle"
+  - "quantum Zeno effect"
+abstract: "We derive from first principles that information processing at cosmic recombination generates quantum anti-viscosity in the baryon-photon plasma through measurement-induced coherence. The information processing rate γ = 1.707 × 10⁻¹⁶ s⁻¹ at z=1100, combined with quantum Zeno backaction from ~10⁹ Thomson scatterings per Hubble time, produces an anti-viscosity coefficient α = -5.7 that enhances the sound horizon by 2.18% to r_s = 150.71 Mpc. This parameter-free mechanism predicts baryon acoustic oscillation observables validated against ten independent surveys (BOSS DR12, DESI Year 1, eBOSS DR16, 6dFGS, WiggleZ, SDSS MGS, SDSS DR7, 2dFGRS, DES Year 1, DES Year 3) spanning z=0.11--2.33. Seven of ten datasets confirm predictions with χ²/dof = 0.60, while three surveys (WiggleZ, SDSS DR7, 2dFGRS) fail due to r_s/D_V measurement format requiring survey-specific treatment. Rigorous statistical validation yields ΔBIC = 0.36 and Bayes factor = 1.20 relative to ΛCDM for the full dataset. When restricting analysis to the seven surveys using direct distance estimators (excluding legacy r_s/D_V extractions), we find strong evidence for H-ΛCDM with ΔBIC = 8.32 and Bayes factor = 64.19. Cross-validation demonstrates consistency in leave-one-out tests, while bootstrap resampling (50,000 iterations) and Monte Carlo validation (50,000 simulations) confirm robustness. We pre-register predictions for DESI Year 3 with cryptographic verification, enabling definitive falsification testing. This framework emerges from holographic entropy bounds and quantum measurement theory, representing the first empirically-validated application of measurement-induced phase transitions at cosmological scales."
+license: "MIT"
+repository-code: "https://github.com/bryceweiner/cmb-phase-transitions"
+identifiers:
+  - type: "doi"
+    value: "10.5281/zenodo.0000000"
+    description: "DOI will be assigned upon publication"
+  - type: "arxiv"
+    value: "arXiv:YYYY.NNNNN"
+    description: "arXiv preprint identifier (to be assigned)"
+preferred-citation:
+  title: "Quantum Anti-Viscosity at Cosmic Recombination: Parameter-Free Prediction of Baryon Acoustic Oscillations from Holographic Information Theory"
+  authors:
+    - given-names: "Bryce"
+      family-names: "Weiner"
+  journal: "The Astrophysical Journal"
+  year: "2025"
+  status: "submitted"
+  note: "Manuscript currently under peer review"
+  type: "article"
+
