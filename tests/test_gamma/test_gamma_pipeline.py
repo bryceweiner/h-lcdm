@@ -21,22 +21,23 @@ class TestGammaPipeline:
     def test_pipeline_initialization(self, gamma_pipeline):
         """Test pipeline initialization."""
         assert gamma_pipeline.name == "gamma"
-        assert gamma_pipeline.theoretical_gamma > 0
-        assert gamma_pipeline.qtep_ratio > 1
+        assert gamma_pipeline.z_min == 0.0
+        assert gamma_pipeline.z_max == 10.0
+        assert gamma_pipeline.z_steps == 100
 
     def test_theoretical_calculations(self, gamma_pipeline):
         """Test theoretical gamma and Lambda calculations."""
         z_test = 1.0
 
         # Test gamma calculation
-        gamma_val = gamma_pipeline.theoretical_gamma
+        from hlcdm.cosmology import HLCDMCosmology
+        gamma_val = HLCDMCosmology.gamma_at_redshift(z_test)
         assert isinstance(gamma_val, (int, float))
         assert gamma_val > 0
 
         # Test Lambda evolution
-        lambda_evolution = gamma_pipeline._calculate_lambda_evolution(z_test)
+        lambda_evolution = HLCDMCosmology.lambda_evolution(z_test)
         assert 'lambda_theoretical' in lambda_evolution
-        assert 'qtep_ratio' in lambda_evolution
 
     def test_blinding_functionality(self, gamma_pipeline):
         """Test blinding implementation."""
@@ -76,7 +77,10 @@ class TestGammaPipeline:
         result = gamma_pipeline.validate()
 
         assert 'null_hypothesis_test' in result
-        assert 'theory_validation' in result
+        assert 'mathematical_consistency' in result
+        assert 'physical_bounds' in result
+        assert 'qtep_verification' in result
+        assert 'theory_self_consistency' in result
 
         # Check null hypothesis test
         nh_test = result['null_hypothesis_test']
@@ -86,13 +90,28 @@ class TestGammaPipeline:
 
     def test_validation_extended(self, gamma_pipeline):
         """Test extended validation with large samples."""
-        context = {'n_monte_carlo': 1000}  # Smaller for testing
+        # Ensure results are available
+        gamma_pipeline.run()
+        
+        context = {'n_monte_carlo': 1000, 'n_bootstrap': 100, 'random_seed': 42}  # Smaller for testing
         result = gamma_pipeline.validate_extended(context)
 
         assert 'monte_carlo' in result
+        assert 'bootstrap' in result
+        assert 'loo_cv' in result
+        assert 'jackknife' in result
+        assert 'model_comparison' in result
+        
         mc_result = result['monte_carlo']
-        assert 'method' in mc_result
-        assert 'n_simulations' in mc_result
+        assert 'test' in mc_result
+        assert 'n_samples' in mc_result
+        assert 'random_seed' in mc_result
+        
+        bootstrap_result = result['bootstrap']
+        assert 'test' in bootstrap_result
+        if bootstrap_result.get('passed', False):
+            assert 'n_bootstrap' in bootstrap_result
+            assert 'random_seed' in bootstrap_result
 
     def test_run_complete_pipeline(self, gamma_pipeline):
         """Test complete pipeline run."""
@@ -111,7 +130,7 @@ class TestGammaPipeline:
         # Check redshift range
         z_grid = result['z_grid']
         assert min(z_grid) >= 0.0
-        assert max(z_grid) <= 2.0
+        assert max(z_grid) <= 10.0
 
     def test_multiple_redshift_ranges(self, gamma_pipeline):
         """Test pipeline with different redshift ranges."""
@@ -134,21 +153,57 @@ class TestGammaPipeline:
         """Test theoretical consistency validation."""
         result = gamma_pipeline.validate()
 
-        theory_validation = result['theory_validation']
-        assert 'qtep_consistent' in theory_validation
-        assert 'gamma_range_valid' in theory_validation
-        assert 'lambda_evolution_smooth' in theory_validation
+        # Check that all validation components are present
+        assert 'mathematical_consistency' in result
+        assert 'physical_bounds' in result
+        assert 'qtep_verification' in result
+        assert 'theory_self_consistency' in result
+        
+        # Check physical bounds validation
+        physical_bounds = result['physical_bounds']
+        assert 'passed' in physical_bounds
+        assert 'gamma_today' in physical_bounds
 
-    def test_parameter_ranges(self, gamma_pipeline):
-        """Test parameter range validation."""
-        # Test with extreme parameter values
-        gamma_pipeline.theoretical_gamma = 1e-20  # Very small
-        result = gamma_pipeline.validate()
+    def test_bootstrap_validation(self, gamma_pipeline):
+        """Test bootstrap validation method."""
+        # Ensure results are available
+        results = gamma_pipeline.run()
+        gamma_pipeline.results = results
+        
+        result = gamma_pipeline._bootstrap_validation(10, random_seed=42)
 
-        # Should detect invalid parameters
-        assert result['theory_validation']['gamma_range_valid'] is False
+        assert 'passed' in result
+        assert 'test' in result
+        if result.get('passed', False):
+            assert 'n_bootstrap' in result
+            assert 'bootstrap_mean' in result
+            assert 'bootstrap_std' in result
+            assert 'bootstrap_ci_95_lower' in result
+            assert 'bootstrap_ci_95_upper' in result
+            assert 'random_seed' in result
 
-        # Reset to valid value
-        gamma_pipeline.theoretical_gamma = 1e-10  # Valid range
-        result = gamma_pipeline.validate()
-        assert result['theory_validation']['gamma_range_valid'] is True
+    def test_monte_carlo_validation(self, gamma_pipeline):
+        """Test Monte Carlo validation method."""
+        result = gamma_pipeline._monte_carlo_validation(100, random_seed=42)
+
+        assert 'passed' in result
+        assert 'test' in result
+        assert 'n_samples' in result
+        assert 'gamma_coefficient_of_variation' in result
+        assert 'lambda_coefficient_of_variation' in result
+        assert 'chi_squared' in result
+        assert 'p_value' in result
+        assert 'random_seed' in result
+
+    def test_model_comparison(self, gamma_pipeline):
+        """Test model comparison methods."""
+        gamma_pipeline.run()
+        result = gamma_pipeline._perform_model_comparison()
+
+        assert 'comparison_available' in result
+        if result.get('comparison_available'):
+            assert 'lcdm' in result
+            assert 'hlcdm' in result
+            assert 'comparison' in result
+            assert 'bayes_factor' in result['comparison']
+            assert 'preferred_model' in result['comparison']

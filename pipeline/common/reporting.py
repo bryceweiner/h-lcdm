@@ -820,14 +820,101 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
         # Extract key findings based on pipeline type
         if pipeline_name == 'gamma':
             theory_summary = main_results.get('theory_summary', {})
+            z_grid = main_results.get('z_grid', [])
+            gamma_values = main_results.get('gamma_values', [])
+            lambda_evolution = main_results.get('lambda_evolution', [])
+            
+            results_section += f"### Theoretical γ(z) and Λ_eff(z) Predictions\n\n"
+            results_section += "**H-ΛCDM Theoretical Prediction:** Parameter-free calculation of information processing rate γ(z) and effective cosmological constant Λ_eff(z) as functions of redshift.\n\n"
+            
             if theory_summary:
                 present_day = theory_summary.get('present_day', {})
-                results_section += f"### Theoretical Predictions\n\n"
-                results_section += f"**Present-day information processing rate:** γ(z=0) = {present_day.get('gamma_s^-1', 'N/A'):.2e} s⁻¹\n\n"
-                results_section += f"**QTEP ratio:** {theory_summary.get('qtep_ratio', 'N/A'):.3f} (predicted: 2.257)\n\n"
+                recombination = theory_summary.get('recombination_era', {})
                 evolution = theory_summary.get('evolution_ratios', {})
+                
+                results_section += f"**Present-day values (z=0):**\n\n"
+                results_section += f"- Information processing rate: γ(z=0) = {present_day.get('gamma_s^-1', 'N/A'):.2e} s⁻¹\n"
+                results_section += f"- Effective cosmological constant: Λ_eff(z=0) = {present_day.get('lambda_m^-2', 'N/A'):.2e} m⁻²\n\n"
+                
+                results_section += f"**Recombination era values (z={recombination.get('redshift', 1100):.0f}):**\n\n"
+                results_section += f"- Information processing rate: γ(z={recombination.get('redshift', 1100):.0f}) = {recombination.get('gamma_s^-1', 'N/A'):.2e} s⁻¹\n"
+                results_section += f"- Effective cosmological constant: Λ_eff(z={recombination.get('redshift', 1100):.0f}) = {recombination.get('lambda_m^-2', 'N/A'):.2e} m⁻²\n\n"
+                
                 if evolution:
-                    results_section += f"**Redshift evolution:** γ(z=1100)/γ(z=0) = {evolution.get('gamma_recomb/gamma_today', 'N/A'):.2f}\n\n"
+                    gamma_evol = evolution.get('gamma_recomb/gamma_today', 'N/A')
+                    lambda_evol = evolution.get('lambda_recomb/lambda_today', 'N/A')
+                    results_section += f"**Evolution ratios:**\n\n"
+                    results_section += f"- γ(z=1100)/γ(z=0) = {gamma_evol:.2f}\n"
+                    results_section += f"- Λ_eff(z=1100)/Λ_eff(z=0) = {lambda_evol:.2f}\n\n"
+                
+                qtep_ratio = theory_summary.get('qtep_ratio', 'N/A')
+                results_section += f"**QTEP ratio:** {qtep_ratio:.3f} (theoretical prediction: 2.257 = ln(2)/(1-ln(2)))\n\n"
+                
+                key_equations = theory_summary.get('key_equations', [])
+                if key_equations:
+                    results_section += "**Key theoretical equations:**\n\n"
+                    for eq in key_equations:
+                        results_section += f"- {eq}\n"
+                    results_section += "\n"
+            
+            # Model comparison results
+            model_comparison = main_results.get('model_comparison', {})
+            if model_comparison and model_comparison.get('comparison_available', False):
+                results_section += "### Model Comparison: H-ΛCDM vs ΛCDM\n\n"
+                results_section += "Quantitative comparison using BIC, AIC, and Bayesian evidence.\n\n"
+                
+                comparison = model_comparison.get('comparison', {})
+                hlcdm = model_comparison.get('hlcdm', {})
+                lcdm = model_comparison.get('lcdm', {})
+                
+                results_section += f"**Data Points:** {model_comparison.get('n_data_points', 'N/A')} redshift points\n\n"
+                
+                results_section += "**H-ΛCDM Model:**\n\n"
+                results_section += f"- χ² = {hlcdm.get('chi_squared', 'N/A'):.2f}\n"
+                results_section += f"- log L = {hlcdm.get('log_likelihood', 'N/A'):.2f}\n"
+                results_section += f"- AIC = {hlcdm.get('aic', 'N/A'):.2f}\n"
+                results_section += f"- BIC = {hlcdm.get('bic', 'N/A'):.2f}\n"
+                results_section += f"- Parameters: {hlcdm.get('n_parameters', 0)} (parameter-free prediction)\n\n"
+                
+                results_section += "**ΛCDM Model:**\n\n"
+                results_section += f"- χ² = {lcdm.get('chi_squared', 'N/A'):.2f}\n"
+                results_section += f"- log L = {lcdm.get('log_likelihood', 'N/A'):.2f}\n"
+                results_section += f"- AIC = {lcdm.get('aic', 'N/A'):.2f}\n"
+                results_section += f"- BIC = {lcdm.get('bic', 'N/A'):.2f}\n"
+                results_section += f"- Parameters: {lcdm.get('n_parameters', 0)}\n\n"
+                
+                delta_aic = comparison.get('delta_aic', 0)
+                delta_bic = comparison.get('delta_bic', 0)
+                bayes_factor = comparison.get('bayes_factor', 1.0)
+                preferred = comparison.get('preferred_model', 'UNKNOWN')
+                evidence_strength = comparison.get('evidence_strength', 'UNKNOWN')
+                
+                results_section += "**Comparison Metrics:**\n\n"
+                results_section += f"- ΔAIC = AIC_ΛCDM - AIC_H-ΛCDM = {delta_aic:.2f}\n"
+                if abs(delta_aic) < 2:
+                    results_section += "  → Inconclusive (|ΔAIC| < 2)\n"
+                elif abs(delta_aic) > 6:
+                    results_section += "  → Strong evidence for H-ΛCDM (|ΔAIC| > 6)\n"
+                else:
+                    results_section += "  → Moderate evidence\n"
+                
+                results_section += f"- ΔBIC = BIC_ΛCDM - BIC_H-ΛCDM = {delta_bic:.2f}\n"
+                if abs(delta_bic) < 2:
+                    results_section += "  → Inconclusive (|ΔBIC| < 2)\n"
+                elif abs(delta_bic) > 6:
+                    results_section += "  → Strong evidence for H-ΛCDM (|ΔBIC| > 6)\n"
+                else:
+                    results_section += "  → Moderate evidence\n"
+                
+                results_section += f"- Bayes Factor B = P(data|H-ΛCDM) / P(data|ΛCDM) = {bayes_factor:.2f}\n"
+                results_section += f"  (log B = {comparison.get('log_bayes_factor', 0):.2f})\n"
+                results_section += f"  → {evidence_strength} evidence\n\n"
+                
+                results_section += f"**Preferred Model:** {preferred}\n\n"
+                
+                interpretation = comparison.get('interpretation', '')
+                if interpretation:
+                    results_section += f"**Interpretation:**\n\n{interpretation}\n\n"
         
         elif pipeline_name == 'bao':
             rs_theory = main_results.get('theoretical_rs', 150.71)
@@ -1884,13 +1971,67 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
             qtep_ratio = theory_summary.get('qtep_ratio', 0)
             predicted_qtep = 2.257
             
-            conclusion += f"### Did We Find What We Were Looking For?\n\n"
-            if abs(qtep_ratio - predicted_qtep) < 0.1:
-                conclusion += f"**YES** - The QTEP ratio matches the theoretical prediction (observed: {qtep_ratio:.3f}, predicted: {predicted_qtep:.3f}).\n\n"
-            else:
-                conclusion += f"**PARTIAL** - QTEP ratio shows some deviation (observed: {qtep_ratio:.3f}, predicted: {predicted_qtep:.3f}).\n\n"
+            # Get null hypothesis test result
+            null_hypothesis = validation.get('null_hypothesis_test', {})
+            null_rejected = null_hypothesis.get('null_hypothesis_rejected', False)
+            null_p_value = null_hypothesis.get('p_value', 1.0)
             
-            conclusion += f"The theoretical framework produces redshift-dependent evolution of γ(z) and Λ_eff(z) as predicted by H-ΛCDM. "
+            # Get model comparison if available
+            model_comparison = main_results.get('model_comparison', {})
+            
+            conclusion += f"### Did We Find What We Were Looking For?\n\n"
+            
+            # Check QTEP ratio match
+            qtep_match = abs(qtep_ratio - predicted_qtep) < 0.1 if isinstance(qtep_ratio, (int, float)) else False
+            
+            # Determine overall finding
+            if null_rejected and qtep_match:
+                conclusion += f"**YES** - Theoretical predictions match H-ΛCDM framework:\n\n"
+                conclusion += f"- QTEP ratio matches theoretical prediction (observed: {qtep_ratio:.3f}, predicted: {predicted_qtep:.3f})\n"
+                conclusion += f"- Null hypothesis test rejects ΛCDM cosmology (p = {null_p_value:.3f})\n"
+                conclusion += f"- Evidence supports evolving γ(z) in H-ΛCDM framework\n\n"
+            elif null_rejected:
+                conclusion += f"**YES** - Null hypothesis test rejects ΛCDM cosmology (p = {null_p_value:.3f}), providing evidence for evolving γ(z) in H-ΛCDM framework.\n\n"
+                if not qtep_match:
+                    conclusion += f"**Note:** QTEP ratio shows some deviation (observed: {qtep_ratio:.3f}, predicted: {predicted_qtep:.3f}), requiring further investigation.\n\n"
+            elif qtep_match:
+                conclusion += f"**PARTIAL** - QTEP ratio matches theoretical prediction (observed: {qtep_ratio:.3f}, predicted: {predicted_qtep:.3f}), but null hypothesis test does not reject ΛCDM (p = {null_p_value:.3f}).\n\n"
+            else:
+                conclusion += f"**PARTIAL** - Theoretical framework produces redshift-dependent evolution, but:\n\n"
+                conclusion += f"- QTEP ratio shows deviation (observed: {qtep_ratio:.3f}, predicted: {predicted_qtep:.3f})\n"
+                conclusion += f"- Null hypothesis test does not reject ΛCDM (p = {null_p_value:.3f})\n\n"
+            
+            conclusion += f"The theoretical framework produces redshift-dependent evolution of γ(z) and Λ_eff(z) as predicted by H-ΛCDM.\n\n"
+            
+            # Add model comparison results if available
+            if model_comparison and model_comparison.get('comparison_available', False):
+                comparison = model_comparison.get('comparison', {})
+                preferred = comparison.get('preferred_model', '')
+                bayes_factor = comparison.get('bayes_factor', 1.0)
+                delta_aic = comparison.get('delta_aic', 0.0)
+                
+                conclusion += f"**Model Comparison (H-ΛCDM vs ΛCDM):**\n\n"
+                conclusion += f"Quantitative model comparison using BIC, AIC, and Bayesian evidence:\n"
+                conclusion += f"- Preferred model: {preferred}\n"
+                if isinstance(bayes_factor, (int, float)):
+                    conclusion += f"- Bayes factor B = {bayes_factor:.2f} "
+                    if bayes_factor > 1:
+                        conclusion += "(B > 1 favors H-ΛCDM)\n"
+                    else:
+                        conclusion += "(B < 1 favors ΛCDM)\n"
+                if isinstance(delta_aic, (int, float)):
+                    conclusion += f"- ΔAIC = {delta_aic:.2f} "
+                    if delta_aic > 0:
+                        conclusion += "(positive values favor H-ΛCDM)\n"
+                    else:
+                        conclusion += "(negative values favor ΛCDM)\n"
+                
+                interpretation = comparison.get('interpretation', '')
+                if interpretation:
+                    conclusion += f"\n{interpretation}\n"
+                
+                conclusion += "\n"
+            
             conclusion += f"Validation status: **{overall_status}**.\n\n"
         
         elif pipeline_name == 'bao':
