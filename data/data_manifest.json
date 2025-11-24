@@ -1,0 +1,226 @@
+{
+  "sources": {
+    "act_dr6_ee": {
+      "name": "act_dr6_ee",
+      "modality": "cmb",
+      "survey": "ACT",
+      "n_samples": 1000,
+      "features": [
+        "ell",
+        "C_ell",
+        "C_ell_err",
+        "bispectrum",
+        "topological_features"
+      ],
+      "redshift_range": null,
+      "magnitude_range": null,
+      "data_quality": "gold",
+      "provenance": "published ACT DR6",
+      "url": "https://lambda.gsfc.nasa.gov/product/act/act_dr6_lensing/",
+      "h_lcdm_signals_blinded": [
+        "phase_transitions_at_ell_1076_1706_2336"
+      ]
+    },
+    "planck_2018_ee": {
+      "name": "planck_2018_ee",
+      "modality": "cmb",
+      "survey": "Planck",
+      "n_samples": 800,
+      "features": [
+        "ell",
+        "C_ell",
+        "C_ell_err",
+        "bispectrum"
+      ],
+      "redshift_range": null,
+      "magnitude_range": null,
+      "data_quality": "gold",
+      "provenance": "published Planck 2018",
+      "url": "https://pla.esac.esa.int/",
+      "h_lcdm_signals_blinded": [
+        "phase_transitions_at_ell_1076_1706_2336"
+      ]
+    },
+    "boss_dr12_bao": {
+      "name": "boss_dr12_bao",
+      "modality": "bao",
+      "survey": "BOSS DR12",
+      "n_samples": 3,
+      "features": [
+        "z",
+        "D_M_over_r_d",
+        "error",
+        "correlation_matrix"
+      ],
+      "redshift_range": [
+        0.38,
+        0.61
+      ],
+      "magnitude_range": null,
+      "data_quality": "gold",
+      "provenance": "published Alam et al. 2017",
+      "url": null,
+      "h_lcdm_signals_blinded": [
+        "enhanced_sound_horizon_rs_150.71"
+      ]
+    },
+    "desi_y1_bao": {
+      "name": "desi_y1_bao",
+      "modality": "bao",
+      "survey": "DESI Year 1",
+      "n_samples": 3,
+      "features": [
+        "z",
+        "D_M_over_r_d",
+        "error"
+      ],
+      "redshift_range": [
+        0.51,
+        1.01
+      ],
+      "magnitude_range": null,
+      "data_quality": "silver",
+      "provenance": "published DESI Collaboration 2024",
+      "url": null,
+      "h_lcdm_signals_blinded": [
+        "enhanced_sound_horizon_rs_150.71"
+      ]
+    },
+    "voids_deduplicated": {
+      "name": "voids_deduplicated",
+      "modality": "void",
+      "survey": "SDSS DR7 (combined Douglass+Clampitt+ZOBOV+VIDE)",
+      "n_samples": 8000,
+      "features": [
+        "ra",
+        "dec",
+        "z",
+        "size",
+        "ellipticity",
+        "density_contrast",
+        "alignment_angles"
+      ],
+      "redshift_range": [
+        0.01,
+        0.15
+      ],
+      "magnitude_range": null,
+      "data_quality": "gold",
+      "provenance": "Douglass et al. 2023 + deduplication",
+      "url": null,
+      "h_lcdm_signals_blinded": [
+        "e8_hetereotic_alignment_C_25_32"
+      ]
+    },
+    "sdss_dr16_galaxies": {
+      "name": "sdss_dr16_galaxies",
+      "modality": "galaxy",
+      "survey": "SDSS DR16",
+      "n_samples": 50000,
+      "features": [
+        "ra",
+        "dec",
+        "z",
+        "u_mag",
+        "g_mag",
+        "r_mag",
+        "i_mag",
+        "z_mag",
+        "petrosian_radius",
+        "concentration",
+        "u_minus_r"
+      ],
+      "redshift_range": [
+        0.01,
+        1.0
+      ],
+      "magnitude_range": [
+        15,
+        21
+      ],
+      "data_quality": "gold",
+      "provenance": "SDSS DR16 spectroscopic",
+      "url": null,
+      "h_lcdm_signals_blinded": [
+        "holographic_clustering"
+      ]
+    },
+    "frb_catalog": {
+      "name": "frb_catalog",
+      "modality": "frb",
+      "survey": "Multiple telescopes",
+      "n_samples": 200,
+      "features": [
+        "ra",
+        "dec",
+        "z",
+        "dm",
+        "timing_intervals",
+        "dispersion_measure"
+      ],
+      "redshift_range": null,
+      "magnitude_range": null,
+      "data_quality": "silver",
+      "provenance": "Published FRB catalogs",
+      "url": null,
+      "h_lcdm_signals_blinded": [
+        "little_bang_information_saturation"
+      ]
+    },
+    "lyman_alpha_forest": {
+      "name": "lyman_alpha_forest",
+      "modality": "lyman_alpha",
+      "survey": "Multiple quasar spectra",
+      "n_samples": 1000,
+      "features": [
+        "wavelength",
+        "flux",
+        "continuum",
+        "optical_depth",
+        "correlation_function"
+      ],
+      "redshift_range": [
+        2.0,
+        4.0
+      ],
+      "magnitude_range": null,
+      "data_quality": "silver",
+      "provenance": "Published quasar spectra",
+      "url": null,
+      "h_lcdm_signals_blinded": [
+        "phase_transitions_at_z_2.5"
+      ]
+    },
+    "jwst_early_galaxies": {
+      "name": "jwst_early_galaxies",
+      "modality": "jwst",
+      "survey": "JWST NIRCam",
+      "n_samples": 100,
+      "features": [
+        "ra",
+        "dec",
+        "z",
+        "f200w_mag",
+        "f277w_mag",
+        "f356w_mag",
+        "half_light_radius",
+        "sersic_index",
+        "mass_estimate"
+      ],
+      "redshift_range": [
+        8.0,
+        15.0
+      ],
+      "magnitude_range": [
+        24,
+        30
+      ],
+      "data_quality": "silver",
+      "provenance": "Published JWST catalogs",
+      "url": null,
+      "h_lcdm_signals_blinded": [
+        "anti_viscosity_mass_limits"
+      ]
+    }
+  }
+}
