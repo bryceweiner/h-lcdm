@@ -17,6 +17,8 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 from datetime import datetime
 import warnings
+import networkx as nx
+from scipy.spatial.distance import cdist
 
 from .base_processor import BaseDataProcessor
 from ..loader import DataLoader, DataUnavailableError
@@ -65,9 +67,9 @@ class VoidDataProcessor(BaseDataProcessor):
         """
         dataset_name = "void_catalogs_combined_processed"
         
-        # Default to all required surveys
+        # Default to all available surveys (state-of-the-art published void catalogs)
         if surveys is None:
-            surveys = ['sdss_dr7_douglass', 'sdss_dr7_clampitt', 'zobov', 'vide']
+            surveys = ['sdss_dr7_douglass', 'sdss_dr7_clampitt']
 
         # Check if processed data exists and is fresh
         deduplicated_cache_path = self.processed_data_dir / "voids_deduplicated.pkl"
@@ -110,45 +112,10 @@ class VoidDataProcessor(BaseDataProcessor):
                 else:
                     raise DataUnavailableError("Clampitt & Jain catalog download not implemented")
 
-            # Try to download ZOBOV catalog
-            if 'zobov' in surveys:
-                print("[INFO] DataLoader: Attempting to download ZOBOV catalog...")
-                try:
-                    zobov_catalog = self.loader.download_zobov_catalog()
-                    if not zobov_catalog.empty:
-                        real_catalogs['zobov'] = zobov_catalog
-                        print(f"    ✓ ZOBOV: {len(zobov_catalog)} voids")
-                    else:
-                        print("    ✗ ZOBOV catalog download returned empty result, using mock catalog")
-                        real_catalogs['zobov'] = self._generate_zobov_catalog()
-                except Exception as e:
-                    error_type = type(e).__name__
-                    error_msg = str(e)
-                    print(f"    ✗ ZOBOV download failed: {error_type}: {error_msg}")
-                    if hasattr(e, '__cause__') and e.__cause__:
-                        print(f"      Caused by: {type(e.__cause__).__name__}: {str(e.__cause__)}")
-                    print("    Using mock ZOBOV catalog")
-                    real_catalogs['zobov'] = self._generate_zobov_catalog()
-            
-            # Try to download VIDE catalog
-            if 'vide' in surveys:
-                print("[INFO] DataLoader: Attempting to download VIDE catalog...")
-                try:
-                    vide_catalog = self.loader.download_vide_catalog()
-                    if not vide_catalog.empty:
-                        real_catalogs['vide'] = vide_catalog
-                        print(f"    ✓ VIDE: {len(vide_catalog)} voids")
-                    else:
-                        print("    ✗ VIDE catalog download returned empty result, using mock catalog")
-                        real_catalogs['vide'] = self._generate_vide_catalog()
-                except Exception as e:
-                    error_type = type(e).__name__
-                    error_msg = str(e)
-                    print(f"    ✗ VIDE download failed: {error_type}: {error_msg}")
-                    if hasattr(e, '__cause__') and e.__cause__:
-                        print(f"      Caused by: {type(e.__cause__).__name__}: {str(e.__cause__)}")
-                    print("    Using mock VIDE catalog")
-                    real_catalogs['vide'] = self._generate_vide_catalog()
+            # Note: ZOBOV and VIDE are void-finding algorithms, not catalogs themselves.
+            # Void catalogs are created by applying these algorithms to survey data.
+            # We use the published void catalogs from Douglass et al. and Clampitt & Jain,
+            # which represent the state-of-the-art peer-reviewed void catalogs.
 
         except Exception as e:
             print(f"Error downloading real catalogs: {e}")
@@ -195,12 +162,16 @@ class VoidDataProcessor(BaseDataProcessor):
         # Get E8 characteristic angles
         e8_angles = self.e8_system.get_characteristic_angles()
 
+        # Construct void network and calculate clustering coefficient
+        network_analysis = self._construct_void_network(combined)
+
         processed_data = {
             'catalog': combined,
             'surveys_processed': surveys,
             'total_voids': len(combined),
             'survey_breakdown': combined['survey'].value_counts().to_dict() if 'survey' in combined.columns else {},
-            'e8_characteristic_angles': e8_angles
+            'e8_characteristic_angles': e8_angles,
+            'network_analysis': network_analysis
         }
 
         # Save processed data
@@ -412,40 +383,23 @@ class VoidDataProcessor(BaseDataProcessor):
         orientations = void_catalog['orientation_deg'].values
         e8_angles = self.e8_system.get_characteristic_angles()
 
-        # Calculate alignments with E8 angles
         alignments = {}
 
-        # Debug: check what e8_angles contains
-        print(f"E8 angles type: {type(e8_angles)}")
-        if isinstance(e8_angles, dict):
-            print(f"E8 angles keys: {list(e8_angles.keys())}")
-        else:
-            print(f"E8 angles content: {e8_angles}")
-
-        # Handle different possible formats
         if isinstance(e8_angles, dict) and 'hierarchical_structure' in e8_angles:
             hierarchical_structure = e8_angles['hierarchical_structure']
         elif isinstance(e8_angles, dict):
             hierarchical_structure = e8_angles
         else:
-            # If it's not a dict, we can't process it
             return {
                 'error': f'E8 angles returned unexpected type: {type(e8_angles)}',
                 'n_voids_analyzed': len(void_catalog)
             }
 
-        # Filter to only process dict items that have 'angles' key
         alignments = {}
         for tier_name, tier_data in hierarchical_structure.items():
+            if not tier_name.startswith('level_'):
+                continue
             if isinstance(tier_data, dict) and 'angles' in tier_data:
-                tier_angles = tier_data['angles']
-                print(f"Processing {tier_name}: angles type {type(tier_angles)}, shape {getattr(tier_angles, 'shape', 'no shape')}")
-                alignments[tier_name] = self._calculate_angle_alignments(
-                    orientations, tier_angles
-                )
-            else:
-                print(f"Skipping {tier_name}: not a dict with 'angles' key (type: {type(tier_data)})")
-            if tier_name.startswith('level_') and 'angles' in tier_data:
                 tier_angles = tier_data['angles']
                 alignments[tier_name] = self._calculate_angle_alignments(
                     orientations, tier_angles
@@ -502,6 +456,116 @@ class VoidDataProcessor(BaseDataProcessor):
             'n_expected_random': n_expected_random,
             'significance': n_alignments / n_expected_random if n_expected_random > 0 else 0,
             'alignment_details': alignments[:100]  # Limit for storage
+        }
+
+    def _construct_void_network(self, catalog: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Construct void network using graph-theoretic methods.
+        
+        Edges are defined based on spatial proximity, connecting voids separated
+        by less than a characteristic linking length derived from the mean inter-void
+        separation (3 × mean effective radius).
+        
+        Parameters:
+            catalog: Void catalog DataFrame with spatial coordinates
+            
+        Returns:
+            dict: Network analysis results including clustering coefficient
+        """
+        if catalog is None or len(catalog) == 0:
+            return {'error': 'Empty catalog'}
+        
+        # Check for required columns
+        required_cols = ['ra', 'dec', 'redshift']
+        missing_cols = [col for col in required_cols if col not in catalog.columns]
+        if missing_cols:
+            return {'error': f'Missing required columns: {missing_cols}'}
+        
+        # Convert to comoving coordinates (simplified: use redshift as proxy)
+        # In full implementation, would use cosmology to convert to Mpc/h
+        n_voids = len(catalog)
+        
+        # Calculate mean effective radius for linking length
+        if 'reff' in catalog.columns:
+            mean_reff = catalog['reff'].mean()
+        elif 'radius' in catalog.columns:
+            mean_reff = catalog['radius'].mean()
+        else:
+            # Default: assume typical void radius ~20 Mpc/h
+            mean_reff = 20.0
+        
+        # Linking length: 3 × mean effective radius
+        linking_length = 3.0 * mean_reff
+        
+        # Convert angular coordinates to approximate comoving distance
+        # Simplified: use redshift as distance proxy (would use cosmology in full implementation)
+        redshifts = catalog['redshift'].values
+        
+        # Create approximate 3D positions (in redshift space)
+        # For proper implementation, would convert (ra, dec, z) to (x, y, z) comoving coordinates
+        positions = np.column_stack([
+            catalog['ra'].values,
+            catalog['dec'].values,
+            redshifts * 3000.0  # Rough conversion: z * c/H0 ≈ z * 3000 Mpc/h
+        ])
+        
+        # Calculate pairwise distances
+        distances = cdist(positions, positions, metric='euclidean')
+        
+        # Construct network graph
+        G = nx.Graph()
+        G.add_nodes_from(range(n_voids))
+        
+        # Add edges for voids within linking length
+        edges_added = 0
+        for i in range(n_voids):
+            for j in range(i + 1, n_voids):
+                if distances[i, j] <= linking_length:
+                    G.add_edge(i, j)
+                    edges_added += 1
+        
+        # Calculate clustering coefficient: C(G) = (1/N) Σ [2E_i / (k_i(k_i-1))]
+        clustering_coefficients = []
+        for node in G.nodes():
+            neighbors = list(G.neighbors(node))
+            k_i = len(neighbors)
+            
+            if k_i < 2:
+                # Node has fewer than 2 neighbors, local clustering is undefined
+                clustering_coefficients.append(0.0)
+            else:
+                # Count edges between neighbors
+                E_i = 0
+                for u in neighbors:
+                    for v in neighbors:
+                        if u < v and G.has_edge(u, v):
+                            E_i += 1
+                
+                # Local clustering coefficient
+                local_cc = (2.0 * E_i) / (k_i * (k_i - 1))
+                clustering_coefficients.append(local_cc)
+        
+        # Global clustering coefficient (mean of local coefficients)
+        if len(clustering_coefficients) > 0:
+            global_clustering = np.mean(clustering_coefficients)
+        else:
+            global_clustering = 0.0
+        
+        # Network statistics
+        n_edges = G.number_of_edges()
+        n_nodes = G.number_of_nodes()
+        mean_degree = 2.0 * n_edges / n_nodes if n_nodes > 0 else 0.0
+        
+        return {
+            'clustering_coefficient': float(global_clustering),
+            'clustering_std': float(np.std(clustering_coefficients)) if len(clustering_coefficients) > 1 else 0.0,
+            'n_nodes': n_nodes,
+            'n_edges': n_edges,
+            'mean_degree': float(mean_degree),
+            'linking_length': float(linking_length),
+            'mean_reff': float(mean_reff),
+            'local_clustering_coefficients': clustering_coefficients,
+            'graph': G  # Store graph for further analysis
         }
 
     def process(self, survey_names: List[str]) -> Dict[str, Any]:
