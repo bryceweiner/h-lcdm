@@ -45,7 +45,10 @@ class VoidPipeline(AnalysisPipeline):
             'vide': 'VIDE pipeline void catalog'
         }
 
+        # Initialize data processor
         self.data_processor = VoidDataProcessor()
+        # Set up DataLoader with log file for shared logging
+        self.data_processor.loader.log_file = self.log_file
 
         self.update_metadata('description', 'Cosmic void structure analysis for E8×E8 alignment')
         self.update_metadata('available_surveys', list(self.available_surveys.keys()))

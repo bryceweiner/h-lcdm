@@ -17,6 +17,7 @@ from pathlib import Path
 import json
 import time
 import numpy as np
+from datetime import datetime
 
 
 class AnalysisPipeline(ABC):
@@ -44,14 +45,20 @@ class AnalysisPipeline(ABC):
         self.json_dir = self.base_output_dir / "json"
         self.reports_dir = self.base_output_dir / "reports"
         self.figures_dir = self.base_output_dir / "figures"
+        self.logs_dir = self.base_output_dir / "logs"
         
         # Create directories
         self.json_dir.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         self.figures_dir.mkdir(parents=True, exist_ok=True)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
         
         # Keep output_dir for backward compatibility (points to json_dir)
         self.output_dir = self.json_dir
+        
+        # Set up log file
+        self.log_file = self.logs_dir / f"{self.name}_pipeline.log"
+        self._log_file_handle = None
 
         # Initialize data directories
         self.downloaded_data_dir = Path("downloaded_data")
@@ -770,6 +777,10 @@ class AnalysisPipeline(ABC):
             json.dump(results_package, f, indent=2, default=str)
 
         print(f"✓ Results saved: {filepath}")
+        
+        # Close log file after saving results
+        self.close_log_file()
+        
         return filepath
 
     def load_results(self, filename: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -805,13 +816,44 @@ class AnalysisPipeline(ABC):
 
     def log_progress(self, message: str):
         """
-        Log progress message.
+        Log progress message to both console and log file.
 
         Parameters:
             message (str): Progress message
         """
         timestamp = time.strftime("%H:%M:%S")
-        print(f"[{timestamp}] {self.name}: {message}")
+        log_line = f"[{timestamp}] {self.name}: {message}"
+        
+        # Print to console
+        print(log_line)
+        
+        # Write to log file
+        try:
+            if self._log_file_handle is None:
+                self._log_file_handle = open(self.log_file, 'a', encoding='utf-8')
+                # Write header on first open
+                self._log_file_handle.write(f"\n{'='*80}\n")
+                self._log_file_handle.write(f"Pipeline: {self.name}\n")
+                self._log_file_handle.write(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                self._log_file_handle.write(f"{'='*80}\n")
+            
+            self._log_file_handle.write(log_line + "\n")
+            self._log_file_handle.flush()
+        except Exception as e:
+            # Don't fail if logging fails
+            pass
+    
+    def close_log_file(self):
+        """Close the log file handle."""
+        if self._log_file_handle is not None:
+            try:
+                self._log_file_handle.write(f"\n{'='*80}\n")
+                self._log_file_handle.write(f"Ended: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                self._log_file_handle.write(f"{'='*80}\n\n")
+                self._log_file_handle.close()
+                self._log_file_handle = None
+            except Exception:
+                pass
 
     def get_data_paths(self) -> Dict[str, Path]:
         """
