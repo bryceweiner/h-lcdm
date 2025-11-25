@@ -443,19 +443,62 @@ The H-ΛCDM framework makes specific, parameter-free predictions across multiple
         return formatted
 
     def _format_void_results(self, results: Dict[str, Any]) -> str:
-        """Format void analysis results."""
+        """Format void analysis results for the H-ΛCDM vs ΛCDM framework."""
         formatted = ""
 
-        if 'analysis_summary' in results:
-            summary = results['analysis_summary']
-            formatted += f"- **Voids analyzed:** {summary.get('total_voids_analyzed', 0)}\n"
+        # Void data summary
+        void_data = results.get('void_data', {})
+        if void_data:
+            formatted += f"- **Voids analyzed:** {void_data.get('total_voids', 0):,}\n"
+            survey_breakdown = void_data.get('survey_breakdown', {})
+            if survey_breakdown:
+                formatted += f"- **Survey breakdown:** {', '.join([f'{k}: {v:,}' for k, v in survey_breakdown.items()])}\n"
 
-            clustering = summary.get('clustering_summary', {})
-            formatted += f"- **Clustering coefficient:** {clustering.get('observed_cc', 'N/A'):.3f}\n"
-            formatted += f"- **Theoretical value:** {clustering.get('theoretical_cc', 'N/A'):.3f}\n"
-            formatted += f"- **Consistency:** {clustering.get('statistical_consistency', False)}\n"
+        # Network analysis
+        network_analysis = void_data.get('network_analysis', {})
+        if network_analysis and 'error' not in network_analysis:
+            formatted += f"- **Network nodes:** {network_analysis.get('n_nodes', 'N/A'):,}\n"
+            formatted += f"- **Network edges:** {network_analysis.get('n_edges', 'N/A'):,}\n"
+            formatted += f"- **Mean degree:** {network_analysis.get('mean_degree', 'N/A'):.2f}\n"
 
-            formatted += f"- **Overall conclusion:** {summary.get('overall_conclusion', 'N/A')}\n"
+        # Clustering analysis
+        clustering_analysis = results.get('clustering_analysis', {})
+        if clustering_analysis:
+            c_obs = clustering_analysis.get('observed_clustering_coefficient', 0.0)
+            c_std = clustering_analysis.get('observed_clustering_std', 0.0)
+            formatted += f"- **Observed clustering:** C_obs = {c_obs:.3f} ± {c_std:.3f}\n"
+
+            # Model comparison
+            model_comparison = clustering_analysis.get('model_comparison', {})
+            if model_comparison:
+                best_model = model_comparison.get('best_model', 'unknown')
+                scores = model_comparison.get('overall_scores', {})
+                hlcdm_score = scores.get('hlcdm_combined', float('inf'))
+                lcmd_score = scores.get('lcmd_connectivity_only', float('inf'))
+
+                formatted += f"- **Best model:** {best_model.upper()}\n"
+                formatted += f"- **H-ΛCDM χ² score:** {hlcdm_score:.1f}\n"
+                formatted += f"- **ΛCDM χ² score:** {lcmd_score:.1f}\n"
+
+                # Detailed preferences
+                detailed = model_comparison.get('detailed_preferences', {})
+                if detailed.get('connectivity_hlcdm_better'):
+                    formatted += f"- **Connectivity analysis:** Favors H-ΛCDM\n"
+                if detailed.get('baryonic_hlcdm_better'):
+                    formatted += f"- **Baryonic analysis:** Favors H-ΛCDM\n"
+
+            # Processing costs
+            processing_costs = clustering_analysis.get('processing_costs', {})
+            if processing_costs:
+                connectivity_obs = processing_costs.get('connectivity_cost_observed', {}).get('value', 0.0)
+                baryonic_obs = processing_costs.get('baryonic_cost_observed', {}).get('value', 0.0)
+                formatted += f"- **Connectivity cost:** {connectivity_obs:.3f}\n"
+                formatted += f"- **Baryonic cost:** {baryonic_obs:.3f}\n"
+
+            # Interpretation
+            interpretation = clustering_analysis.get('interpretation', '')
+            if interpretation:
+                formatted += f"- **Interpretation:** {interpretation[:200]}{'...' if len(interpretation) > 200 else ''}\n"
 
         return formatted
 
