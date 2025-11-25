@@ -376,7 +376,14 @@ class VoidDataProcessor(BaseDataProcessor):
         """
         if catalog is None or len(catalog) == 0:
             return {'error': 'Empty catalog'}
-        
+
+        # Filter out voids with invalid redshifts (redshift must be > 0 for comoving distance)
+        valid_redshift_mask = catalog['redshift'] > 0.01  # Minimum redshift threshold
+        catalog = catalog[valid_redshift_mask].copy()
+
+        if len(catalog) == 0:
+            return {'error': 'No voids with valid redshifts (> 0.01)'}
+
         # Check for required columns (handle both naming conventions)
         ra_col = 'ra' if 'ra' in catalog.columns else ('ra_deg' if 'ra_deg' in catalog.columns else None)
         dec_col = 'dec' if 'dec' in catalog.columns else ('dec_deg' if 'dec_deg' in catalog.columns else None)
@@ -398,10 +405,18 @@ class VoidDataProcessor(BaseDataProcessor):
         # Calculate mean effective radius for linking length
         if 'reff' in catalog.columns:
             mean_reff = catalog['reff'].mean()
+        elif 'radius_eff' in catalog.columns:
+            mean_reff = catalog['radius_eff'].mean()
+        elif 'radius_mpc' in catalog.columns:
+            mean_reff = catalog['radius_mpc'].mean()
         elif 'radius' in catalog.columns:
             mean_reff = catalog['radius'].mean()
         else:
             # Default: assume typical void radius ~20 Mpc/h
+            mean_reff = 20.0
+
+        # Handle NaN values
+        if np.isnan(mean_reff) or mean_reff <= 0:
             mean_reff = 20.0
         
         # Linking length: 3 × mean effective radius
