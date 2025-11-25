@@ -8,7 +8,6 @@ Handles:
 - Void catalog downloading and normalization
 - Orientation measurement and validation
 - Aspect ratio calculations
-- E8×E8 heterotic alignment analysis
 """
 
 import numpy as np
@@ -22,7 +21,6 @@ from scipy.spatial.distance import cdist
 
 from .base_processor import BaseDataProcessor
 from ..loader import DataLoader, DataUnavailableError
-from hlcdm import E8HeteroticSystem
 
 
 class VoidDataProcessor(BaseDataProcessor):
@@ -31,7 +29,7 @@ class VoidDataProcessor(BaseDataProcessor):
 
     Implements rigorous astronomical methods for void orientation measurement
     using maximum likelihood estimation from available shape parameters,
-    accounting for survey geometry effects and E8×E8 heterotic alignment.
+    accounting for survey geometry effects.
     """
 
     def __init__(self, downloaded_data_dir: str = "downloaded_data",
@@ -45,9 +43,6 @@ class VoidDataProcessor(BaseDataProcessor):
         """
         super().__init__(downloaded_data_dir, processed_data_dir)
         self.loader = DataLoader(downloaded_data_dir, processed_data_dir)
-
-        # Initialize E8×E8 system for characteristic angles
-        self.e8_system = E8HeteroticSystem()
 
     def process_void_catalogs(self, surveys: List[str] = None,
                              force_reprocess: bool = False) -> Dict[str, Any]:
@@ -159,9 +154,6 @@ class VoidDataProcessor(BaseDataProcessor):
         # Calculate orientations
         combined = self._measure_orientations(combined)
 
-        # Get E8 characteristic angles
-        e8_angles = self.e8_system.get_characteristic_angles()
-
         # Construct void network and calculate clustering coefficient
         network_analysis = self._construct_void_network(combined)
 
@@ -170,7 +162,6 @@ class VoidDataProcessor(BaseDataProcessor):
             'surveys_processed': surveys,
             'total_voids': len(combined),
             'survey_breakdown': combined['survey'].value_counts().to_dict() if 'survey' in combined.columns else {},
-            'e8_characteristic_angles': e8_angles,
             'network_analysis': network_analysis
         }
 
@@ -367,96 +358,7 @@ class VoidDataProcessor(BaseDataProcessor):
 
         return df
 
-    def analyze_e8_alignments(self, void_catalog: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Analyze alignments with E8×E8 heterotic characteristic angles.
 
-        Parameters:
-            void_catalog: Processed void catalog
-
-        Returns:
-            dict: Alignment analysis results
-        """
-        if 'orientation_deg' not in void_catalog.columns:
-            return {'error': 'No orientation data available'}
-
-        orientations = void_catalog['orientation_deg'].values
-        e8_angles = self.e8_system.get_characteristic_angles()
-
-        alignments = {}
-
-        if isinstance(e8_angles, dict) and 'hierarchical_structure' in e8_angles:
-            hierarchical_structure = e8_angles['hierarchical_structure']
-        elif isinstance(e8_angles, dict):
-            hierarchical_structure = e8_angles
-        else:
-            return {
-                'error': f'E8 angles returned unexpected type: {type(e8_angles)}',
-                'n_voids_analyzed': len(void_catalog)
-            }
-
-        alignments = {}
-        for tier_name, tier_data in hierarchical_structure.items():
-            if not tier_name.startswith('level_'):
-                continue
-            if isinstance(tier_data, dict) and 'angles' in tier_data:
-                tier_angles = tier_data['angles']
-                alignments[tier_name] = self._calculate_angle_alignments(
-                    orientations, tier_angles
-                )
-
-        return {
-            'e8_angles': e8_angles,
-            'alignments': alignments,
-            'n_voids_analyzed': len(void_catalog)
-        }
-
-    def _calculate_angle_alignments(self, observed_angles: np.ndarray,
-                                   theoretical_angles,
-                                   tolerance: float = 5.0) -> Dict[str, Any]:
-        """
-        Calculate alignments between observed and theoretical angles.
-
-        Parameters:
-            observed_angles: Measured void orientations (degrees)
-            theoretical_angles: E8 characteristic angles (degrees)
-            tolerance: Alignment tolerance (degrees)
-
-        Returns:
-            dict: Alignment statistics
-        """
-        # Ensure theoretical_angles is iterable
-        if not hasattr(theoretical_angles, '__iter__'):
-            print(f"Warning: theoretical_angles not iterable: {theoretical_angles}")
-            return {'n_alignments': 0, 'n_expected_random': 0, 'significance': 0}
-
-        alignments = []
-
-        for obs_angle in observed_angles:
-            for theory_angle in theoretical_angles:
-                # Check alignment (accounting for 180° periodicity)
-                angle_diff = min(
-                    abs(obs_angle - theory_angle) % 180,
-                    abs(obs_angle - theory_angle + 180) % 180,
-                    abs(obs_angle - theory_angle - 180) % 180
-                )
-
-                if angle_diff <= tolerance:
-                    alignments.append({
-                        'observed': obs_angle,
-                        'theoretical': theory_angle,
-                        'difference': angle_diff
-                    })
-
-        n_alignments = len(alignments)
-        n_expected_random = len(observed_angles) * len(theoretical_angles) * (tolerance / 90.0)
-
-        return {
-            'n_alignments': n_alignments,
-            'n_expected_random': n_expected_random,
-            'significance': n_alignments / n_expected_random if n_expected_random > 0 else 0,
-            'alignment_details': alignments[:100]  # Limit for storage
-        }
 
     def _construct_void_network(self, catalog: pd.DataFrame) -> Dict[str, Any]:
         """
@@ -475,10 +377,18 @@ class VoidDataProcessor(BaseDataProcessor):
         if catalog is None or len(catalog) == 0:
             return {'error': 'Empty catalog'}
         
-        # Check for required columns
-        required_cols = ['ra', 'dec', 'redshift']
-        missing_cols = [col for col in required_cols if col not in catalog.columns]
-        if missing_cols:
+        # Check for required columns (handle both naming conventions)
+        ra_col = 'ra' if 'ra' in catalog.columns else ('ra_deg' if 'ra_deg' in catalog.columns else None)
+        dec_col = 'dec' if 'dec' in catalog.columns else ('dec_deg' if 'dec_deg' in catalog.columns else None)
+
+        if ra_col is None or dec_col is None or 'redshift' not in catalog.columns:
+            missing_cols = []
+            if ra_col is None:
+                missing_cols.extend(['ra', 'ra_deg'])
+            if dec_col is None:
+                missing_cols.extend(['dec', 'dec_deg'])
+            if 'redshift' not in catalog.columns:
+                missing_cols.append('redshift')
             return {'error': f'Missing required columns: {missing_cols}'}
         
         # Convert to comoving coordinates (simplified: use redshift as proxy)
@@ -497,17 +407,41 @@ class VoidDataProcessor(BaseDataProcessor):
         # Linking length: 3 × mean effective radius
         linking_length = 3.0 * mean_reff
         
-        # Convert angular coordinates to approximate comoving distance
-        # Simplified: use redshift as distance proxy (would use cosmology in full implementation)
-        redshifts = catalog['redshift'].values
-        
-        # Create approximate 3D positions (in redshift space)
-        # For proper implementation, would convert (ra, dec, z) to (x, y, z) comoving coordinates
-        positions = np.column_stack([
-            catalog['ra'].values,
-            catalog['dec'].values,
-            redshifts * 3000.0  # Rough conversion: z * c/H0 ≈ z * 3000 Mpc/h
-        ])
+        # Convert angular coordinates to comoving Cartesian coordinates
+        # Use cosmology for proper coordinate transformation
+        try:
+            from astropy import units as u
+            from astropy.coordinates import SkyCoord
+            from astropy.cosmology import Planck18 as cosmo
+
+            # Convert to SkyCoord and then to Cartesian
+            coords = SkyCoord(
+                ra=catalog[ra_col].values * u.deg,
+                dec=catalog[dec_col].values * u.deg,
+                distance=cosmo.comoving_distance(catalog['redshift'].values)
+            )
+
+            # Get Cartesian coordinates in Mpc
+            cart_coords = coords.cartesian
+            positions = np.column_stack([
+                cart_coords.x.value,
+                cart_coords.y.value,
+                cart_coords.z.value
+            ])
+
+        except ImportError:
+            # Fallback: simplified approximation (not physically accurate)
+            warnings.warn("astropy not available, using simplified coordinate transformation")
+            ra_rad = np.radians(catalog[ra_col].values)
+            dec_rad = np.radians(catalog[dec_col].values)
+            # Approximate comoving distance (rough approximation)
+            r_comov = catalog['redshift'].values * 3000.0  # Mpc/h approximation
+
+            positions = np.column_stack([
+                r_comov * np.cos(dec_rad) * np.cos(ra_rad),
+                r_comov * np.cos(dec_rad) * np.sin(ra_rad),
+                r_comov * np.sin(dec_rad)
+            ])
         
         # Calculate pairwise distances
         distances = cdist(positions, positions, metric='euclidean')
@@ -556,14 +490,20 @@ class VoidDataProcessor(BaseDataProcessor):
         n_nodes = G.number_of_nodes()
         mean_degree = 2.0 * n_edges / n_nodes if n_nodes > 0 else 0.0
         
+        # Handle NaN values for JSON compatibility
+        def safe_float(value):
+            """Convert to float, replacing NaN with None for JSON compatibility."""
+            result = float(value)
+            return result if not np.isnan(result) else None
+
         return {
-            'clustering_coefficient': float(global_clustering),
-            'clustering_std': float(np.std(clustering_coefficients)) if len(clustering_coefficients) > 1 else 0.0,
+            'clustering_coefficient': safe_float(global_clustering),
+            'clustering_std': safe_float(np.std(clustering_coefficients)) if len(clustering_coefficients) > 1 else 0.0,
             'n_nodes': n_nodes,
             'n_edges': n_edges,
-            'mean_degree': float(mean_degree),
-            'linking_length': float(linking_length),
-            'mean_reff': float(mean_reff),
+            'mean_degree': safe_float(mean_degree),
+            'linking_length': safe_float(linking_length),
+            'mean_reff': safe_float(mean_reff),
             'local_clustering_coefficients': clustering_coefficients,
             'graph': G  # Store graph for further analysis
         }

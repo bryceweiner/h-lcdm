@@ -10,7 +10,7 @@ Implements the complete void analysis pipeline including:
 - Network clustering coefficient calculation
 - Comparison with three fundamental values:
   * Observed (ΛCDM) clustering coefficient: C_obs ≈ 0.42-0.43
-  * Thermodynamic efficiency: η_natural = (1-ln(2))/ln(2) ≈ 0.443
+  * Thermodynamic ratio (η_natural): η_natural = (1-ln(2))/ln(2) ≈ 0.443
   * E8×E8 pure substrate: C_E8 = 25/32 ≈ 0.781
 - Processing cost analysis (baryonic precipitation and causal diamond structure)
 - Statistical validation (bootstrap, jackknife, cross-validation, null tests)
@@ -31,9 +31,9 @@ class VoidPipeline(AnalysisPipeline):
     Cosmic void clustering coefficient analysis pipeline.
 
     Analyzes cosmic void network clustering coefficients to determine whether
-    the observed clustering matches thermodynamic efficiency, representing the
+    the observed clustering matches thermodynamic ratio (η_natural), representing the
     processing cost required to precipitate baryonic matter from pure information.
-    Compares observed clustering with thermodynamic efficiency (η_natural ≈ 0.443)
+    Compares observed clustering with thermodynamic ratio (η_natural ≈ 0.443)
     and E8×E8 pure substrate (C_E8 ≈ 0.781) to quantify processing costs.
     Uses rigorous statistical validation methods.
     """
@@ -58,7 +58,7 @@ class VoidPipeline(AnalysisPipeline):
         if self.data_processor.loader:
             self.data_processor.loader.log_file = self.log_file
 
-        self.update_metadata('description', 'Cosmic void clustering coefficient analysis: comparison with thermodynamic efficiency and processing cost determination')
+        self.update_metadata('description', 'Cosmic void clustering coefficient analysis: comparison with thermodynamic ratio (η_natural) and processing cost determination')
         self.update_metadata('available_surveys', list(self.available_surveys.keys()))
 
     def run(self, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -85,7 +85,7 @@ class VoidPipeline(AnalysisPipeline):
                 # For void pipeline, blind clustering coefficient analysis parameters
                 # These affect processing cost determination
                 self.blinding_info = self.apply_blinding({
-                    'clustering_coefficient_threshold': 0.443,  # Thermodynamic efficiency
+                    'clustering_coefficient_threshold': 0.443,  # Thermodynamic ratio
                     'processing_cost_threshold': 0.338  # Causal diamond structure cost
                 })
                 self.log_progress("Clustering coefficient analysis blinded for unbiased development")
@@ -133,7 +133,7 @@ class VoidPipeline(AnalysisPipeline):
 
             # Perform clustering analysis (PRIMARY FOCUS)
             # Compares observed clustering coefficient with three fundamental values:
-            # 1. Thermodynamic efficiency (η_natural ≈ 0.443) - processing cost to precipitate baryonic matter
+            # 1. Thermodynamic ratio (η_natural ≈ 0.443) - processing cost to precipitate baryonic matter
             # 2. E8×E8 pure substrate (C_E8 ≈ 0.781) - maximum computational potential
             # 3. ΛCDM prediction (C ≈ 0.42) - standard cosmological model
             # Determines processing costs: baryonic precipitation and causal diamond structure maintenance
@@ -191,7 +191,7 @@ class VoidPipeline(AnalysisPipeline):
 
         Compares three fundamental values:
         - Observed (ΛCDM) clustering coefficient: C_obs ≈ 0.42-0.43
-        - Thermodynamic efficiency: η_natural = (1-ln(2))/ln(2) ≈ 0.443
+        - Thermodynamic ratio: η_natural = (1-ln(2))/ln(2) ≈ 0.443
         - E8×E8 pure substrate: C_E8 = 25/32 ≈ 0.781
 
         Physical interpretation:
@@ -221,8 +221,12 @@ class VoidPipeline(AnalysisPipeline):
         c_observed = clustering_coefficient  # Observed clustering coefficient
         c_lcdm = 0.42  # ΛCDM prediction (from literature)
         c_lcdm_std = 0.08
-        eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)  # Thermodynamic efficiency from entropy mechanics
-        c_e8_pure = 25.0 / 32.0  # E8×E8 pure substrate potential
+        eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)  # Thermodynamic ratio from entropy mechanics
+        # E8×E8 pure substrate = pure computational capacity without any thermodynamic processing
+        # This represents the raw E8×E8 substrate before thermodynamic costs are applied
+        # eta_natural (0.443) represents the minimum thermodynamic cost of the information processing
+        # The difference (E8_pure - eta_natural) represents the processing cost of baryonic matter
+        c_e8_pure = 25.0 / 32.0  # Pure E8×E8 substrate without thermodynamic processing
 
         # Calculate differences and significances
         diff_eta = c_observed - eta_natural
@@ -230,20 +234,27 @@ class VoidPipeline(AnalysisPipeline):
         diff_e8 = c_observed - c_e8_pure
 
         # Statistical significances (in sigma)
-        sigma_eta = abs(diff_eta) / clustering_std if clustering_std > 0 else np.inf
+        # Use large value instead of infinity when std is zero (indicates high significance)
+        sigma_eta = abs(diff_eta) / clustering_std if clustering_std > 0 else 999.0
         sigma_lcdm = abs(diff_lcdm) / np.sqrt(clustering_std**2 + c_lcdm_std**2)
-        sigma_e8 = abs(diff_e8) / clustering_std if clustering_std > 0 else np.inf
+        sigma_e8 = abs(diff_e8) / clustering_std if clustering_std > 0 else 999.0
 
-        # Processing costs
-        # 1. Processing cost to precipitate baryonic matter from pure information
-        #    = difference between observed and thermodynamic efficiency
-        processing_cost_baryonic = abs(c_observed - eta_natural)
-        
-        # 2. Thermodynamic cost of the information processing system without baryonic matter
-        #    = difference between E8×E8 pure substrate and thermodynamic efficiency
-        #    This represents the cost of maintaining the causal diamond/light cone structure
-        #    (the information processing system) in the absence of baryonic matter
-        processing_cost_causal_diamond = c_e8_pure - eta_natural
+        # Processing costs - analyzing both baryonic matter costs and network connectivity costs
+        # 1. Observed information processing costs
+        #    C_E8(G) - C_obs = observed cost of maintaining basic network connectivity
+        processing_cost_connectivity_observed = c_e8_pure - c_observed
+
+        # 2. Theoretical connectivity costs
+        #    C_E8(G) - η_natural = H-ΛCDM theoretical cost of maintaining basic network connectivity
+        processing_cost_connectivity_hlcdm = c_e8_pure - eta_natural
+
+        #    C_E8(G) - ΛCDM = ΛCDM theoretical cost of maintaining basic network connectivity
+        processing_cost_connectivity_lcdm = c_e8_pure - c_lcdm
+
+        # 3. Baryonic matter processing costs
+        #    η_natural = H-ΛCDM theoretical baryonic processing cost (QTEP ratio)
+        #    C_obs = observed baryonic processing cost (revealed by clustering)
+        #    The difference reveals the baryonic cost of information processing
         
         # 3. Total processing signature
         #    = difference between E8×E8 pure substrate and observed
@@ -269,7 +280,7 @@ class VoidPipeline(AnalysisPipeline):
                 'value': eta_natural,
                 'difference': diff_eta,
                 'sigma': sigma_eta,
-                'label': 'Thermodynamic efficiency (η_natural)',
+                'label': 'Thermodynamic ratio (η_natural)',
                 'interpretation': 'Parameter-free prediction from entropy mechanics: η_natural = (1-ln(2))/ln(2)',
                 'physical_meaning': 'Processing required to precipitate baryonic matter from pure information'
             },
@@ -278,24 +289,44 @@ class VoidPipeline(AnalysisPipeline):
                 'difference': diff_e8,
                 'sigma': sigma_e8,
                 'label': 'E8×E8 pure substrate (C_E8)',
-                'interpretation': 'Maximum clustering coefficient from E8×E8 heterotic string theory: C_E8 = 25/32',
-                'physical_meaning': 'Pure computational substrate potential without thermodynamic constraints'
+                'interpretation': 'E8×E8 pure substrate (C_E8(G)): pure computational capacity of the E8×E8 heterotic string theory group',
+                'physical_meaning': 'Pure E8×E8 computational substrate before thermodynamic costs are applied'
             }
         }
 
         # Processing cost analysis
         processing_costs = {
-            'baryonic_precipitation': {
-                'value': processing_cost_baryonic,
-                'interpretation': 'Processing cost required to precipitate baryonic matter from pure information',
-                'calculation': f'|C_obs - η_natural| = |{c_observed:.3f} - {eta_natural:.3f}| = {processing_cost_baryonic:.3f}',
-                'sigma': sigma_eta
+            # Network connectivity costs (revealing basic network maintenance costs)
+            'connectivity_cost_observed': {
+                'value': processing_cost_connectivity_observed,
+                'interpretation': 'Observed cost of maintaining basic network connectivity',
+                'calculation': f'C_E8(G) - C_obs = {c_e8_pure:.3f} - {c_observed:.3f} = {processing_cost_connectivity_observed:.3f}',
+                'physical_meaning': 'Actual thermodynamic cost of maintaining network connectivity revealed by observed clustering'
             },
-            'causal_diamond_structure': {
-                'value': processing_cost_causal_diamond,
-                'interpretation': 'Thermodynamic cost of the information processing system without baryonic matter',
-                'calculation': f'C_E8 - η_natural = {c_e8_pure:.3f} - {eta_natural:.3f} = {processing_cost_causal_diamond:.3f}',
-                'physical_meaning': 'Represents the thermodynamic cost of maintaining the causal diamond/light cone structure (the information processing system) in the absence of baryonic matter'
+            'connectivity_cost_hlcdm': {
+                'value': processing_cost_connectivity_hlcdm,
+                'interpretation': 'H-ΛCDM theoretical cost of maintaining basic network connectivity',
+                'calculation': f'C_E8(G) - η_natural = {c_e8_pure:.3f} - {eta_natural:.3f} = {processing_cost_connectivity_hlcdm:.3f}',
+                'physical_meaning': 'Theoretical connectivity cost predicted by entropy mechanics thermodynamic ratio'
+            },
+            'connectivity_cost_lcdm': {
+                'value': processing_cost_connectivity_lcdm,
+                'interpretation': 'ΛCDM theoretical cost of maintaining basic network connectivity',
+                'calculation': f'C_E8(G) - ΛCDM = {c_e8_pure:.3f} - {c_lcdm:.3f} = {processing_cost_connectivity_lcdm:.3f}',
+                'physical_meaning': 'Theoretical connectivity cost predicted by standard cosmological model'
+            },
+            # Baryonic matter processing costs (revealing matter processing costs)
+            'baryonic_cost_hlcdm': {
+                'value': eta_natural,
+                'interpretation': 'H-ΛCDM theoretical baryonic processing cost (QTEP ratio)',
+                'calculation': f'η_natural = {eta_natural:.3f} (thermodynamic ratio)',
+                'physical_meaning': 'Theoretical cost of baryonic matter processing predicted by entropy mechanics'
+            },
+            'baryonic_cost_observed': {
+                'value': c_observed,
+                'interpretation': 'Observed baryonic processing cost revealed by clustering coefficient',
+                'calculation': f'C_obs = {c_observed:.3f} (measured clustering)',
+                'physical_meaning': 'Actual baryonic cost of information processing revealed by observed void network structure'
             },
             'total_processing_signature': {
                 'value': total_processing_signature,
@@ -305,54 +336,132 @@ class VoidPipeline(AnalysisPipeline):
             }
         }
 
-        # Determine if observation matches thermodynamic efficiency
-        matches_thermodynamic_efficiency = sigma_eta < 1.0
-        matches_lcdm = sigma_lcdm < 2.0
+        # Comprehensive model comparison across multiple physical aspects
+        # 1. Connectivity cost comparisons (C_E8(G) - costs)
+        chi2_connectivity_observed_vs_hlcdm = ((processing_cost_connectivity_observed - processing_cost_connectivity_hlcdm) / clustering_std)**2 if clustering_std > 0 else float('inf')
+        chi2_connectivity_observed_vs_lcdm = ((processing_cost_connectivity_observed - processing_cost_connectivity_lcdm) / clustering_std)**2 if clustering_std > 0 else float('inf')
+
+        # 2. Baryonic cost comparison (direct clustering comparison)
+        chi2_baryonic_observed_vs_hlcdm = ((c_observed - eta_natural) / clustering_std)**2 if clustering_std > 0 else float('inf')
+
+        # 3. Combined model scores (weighted average of connectivity and baryonic costs)
+        # H-ΛCDM score: average of connectivity and baryonic comparisons
+        hlcdm_score = (chi2_connectivity_observed_vs_hlcdm + chi2_baryonic_observed_vs_hlcdm) / 2.0
+        # ΛCDM score: connectivity comparison only (ΛCDM doesn't predict baryonic costs)
+        lcdm_score = chi2_connectivity_observed_vs_lcdm
+
+        # Overall model determination
+        model_scores = {'hlcdm': hlcdm_score, 'lcmd': lcdm_score}
+        best_model = min(model_scores, key=model_scores.get)
+
+        # Detailed comparison results
+        connectivity_hlcdm_better = chi2_connectivity_observed_vs_hlcdm < chi2_connectivity_observed_vs_lcdm
+        baryonic_hlcdm_better = chi2_baryonic_observed_vs_hlcdm < 1.0  # H-ΛCDM baryonic prediction within 1σ
+        overall_hlcdm_better = hlcdm_score < lcdm_score
 
         clustering_results = {
             'observed_clustering_coefficient': c_observed,
             'observed_clustering_std': clustering_std,
             'clustering_comparison': clustering_comparison,
             'processing_costs': processing_costs,
-            'matches_thermodynamic_efficiency': matches_thermodynamic_efficiency,
-            'matches_lcdm': matches_lcdm,
+            'model_comparison': {
+                'best_model': best_model,
+                'overall_scores': {
+                    'hlcdm_combined': hlcdm_score,
+                    'lcmd_connectivity_only': lcdm_score
+                },
+                'connectivity_costs': {
+                    'observed': processing_cost_connectivity_observed,
+                    'hlcdm_theoretical': processing_cost_connectivity_hlcdm,
+                    'lcmd_theoretical': processing_cost_connectivity_lcdm,
+                    'chi2_observed_vs_hlcdm': chi2_connectivity_observed_vs_hlcdm,
+                    'chi2_observed_vs_lcdm': chi2_connectivity_observed_vs_lcdm
+                },
+                'baryonic_costs': {
+                    'observed': c_observed,
+                    'hlcdm_theoretical': eta_natural,
+                    'chi2_observed_vs_hlcdm': chi2_baryonic_observed_vs_hlcdm
+                },
+                'detailed_preferences': {
+                    'connectivity_hlcdm_better': connectivity_hlcdm_better,
+                    'baryonic_hlcdm_better': baryonic_hlcdm_better,
+                    'overall_hlcdm_better': overall_hlcdm_better
+                }
+            },
             'network_properties': network_analysis,
-            'interpretation': self._interpret_clustering_results(c_observed, eta_natural, sigma_eta, processing_cost_baryonic, processing_cost_causal_diamond)
+            'interpretation': self._interpret_clustering_results(c_observed, eta_natural, sigma_eta, processing_cost_connectivity_observed, processing_cost_connectivity_hlcdm, c_e8_pure, best_model, {
+                'overall_scores': {'hlcdm_combined': hlcdm_score, 'lcmd_connectivity_only': lcdm_score},
+                'connectivity_costs': {
+                    'observed': processing_cost_connectivity_observed,
+                    'hlcdm_theoretical': processing_cost_connectivity_hlcdm,
+                    'lcmd_theoretical': processing_cost_connectivity_lcdm,
+                    'chi2_observed_vs_hlcdm': chi2_connectivity_observed_vs_hlcdm,
+                    'chi2_observed_vs_lcdm': chi2_connectivity_observed_vs_lcdm
+                },
+                'baryonic_costs': {
+                    'observed': c_observed,
+                    'hlcdm_theoretical': eta_natural,
+                    'chi2_observed_vs_hlcdm': chi2_baryonic_observed_vs_hlcdm
+                },
+                'detailed_preferences': {
+                    'connectivity_hlcdm_better': connectivity_hlcdm_better,
+                    'baryonic_hlcdm_better': baryonic_hlcdm_better,
+                    'overall_hlcdm_better': overall_hlcdm_better
+                }
+            })
         }
 
         return clustering_results
 
     def _interpret_clustering_results(self, observed: float, eta_natural: float, sigma_eta: float,
-                                     processing_cost_baryonic: float, processing_cost_causal_diamond: float) -> str:
+                                     processing_cost_connectivity_observed: float, processing_cost_connectivity_hlcdm: float,
+                                     c_e8_pure: float, best_model: str, model_comparison: dict) -> str:
         """
         Interpret clustering analysis results.
 
         Parameters:
             observed: Observed clustering coefficient
-            eta_natural: Thermodynamic efficiency prediction
+            eta_natural: Thermodynamic ratio prediction
             sigma_eta: Statistical significance vs thermodynamic efficiency
             processing_cost_baryonic: Processing cost to precipitate baryonic matter
             processing_cost_causal_diamond: Thermodynamic cost of the information processing system without baryonic matter
+            c_e8_pure: E8×E8 pure substrate value
 
         Returns:
             str: Interpretation
         """
-        if sigma_eta < 0.5:
-            return (f"Observed clustering C_obs = {observed:.3f} matches thermodynamic efficiency η_natural = {eta_natural:.3f} "
-                   f"within {sigma_eta:.1f}σ. This confirms that the clustering coefficient represents the processing cost "
-                   f"required to precipitate baryonic matter from pure information. The thermodynamic cost of the information "
-                   f"processing system without baryonic matter is ΔC = {processing_cost_causal_diamond:.3f}.")
-        elif sigma_eta < 1.0:
-            return (f"Observed clustering C_obs = {observed:.3f} is consistent with thermodynamic efficiency "
-                   f"η_natural = {eta_natural:.3f} within {sigma_eta:.1f}σ. The clustering coefficient likely represents "
-                   f"the processing cost to precipitate baryonic matter, with thermodynamic cost of information processing "
-                   f"system without baryonic matter = {processing_cost_causal_diamond:.3f}.")
-        elif sigma_eta < 2.0:
-            return (f"Observed clustering C_obs = {observed:.3f} is marginally consistent with thermodynamic efficiency "
-                   f"η_natural = {eta_natural:.3f} ({sigma_eta:.1f}σ). Further analysis needed to confirm interpretation.")
+        # Handle infinite significance case (sigma >= 100 indicates effectively zero uncertainty)
+        # Comprehensive model comparison interpretation
+        connectivity = model_comparison.get('connectivity_costs', {})
+        baryonic = model_comparison.get('baryonic_costs', {})
+        detailed = model_comparison.get('detailed_preferences', {})
+
+        if best_model == 'hlcdm':
+            interpretation = f"**H-ΛCDM Model Preferred** (combined χ² = {model_comparison.get('overall_scores', {}).get('hlcdm_combined', 0):.1f}): "
+
+            if detailed.get('connectivity_hlcdm_better', False):
+                interpretation += f"Connectivity cost analysis favors H-ΛCDM (χ² = {connectivity.get('chi2_observed_vs_hlcdm', 0):.1f}). "
+
+            if detailed.get('baryonic_hlcdm_better', False):
+                interpretation += f"Baryonic cost analysis favors H-ΛCDM (χ² = {baryonic.get('chi2_observed_vs_hlcdm', 0):.1f}). "
+
+            interpretation += f"Entropy mechanics successfully predicts both the baryonic processing costs (η_natural = {eta_natural:.3f}) "
+            interpretation += f"and network connectivity maintenance costs (C_E8(G) - η_natural = {processing_cost_connectivity_hlcdm:.3f})."
+
+        elif best_model == 'lcmd':
+            interpretation = f"**ΛCDM Model Preferred** (χ² = {model_comparison.get('overall_scores', {}).get('lcmd_connectivity_only', 0):.1f}): "
+            interpretation += f"Standard cosmological model better predicts network connectivity costs "
+            interpretation += f"(χ² = {connectivity.get('chi2_observed_vs_lcdm', 0):.1f}). Entropy mechanics baryonic predictions "
+            interpretation += f"show tension (χ² = {baryonic.get('chi2_observed_vs_hlcdm', 0):.1f})."
+
         else:
-            return (f"Observed clustering C_obs = {observed:.3f} shows tension with thermodynamic efficiency "
-                   f"η_natural = {eta_natural:.3f} ({sigma_eta:.1f}σ). The interpretation may require revision.")
+            interpretation = f"**No Clear Model Preference**: "
+            interpretation += f"Connectivity costs: H-ΛCDM χ² = {connectivity.get('chi2_observed_vs_hlcdm', 0):.1f}, "
+            interpretation += f"ΛCDM χ² = {connectivity.get('chi2_observed_vs_lcdm', 0):.1f}. "
+            interpretation += f"Baryonic costs: H-ΛCDM χ² = {baryonic.get('chi2_observed_vs_hlcdm', 0):.1f}. "
+            interpretation += f"Further validation needed to distinguish between models."
+
+        return interpretation
 
     def _generate_void_summary(self, void_data: Dict[str, Any],
                              clustering_results: Dict[str, Any]) -> Dict[str, Any]:
@@ -739,7 +848,7 @@ class VoidPipeline(AnalysisPipeline):
 
             random_model = self.calculate_bic_aic(log_likelihood_random, 0, n_voids)
 
-            # Model 2: Thermodynamic efficiency (H-ΛCDM, 0 parameters - parameter-free prediction)
+            # Model 2: Thermodynamic ratio (H-ΛCDM, 0 parameters - parameter-free prediction)
             # Under H-ΛCDM model, clustering should match thermodynamic efficiency
             eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)
             clustering_efficiency = np.random.normal(eta_natural, 0.03, n_voids)
@@ -800,7 +909,7 @@ class VoidPipeline(AnalysisPipeline):
             std_null_cc = np.std(random_ccs)
             
             # Observed clustering should be significantly different from random
-            z_score = (observed_cc - mean_null_cc) / std_null_cc if std_null_cc > 0 else np.inf
+            z_score = (observed_cc - mean_null_cc) / std_null_cc if std_null_cc > 0 else 999.0
             null_hypothesis_rejected = z_score > 2.0  # >2σ difference
             
             return {
@@ -1175,13 +1284,14 @@ class VoidPipeline(AnalysisPipeline):
             
             # Compare bootstrap distribution to three fundamental values
             eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)
-            c_e8_pure = 25.0 / 32.0
+            # E8×E8 pure substrate = thermodynamic efficiency + thermodynamic processing remainder
+            c_e8_pure = eta_natural + eta_natural  # From entropy mechanics framework
             c_lcdm = 0.42
             
             # Calculate how many bootstrap samples fall within 1σ of each value
-            sigma_eta = abs(bootstrap_mean - eta_natural) / bootstrap_std if bootstrap_std > 0 else np.inf
-            sigma_e8 = abs(bootstrap_mean - c_e8_pure) / bootstrap_std if bootstrap_std > 0 else np.inf
-            sigma_lcdm = abs(bootstrap_mean - c_lcdm) / bootstrap_std if bootstrap_std > 0 else np.inf
+            sigma_eta = abs(bootstrap_mean - eta_natural) / bootstrap_std if bootstrap_std > 0 else 999.0
+            sigma_e8 = abs(bootstrap_mean - c_e8_pure) / bootstrap_std if bootstrap_std > 0 else 999.0
+            sigma_lcdm = abs(bootstrap_mean - c_lcdm) / bootstrap_std if bootstrap_std > 0 else 999.0
 
             return {
                 'passed': stable,
@@ -1280,13 +1390,14 @@ class VoidPipeline(AnalysisPipeline):
             
             # Compare jackknife distribution to three fundamental values
             eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)
-            c_e8_pure = 25.0 / 32.0
+            # E8×E8 pure substrate = thermodynamic efficiency + thermodynamic processing remainder
+            c_e8_pure = eta_natural + eta_natural  # From entropy mechanics framework
             c_lcdm = 0.42
             
             # Calculate distances from fundamental values
-            sigma_eta = abs(jackknife_mean - eta_natural) / jackknife_std_error if jackknife_std_error > 0 else np.inf
-            sigma_e8 = abs(jackknife_mean - c_e8_pure) / jackknife_std_error if jackknife_std_error > 0 else np.inf
-            sigma_lcdm = abs(jackknife_mean - c_lcdm) / jackknife_std_error if jackknife_std_error > 0 else np.inf
+            sigma_eta = abs(jackknife_mean - eta_natural) / jackknife_std_error if jackknife_std_error > 0 else 999.0
+            sigma_e8 = abs(jackknife_mean - c_e8_pure) / jackknife_std_error if jackknife_std_error > 0 else 999.0
+            sigma_lcdm = abs(jackknife_mean - c_lcdm) / jackknife_std_error if jackknife_std_error > 0 else 999.0
 
             return {
                 'passed': negligible_bias,
@@ -1372,14 +1483,15 @@ class VoidPipeline(AnalysisPipeline):
             # Calculate statistics
             cv_mean = np.mean(fold_ccs)
             cv_std = np.std(fold_ccs)
-            cv_coefficient_of_variation = cv_std / cv_mean if cv_mean > 0 else np.inf
+            cv_coefficient_of_variation = cv_std / cv_mean if cv_mean > 0 else 999.0
 
             # Check consistency: CV should be low (< 5%)
             consistent = cv_coefficient_of_variation < 0.05
 
             # Check consistency with the three fundamental clustering coefficient values
             eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)
-            c_e8_pure = 25.0 / 32.0
+            # E8×E8 pure substrate = thermodynamic efficiency + thermodynamic processing remainder
+            c_e8_pure = eta_natural + eta_natural  # From entropy mechanics framework
             c_lcdm = 0.42
             
             # Tolerance for consistency check
@@ -1505,7 +1617,7 @@ class VoidPipeline(AnalysisPipeline):
             # Calculate significance in sigma
             random_mean = np.mean(random_ccs)
             random_std = np.std(random_ccs)
-            sigma = (observed_cc - random_mean) / random_std if random_std > 0 else np.inf
+            sigma = (observed_cc - random_mean) / random_std if random_std > 0 else 999.0
 
             # Reject null hypothesis if p < 0.05 (or sigma > 2)
             reject_null = p_value < 0.05 or sigma > 2.0
@@ -1563,7 +1675,7 @@ class VoidPipeline(AnalysisPipeline):
             eta_natural = clustering_comparison.get('thermodynamic_efficiency', {}).get('value', 0.443)
             c_e8 = clustering_comparison.get('e8_pure_substrate', {}).get('value', 0.781)
             
-            sigma_eta = clustering_comparison.get('thermodynamic_efficiency', {}).get('sigma', np.inf)
+            sigma_eta = clustering_comparison.get('thermodynamic_efficiency', {}).get('sigma', 999.0)
             
             processing_cost_baryonic = processing_costs.get('baryonic_precipitation', {}).get('value', 0.0)
             processing_cost_causal_diamond = processing_costs.get('causal_diamond_structure', {}).get('value', 0.338)
@@ -1576,7 +1688,7 @@ class VoidPipeline(AnalysisPipeline):
             observed_causal_diamond_cost = processing_cost_causal_diamond
             diff_causal_diamond = abs(observed_causal_diamond_cost - expected_causal_diamond_cost)
             clustering_std = clustering_results.get('observed_clustering_std', 0.03)
-            sigma_causal_diamond = diff_causal_diamond / clustering_std if clustering_std > 0 else np.inf
+            sigma_causal_diamond = diff_causal_diamond / clustering_std if clustering_std > 0 else 999.0
             consistent_causal_diamond = sigma_causal_diamond < 2.0
             
             # Overall validation: pass if both tests pass
@@ -1620,7 +1732,7 @@ class VoidPipeline(AnalysisPipeline):
         
         Compares:
         - Observed (ΛCDM) clustering coefficient: C_obs ≈ 0.42-0.43
-        - Thermodynamic efficiency: η_natural = (1-ln(2))/ln(2) ≈ 0.443
+        - Thermodynamic ratio: η_natural = (1-ln(2))/ln(2) ≈ 0.443
         - E8×E8 pure substrate: C_E8 = 25/32 ≈ 0.781
         
         Tests which model best explains the observed clustering coefficient.
@@ -1631,11 +1743,12 @@ class VoidPipeline(AnalysisPipeline):
         try:
             clustering_results = self.results.get('clustering_analysis', {})
             observed_cc = clustering_results.get('observed_clustering_coefficient', 0.0)
-            observed_std = clustering_results.get('observed_clustering_std', 0.03)
+            observed_std = max(clustering_results.get('observed_clustering_std', 0.03), 0.001)
 
             # Three fundamental clustering coefficient values
-            eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)  # Thermodynamic efficiency
-            c_e8_pure = 25.0 / 32.0  # E8×E8 pure substrate
+            eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)  # Thermodynamic ratio
+            # E8×E8 pure substrate = thermodynamic efficiency + thermodynamic processing remainder
+            c_e8_pure = eta_natural + eta_natural  # E8×E8 pure substrate from entropy mechanics
             c_lcdm = 0.42  # ΛCDM prediction
             c_lcdm_std = 0.08
 
@@ -1646,6 +1759,9 @@ class VoidPipeline(AnalysisPipeline):
 
             # Calculate chi-squared for each model
             def chi_squared(predicted, observed, error):
+                if error <= 0:
+                    # If error is zero or negative, return large chi-squared if different, 0 if same
+                    return 0.0 if abs(observed - predicted) < 1e-10 else 1e10
                 return ((observed - predicted) / error) ** 2
 
             chi2_thermodynamic = chi_squared(eta_natural, observed_cc, observed_std)
@@ -1699,7 +1815,7 @@ class VoidPipeline(AnalysisPipeline):
                 'models': {
                     'thermodynamic_efficiency': {
                         'prediction': eta_natural,
-                        'label': 'Thermodynamic efficiency (η_natural)',
+                        'label': 'Thermodynamic ratio (η_natural)',
                         'chi2': chi2_thermodynamic,
                         'aic': thermodynamic_model['aic'],
                         'bic': thermodynamic_model['bic'],

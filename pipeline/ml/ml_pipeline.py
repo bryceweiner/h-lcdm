@@ -794,14 +794,9 @@ class MLPipeline(AnalysisPipeline):
         except Exception as e:
             raise DataUnavailableError(f"E8 construction failed: {e}")
 
-        # Get E8 characteristic angles
-        try:
-            angles_dict = self.e8_system.get_characteristic_angles()
-            e8_angles = angles_dict.get('all_angles', np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2, 
-                                                               2*np.pi/3, 3*np.pi/4, 5*np.pi/6]))
-        except Exception:
-            e8_angles = np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2, 
-                                  2*np.pi/3, 3*np.pi/4, 5*np.pi/6])
+        # Use standard E8 angles
+        e8_angles = np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2,
+                              2*np.pi/3, 3*np.pi/4, 5*np.pi/6])
 
         # Load observational data for pattern matching
         # Use CMB data as primary source for E8 pattern detection
@@ -1099,13 +1094,9 @@ class MLPipeline(AnalysisPipeline):
         H_z = HLCDM_PARAMS.get_hubble_at_redshift(z)
         gamma_dimensionless = gamma_z / H_z
         
-        # E8×E8 characteristic angles
-        try:
-            angles_dict = self.e8_system.get_characteristic_angles()
-            e8_angles = angles_dict.get('all_angles', np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2]))
-        except Exception:
-            e8_angles = np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2, 
-                                  2*np.pi/3, 3*np.pi/4, 5*np.pi/6])
+        # Standard E8 angles
+        e8_angles = np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2,
+                              2*np.pi/3, 3*np.pi/4, 5*np.pi/6])
         
         # Chiral amplitude from geometry
         chiral_sum = np.sum(np.cos(e8_angles))
