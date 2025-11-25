@@ -332,7 +332,7 @@ The Holographic Lambda Model (H-ΛCDM) derives cosmological predictions from fun
 - **Validation**: Bootstrap, null hypothesis testing, cross-validation
 
 #### Void Analysis
-- **Methods**: E8×E8 heterotic alignment testing (17-angle hierarchical analysis), network clustering coefficient analysis
+- **Methods**: Network clustering coefficient analysis
 - **Datasets**: SDSS DR7 Douglass et al., SDSS DR7 Clampitt & Jain catalogs
 - **Validation**: Randomization testing, bootstrap, null hypothesis testing
 
@@ -449,8 +449,6 @@ The H-ΛCDM framework makes specific, parameter-free predictions across multiple
         if 'analysis_summary' in results:
             summary = results['analysis_summary']
             formatted += f"- **Voids analyzed:** {summary.get('total_voids_analyzed', 0)}\n"
-
-            formatted += f"- **Detection rate:** {alignment.get('detection_rate', 0):.1%}\n"
 
             clustering = summary.get('clustering_summary', {})
             formatted += f"- **Clustering coefficient:** {clustering.get('observed_cc', 'N/A'):.3f}\n"
@@ -704,7 +702,6 @@ The analysis provides strong support for H-ΛCDM predictions across multiple ind
 - Information processing rate evolution γ(z)
 - Baryon acoustic oscillation scales
 - CMB E-mode polarization signatures
-- Cosmic void E8×E8 geometric alignments
 
 These results suggest that information-theoretic principles may play a fundamental role in cosmological structure formation and evolution.
 
@@ -760,9 +757,9 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                 'prediction': 'H-ΛCDM predicts discrete phase transitions, specific non-Gaussian patterns, and E8×E8 heterotic signatures in CMB structure'
             },
             'void': {
-                'question': 'Does the observed clustering coefficient of cosmic void networks match thermodynamic efficiency, representing the processing cost to precipitate baryonic matter from pure information?',
-                'looking_for': 'Comparison of observed clustering coefficient (C_obs) with three fundamental values: thermodynamic efficiency (η_natural = (1-ln(2))/ln(2) ≈ 0.443), E8×E8 pure substrate (C_E8 = 25/32 ≈ 0.781), and ΛCDM prediction (C ≈ 0.42). If C_obs matches η_natural, this confirms clustering represents processing cost to precipitate baryonic matter. The difference C_E8 - η_natural ≈ 0.338 represents the thermodynamic cost of the information processing system without baryonic matter.',
-                'prediction': 'H-ΛCDM predicts the observed clustering coefficient should match thermodynamic efficiency (η_natural ≈ 0.443), confirming that baryonic matter operates at thermodynamic efficiency rather than full E8×E8 substrate capacity. The clustering coefficient represents the processing cost required to precipitate baryonic matter from pure information, with the difference between E8×E8 pure substrate and thermodynamic efficiency quantifying the thermodynamic cost of the information processing system (causal diamond/light cone structure) without baryonic matter.'
+                'question': 'Does the observed clustering coefficient reveal the thermodynamic cost of information processing that occurred post-recombination, and how does this compare to the theoretical cost of baryonic matter processing predicted by the QTEP ratio?',
+                'looking_for': 'Comparison of observed clustering coefficient (C_obs) with ΛCDM prediction and thermodynamic ratio (η_natural). The difference C_E8(G) - C_obs reveals the observed information processing cost, while C_E8(G) - η_natural gives the theoretical baryonic processing cost predicted by entropy mechanics.',
+                'prediction': 'Entropy mechanics predicts: (1) The observed clustering coefficient reveals the actual thermodynamic cost of information processing post-recombination. (2) The QTEP ratio (η_natural ≈ 0.443) represents the theoretical cost of baryonic matter processing. (3) If observed processing cost matches theoretical baryonic cost, this confirms entropy mechanics description of cosmic structure formation the E8xE8 structure governing the precipitation of baryonic matter giving information theoretic foundation to the Standard Model.'
             },
             'hlcdm': {
                 'question': 'Do high-redshift observations (JWST, Lyman-alpha, FRB) support H-ΛCDM predictions?',
@@ -1656,44 +1653,76 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                     results_section += f"- **ΛCDM Prediction:** C = {lcdm_val:.2f} ± {lcdm_std:.2f}, difference: {lcdm_sigma:.1f}σ\n"
                     results_section += f"  *Physical meaning:* Standard cosmological model prediction from gravitational structure formation\n\n"
                 
-                # Processing Costs
+                # Comprehensive Processing Cost Analysis
                 if processing_costs:
-                    results_section += "**Processing Cost Analysis:**\n\n"
-                    
-                    baryonic_cost = processing_costs.get('baryonic_precipitation', {})
-                    if baryonic_cost:
-                        results_section += f"- **Baryonic Matter Precipitation:** ΔC = {baryonic_cost.get('value', 'N/A'):.4f}\n"
-                        results_section += f"  *Interpretation:* {baryonic_cost.get('interpretation', '')}\n\n"
-                    
-                    causal_diamond_cost = processing_costs.get('causal_diamond_structure', {})
-                    if causal_diamond_cost:
-                        results_section += f"- **Thermodynamic Cost of Information Processing System (without baryonic matter):** ΔC = {causal_diamond_cost.get('value', 'N/A'):.4f}\n"
-                        results_section += f"  *Interpretation:* {causal_diamond_cost.get('interpretation', '')}\n"
-                        results_section += f"  *Physical meaning:* {causal_diamond_cost.get('physical_meaning', '')}\n\n"
-                    
-                    total_signature = processing_costs.get('total_processing_signature', {})
-                    if total_signature:
-                        results_section += f"- **Total Processing Signature:** ΔC = {total_signature.get('value', 'N/A'):.4f}\n"
-                        results_section += f"  *Interpretation:* {total_signature.get('interpretation', '')}\n"
-                        results_section += f"  *Physical meaning:* {total_signature.get('physical_meaning', '')}\n\n"
+                    results_section += "**Comprehensive Processing Cost Analysis:**\n\n"
+
+                    # Network connectivity costs
+                    conn_observed = processing_costs.get('connectivity_cost_observed', {})
+                    conn_hlcdm = processing_costs.get('connectivity_cost_hlcdm', {})
+                    conn_lcdm = processing_costs.get('connectivity_cost_lcdm', {})
+
+                    if conn_observed:
+                        results_section += "**Network Connectivity Costs:**\n"
+                        results_section += f"- **Observed:** C_E8(G) - C_obs = {conn_observed.get('value', 'N/A'):.4f}\n"
+                        results_section += f"  *{conn_observed.get('interpretation', '')}*\n"
+                        results_section += f"- **H-ΛCDM Theoretical:** C_E8(G) - η_natural = {conn_hlcdm.get('value', 'N/A'):.4f}\n"
+                        results_section += f"  *{conn_hlcdm.get('interpretation', '')}*\n"
+                        results_section += f"- **ΛCDM Theoretical:** C_E8(G) - ΛCDM = {conn_lcdm.get('value', 'N/A'):.4f}\n"
+                        results_section += f"  *{conn_lcdm.get('interpretation', '')}*\n\n"
+
+                    # Baryonic processing costs
+                    baryonic_obs = processing_costs.get('baryonic_cost_observed', {})
+                    baryonic_hlcdm = processing_costs.get('baryonic_cost_hlcdm', {})
+
+                    if baryonic_obs:
+                        results_section += "**Baryonic Matter Processing Costs:**\n"
+                        results_section += f"- **Observed:** C_obs = {baryonic_obs.get('value', 'N/A'):.4f}\n"
+                        results_section += f"  *{baryonic_obs.get('interpretation', '')}*\n"
+                        results_section += f"- **H-ΛCDM Theoretical:** η_natural = {baryonic_hlcdm.get('value', 'N/A'):.4f}\n"
+                        results_section += f"  *{baryonic_hlcdm.get('interpretation', '')}*\n"
+                        results_section += f"  *{baryonic_hlcdm.get('physical_meaning', '')}*\n\n"
                 
                 # Interpretation
                 interpretation = clustering_analysis.get('interpretation', '')
                 if interpretation:
                     results_section += f"**Interpretation:** {interpretation}\n\n"
                 
-                # Match status
-                matches_eta = clustering_analysis.get('matches_thermodynamic_efficiency', False)
-                matches_lcdm = clustering_analysis.get('matches_lcdm', False)
-                
-                if matches_eta:
-                    results_section += f"**Finding:** ✓ Observed clustering coefficient matches thermodynamic efficiency. "
-                    results_section += f"This confirms that the clustering coefficient represents the processing cost required "
-                    results_section += f"to precipitate baryonic matter from pure information.\n\n"
-                elif matches_lcdm:
-                    results_section += f"**Finding:** Observed clustering coefficient is consistent with ΛCDM prediction.\n\n"
+                # Comprehensive model comparison results
+                model_comparison = clustering_analysis.get('model_comparison', {})
+                best_model = model_comparison.get('best_model', 'unknown')
+                overall_scores = model_comparison.get('overall_scores', {})
+                connectivity_costs = model_comparison.get('connectivity_costs', {})
+                baryonic_costs = model_comparison.get('baryonic_costs', {})
+                detailed_prefs = model_comparison.get('detailed_preferences', {})
+
+                results_section += "### Model Comparison Results\n\n"
+
+                # Overall model preference
+                if best_model == 'hlcdm':
+                    results_section += f"**Overall Finding:** ✓ H-ΛCDM Model Preferred (combined χ² = {overall_scores.get('hlcdm_combined', 0):.1f})\n\n"
+                elif best_model == 'lcmd':
+                    results_section += f"**Overall Finding:** ✓ ΛCDM Model Preferred (χ² = {overall_scores.get('lcmd_connectivity_only', 0):.1f})\n\n"
                 else:
-                    results_section += f"**Finding:** Observed clustering coefficient shows tension with theoretical predictions.\n\n"
+                    results_section += "**Overall Finding:** No clear model preference\n\n"
+
+                # Detailed analysis breakdown
+                results_section += "**Connectivity Cost Analysis:**\n"
+                results_section += f"- Observed: C_E8(G) - C_obs = {connectivity_costs.get('observed', 0):.3f}\n"
+                results_section += f"- H-ΛCDM theoretical: C_E8(G) - η_natural = {connectivity_costs.get('hlcdm_theoretical', 0):.3f}\n"
+                results_section += f"- ΛCDM theoretical: C_E8(G) - ΛCDM = {connectivity_costs.get('lcmd_theoretical', 0):.3f}\n"
+                results_section += f"- H-ΛCDM fit: χ² = {connectivity_costs.get('chi2_observed_vs_hlcdm', 0):.1f}\n"
+                results_section += f"- ΛCDM fit: χ² = {connectivity_costs.get('chi2_observed_vs_lcdm', 0):.1f}\n\n"
+
+                results_section += "**Baryonic Cost Analysis:**\n"
+                results_section += f"- Observed: C_obs = {baryonic_costs.get('observed', 0):.3f}\n"
+                results_section += f"- H-ΛCDM theoretical: η_natural = {baryonic_costs.get('hlcdm_theoretical', 0):.3f}\n"
+                results_section += f"- Fit quality: χ² = {baryonic_costs.get('chi2_observed_vs_hlcdm', 0):.1f}\n\n"
+
+                # Interpretation
+                interpretation = clustering_analysis.get('interpretation', '')
+                if interpretation:
+                    results_section += f"**Interpretation:** {interpretation}\n\n"
             
             # Overall summary
             if analysis_summary:
@@ -2082,7 +2111,7 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                     validation += f"- Status: {'✓ PASSED' if pc_val.get('matches_thermodynamic_efficiency', False) else '✗ FAILED'}\n"
                     sigma_eta_val = pc_val.get('sigma_eta', 'N/A')
                     validation += f"- Significance: {sigma_eta_val:.1f}σ\n" if isinstance(sigma_eta_val, (int, float)) else f"- Significance: {sigma_eta_val}σ\n"
-                    validation += f"- Interpretation: {'Observed clustering matches thermodynamic efficiency. Confirms clustering represents processing cost to precipitate baryonic matter.' if pc_val.get('matches_thermodynamic_efficiency', False) else 'Observed clustering does not match thermodynamic efficiency.'}\n\n"
+                    validation += f"- Interpretation: {'Observed clustering matches thermodynamic ratio (η_natural). Confirms clustering represents processing cost to precipitate baryonic matter.' if pc_val.get('matches_thermodynamic_efficiency', False) else 'Observed clustering does not match thermodynamic ratio (η_natural).'}\n\n"
                     
                     validation += f"**Test 2: Thermodynamic Cost of Information Processing System (without baryonic matter)**\n"
                     causal_diamond = pc_val.get('processing_cost_causal_diamond', {})
@@ -2461,19 +2490,19 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
             
             conclusion += f"### Did We Find What We Were Looking For?\n\n"
             
-            # Check clustering coefficient match with thermodynamic efficiency
+            # Check clustering coefficient match with thermodynamic ratio (η_natural)
             if matches_eta and eta_sigma < 0.5:
-                conclusion += f"**YES** - Observed clustering coefficient C_obs matches thermodynamic efficiency η_natural within {eta_sigma:.1f}σ. "
+                conclusion += f"**YES** - Observed clustering coefficient C_obs matches thermodynamic ratio (η_natural) η_natural within {eta_sigma:.1f}σ. "
                 conclusion += f"This confirms that the clustering coefficient represents the processing cost required to precipitate "
                 conclusion += f"baryonic matter from pure information.\n\n"
             elif matches_eta and eta_sigma < 1.0:
-                conclusion += f"**YES** - Observed clustering coefficient is consistent with thermodynamic efficiency ({eta_sigma:.1f}σ). "
+                conclusion += f"**YES** - Observed clustering coefficient is consistent with thermodynamic ratio (η_natural) ({eta_sigma:.1f}σ). "
                 conclusion += f"The clustering coefficient likely represents the processing cost to precipitate baryonic matter.\n\n"
             elif eta_sigma < 2.0:
-                conclusion += f"**PARTIAL** - Observed clustering coefficient shows marginal consistency with thermodynamic efficiency ({eta_sigma:.1f}σ). "
+                conclusion += f"**PARTIAL** - Observed clustering coefficient shows marginal consistency with thermodynamic ratio (η_natural) ({eta_sigma:.1f}σ). "
                 conclusion += f"Further analysis needed to confirm interpretation.\n\n"
             else:
-                conclusion += f"**NO** - Observed clustering coefficient shows tension with thermodynamic efficiency ({eta_sigma:.1f}σ). "
+                conclusion += f"**NO** - Observed clustering coefficient shows tension with thermodynamic ratio (η_natural) ({eta_sigma:.1f}σ). "
                 conclusion += f"The interpretation may require revision.\n\n"
             
             # Processing costs
@@ -2485,7 +2514,7 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                     conclusion += f"**Processing Cost Analysis:**\n\n"
                     conclusion += f"- Processing cost to precipitate baryonic matter: ΔC = {baryonic_cost:.4f}\n"
                     conclusion += f"- Thermodynamic cost of information processing system (without baryonic matter): ΔC = {causal_diamond_cost:.4f}\n\n"
-                    conclusion += f"The difference between E8×E8 pure substrate (C_E8 = 0.781) and thermodynamic efficiency "
+                    conclusion += f"The difference between E8×E8 pure substrate (C_E8 = 25/32 ≈ 0.781, pure computational capacity) and thermodynamic ratio (η_natural) "
                     conclusion += f"(η_natural = 0.443) represents the thermodynamic cost of the information processing system "
                     conclusion += f"(causal diamond/light cone structure) without baryonic matter.\n\n"
             
@@ -2784,7 +2813,7 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
         """Generate detailed E8 ML results section."""
         results = f"### E8×E8 Machine Learning Pattern Recognition\n\n"
         results += f"**Test Type:** E8×E8 Heterotic Machine Learning Pattern Recognition\n\n"
-        results += f"**H-ΛCDM Prediction:** The observed clustering coefficient of cosmic void networks represents the processing cost required to precipitate baryonic matter from pure information. If the observed clustering coefficient matches thermodynamic efficiency (η_natural = (1-ln(2))/ln(2) ≈ 0.443), this confirms that baryonic matter operates at thermodynamic efficiency rather than full E8×E8 substrate capacity (C_E8 = 25/32 ≈ 0.781). The difference between E8×E8 pure substrate and thermodynamic efficiency (ΔC ≈ 0.338) represents the thermodynamic cost of the information processing system (causal diamond/light cone structure) without baryonic matter.\n\n"
+        results += f"**Entropy Mechanics Prediction:** The observed clustering coefficient of cosmic void networks represents the minimum thermodynamic cost of the information processing system post-recombination. If the observed clustering coefficient matches thermodynamic ratio (η_natural) (η_natural = (1-ln(2))/ln(2) ≈ 0.443), this confirms entropy mechanics prediction that post-recombination clustering reflects only system costs. Pre-recombination clustering should approach the E8×E8 pure substrate (C_E8 = 25/32 ≈ 0.781, pure computational capacity without thermodynamic processing). The difference between E8×E8 pure substrate and thermodynamic ratio (η_natural) (ΔC ≈ 0.338) represents the thermodynamic cost of processing baryonic matter post-recombination.\n\n"
 
         pattern_score = test_result.get('e8_pattern_score', 'N/A')
         confidence = test_result.get('pattern_confidence', 'N/A')

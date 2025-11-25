@@ -51,9 +51,6 @@ class VoidFeatureExtractor:
         # Spatial distribution features
         features.update(self._extract_spatial_features(void_catalog))
 
-        # Alignment and orientation features
-        features.update(self._extract_alignment_features(void_catalog))
-
         # Network topology features
         features.update(self._extract_network_features(void_catalog))
 
@@ -172,47 +169,6 @@ class VoidFeatureExtractor:
 
         return features
 
-    def _extract_alignment_features(self, void_catalog: pd.DataFrame) -> Dict[str, Any]:
-        """Extract void alignment and orientation features."""
-        features = {}
-
-        # Alignment angles (potential E8×E8 signatures)
-        if 'alignment_angle_deg' in void_catalog.columns:
-            angles = void_catalog['alignment_angle_deg'].values
-
-            features.update({
-                'mean_alignment_angle': float(np.mean(angles)),
-                'alignment_std': float(np.std(angles)),
-                'alignment_skewness': float(stats.skew(angles))
-            })
-
-            # Test for preferred alignments (E8×E8 characteristic angles)
-            # Convert to radians for analysis
-            angles_rad = np.radians(angles)
-
-            # E8×E8 characteristic angles (from heterotic structure)
-            e8_angles = np.array([0, np.pi/6, np.pi/4, np.pi/3, np.pi/2,
-                                2*np.pi/3, 3*np.pi/4, 5*np.pi/6, np.pi])
-
-            # Count alignments near E8 angles (within 10 degrees)
-            alignment_counts = []
-            for e8_angle in e8_angles:
-                angle_diff = np.abs(angles_rad - e8_angle)
-                angle_diff = np.minimum(angle_diff, 2*np.pi - angle_diff)  # Handle periodicity
-                n_aligned = np.sum(angle_diff < np.radians(10))  # 10 degree tolerance
-                alignment_counts.append(n_aligned)
-
-            features.update({
-                'e8_alignment_counts': alignment_counts,
-                'max_e8_alignment': int(np.max(alignment_counts)),
-                'total_e8_aligned': int(np.sum(alignment_counts))
-            })
-
-            # Statistical test for uniform vs. preferred alignment
-            uniform_p_value = self._test_alignment_uniformity(angles_rad, e8_angles)
-            features['alignment_uniformity_p_value'] = float(uniform_p_value)
-
-        return features
 
     def _extract_network_features(self, void_catalog: pd.DataFrame) -> Dict[str, Any]:
         """Extract void network topology features."""
@@ -313,28 +269,6 @@ class VoidFeatureExtractor:
 
         return features
 
-    def _test_alignment_uniformity(self, angles: np.ndarray, e8_angles: np.ndarray) -> float:
-        """Test if alignments are uniform vs. clustered around E8 angles."""
-        # Simple test: count alignments within tolerance of E8 angles
-        tolerance = np.radians(15)  # 15 degree tolerance
-        n_e8_aligned = 0
-
-        for e8_angle in e8_angles:
-            angle_diff = np.abs(angles - e8_angle)
-            angle_diff = np.minimum(angle_diff, 2*np.pi - angle_diff)  # Handle periodicity
-            n_e8_aligned += np.sum(angle_diff < tolerance)
-
-        # Expected under uniformity
-        expected_aligned = len(angles) * len(e8_angles) * (tolerance / (2 * np.pi))
-
-        # Simple p-value (Poisson approximation)
-        if expected_aligned > 0:
-            from scipy.stats import poisson
-            p_value = 1 - poisson.cdf(n_e8_aligned - 1, expected_aligned)
-        else:
-            p_value = 1.0
-
-        return p_value
 
     def augment_void_data(self, void_catalog: pd.DataFrame,
                          augmentation_type: str = 'noise') -> pd.DataFrame:
@@ -364,9 +298,9 @@ class VoidFeatureExtractor:
                 augmented['radius_mpc'] *= scale_factors
 
         elif augmentation_type == 'rotation':
-            # Rotate alignment angles
-            if 'alignment_angle_deg' in augmented.columns:
+            # Rotate orientation angles
+            if 'orientation_deg' in augmented.columns:
                 rotation = np.random.uniform(0, 360)
-                augmented['alignment_angle_deg'] = (augmented['alignment_angle_deg'] + rotation) % 360
+                augmented['orientation_deg'] = (augmented['orientation_deg'] + rotation) % 360
 
         return augmented
