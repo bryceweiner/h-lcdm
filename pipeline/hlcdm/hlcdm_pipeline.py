@@ -1814,8 +1814,8 @@ class HLCDMPipeline(AnalysisPipeline):
             lcdm_model = self.calculate_bic_aic(log_likelihood_lcdm, 1, n_data_points)
 
             # Model 2: H-ΛCDM (alternative - higher evidence, 2 parameters: baseline + enhancement)
-            log_likelihood_hlcmd = -0.5 * np.sum((hlcdm_scores - np.mean(hlcdm_scores))**2)
-            hlcdm_model = self.calculate_bic_aic(log_likelihood_hlcmd, 2, n_data_points)
+            log_likelihood_hlcdm = -0.5 * np.sum((hlcdm_scores - np.mean(hlcdm_scores))**2)
+            hlcdm_model = self.calculate_bic_aic(log_likelihood_hlcdm, 2, n_data_points)
 
             # Determine preferred model
             if lcdm_model['bic'] < hlcdm_model['bic']:

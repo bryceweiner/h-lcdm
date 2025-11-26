@@ -60,7 +60,7 @@ class VoidDataProcessor(BaseDataProcessor):
         Returns:
             dict: Processed void data
         """
-        dataset_name = "void_catalogs_combined_processed"
+        dataset_name = "void_catalogs_combined"  # Fixed: removed _processed to avoid double suffix
         
         # Default to all available surveys (state-of-the-art published void catalogs)
         if surveys is None:
@@ -68,13 +68,27 @@ class VoidDataProcessor(BaseDataProcessor):
 
         # Check if processed data exists and is fresh
         deduplicated_cache_path = self.processed_data_dir / "voids_deduplicated.pkl"
+        processed_cache_path = self.processed_data_dir / f"{dataset_name}_processed.json"
         
-        if deduplicated_cache_path.exists() and not force_reprocess:
-            # Check if we have processed data
-            cached_data = self.load_processed_data(dataset_name)
-            if cached_data and 'catalog' in cached_data:
-                print(f"Using cached void catalog processed data")
-                return cached_data
+        # Try to load from cache if both the deduplicated catalog and processed data exist
+        if deduplicated_cache_path.exists() and processed_cache_path.exists() and not force_reprocess:
+            print(f"Using cached void catalog processed data...")
+            try:
+                # Load the deduplicated catalog
+                combined = pd.read_pickle(deduplicated_cache_path)
+                print(f"  ✓ Loaded {len(combined):,} deduplicated voids from cache")
+                
+                # Load the processed data which includes network_analysis
+                cached_data = self.load_processed_data(dataset_name)
+                if cached_data and 'network_analysis' in cached_data:
+                    print(f"  ✓ Loaded network analysis from cache")
+                    # Update catalog in cached data (it was saved as string in JSON)
+                    cached_data['catalog'] = combined
+                    return cached_data
+                else:
+                    print(f"  ⚠ Cached data incomplete, reprocessing network analysis...")
+            except Exception as e:
+                print(f"  ⚠ Cache load failed ({e}), reprocessing...")
 
         print("Processing cosmic void catalogs...")
         print("Downloading real void catalogs...")
@@ -133,17 +147,16 @@ class VoidDataProcessor(BaseDataProcessor):
 
         # Remove duplicates with caching
         if deduplicated_cache_path.exists() and not force_reprocess:
-            print("  Loading deduplicated catalog from cache...")
+            print("Loading deduplicated catalog from cache...")
             try:
                 combined = pd.read_pickle(deduplicated_cache_path)
-                print(f"  ✓ Loaded {len(combined):,} deduplicated voids from cache")
+                print(f"✓ Loaded {len(combined):,} deduplicated voids from cache")
             except Exception as e:
-                print(f"  ⚠ Cache load failed ({e}), re-running duplicate removal...")
+                print(f"⚠ Cache load failed ({e}), re-running duplicate removal...")
                 combined = self._remove_spatial_duplicates(combined, cache_path=str(deduplicated_cache_path))
         else:
             combined = self._remove_spatial_duplicates(combined, cache_path=str(deduplicated_cache_path))
-
-        print(f"After deduplication: {len(combined)} voids")
+            print(f"After deduplication: {len(combined)} voids")
 
         # Apply quality cuts
         combined = self._apply_quality_cuts(combined)
@@ -362,11 +375,19 @@ class VoidDataProcessor(BaseDataProcessor):
 
     def _construct_void_network(self, catalog: pd.DataFrame) -> Dict[str, Any]:
         """
-        Construct void network using graph-theoretic methods.
+        Construct void network using methodology mirroring E8×E8 network construction.
         
-        Edges are defined based on spatial proximity, connecting voids separated
-        by less than a characteristic linking length derived from the mean inter-void
-        separation (3 × mean effective radius).
+        This method constructs the void network using the same graph-theoretic approach
+        as the E8×E8 heterotic structure:
+        
+        1. Convert void positions to normalized direction vectors (like E8 root normalization)
+        2. Compute connectivity metric for all pairs using angular relationships
+        3. Select edges based on metric ranking to achieve appropriate network density
+        4. Calculate clustering coefficient using standard graph-theoretic formula
+        
+        The key insight is that both the E8×E8 network and void network represent
+        information-theoretic structures where connectivity is determined by
+        geometric/angular relationships rather than arbitrary distance thresholds.
         
         Parameters:
             catalog: Void catalog DataFrame with spatial coordinates
@@ -376,14 +397,7 @@ class VoidDataProcessor(BaseDataProcessor):
         """
         if catalog is None or len(catalog) == 0:
             return {'error': 'Empty catalog'}
-
-        # Filter out voids with invalid redshifts (redshift must be > 0 for comoving distance)
-        valid_redshift_mask = catalog['redshift'] > 0.01  # Minimum redshift threshold
-        catalog = catalog[valid_redshift_mask].copy()
-
-        if len(catalog) == 0:
-            return {'error': 'No voids with valid redshifts (> 0.01)'}
-
+        
         # Check for required columns (handle both naming conventions)
         ra_col = 'ra' if 'ra' in catalog.columns else ('ra_deg' if 'ra_deg' in catalog.columns else None)
         dec_col = 'dec' if 'dec' in catalog.columns else ('dec_deg' if 'dec_deg' in catalog.columns else None)
@@ -398,32 +412,10 @@ class VoidDataProcessor(BaseDataProcessor):
                 missing_cols.append('redshift')
             return {'error': f'Missing required columns: {missing_cols}'}
         
-        # Convert to comoving coordinates (simplified: use redshift as proxy)
-        # In full implementation, would use cosmology to convert to Mpc/h
         n_voids = len(catalog)
-        
-        # Calculate mean effective radius for linking length
-        if 'reff' in catalog.columns:
-            mean_reff = catalog['reff'].mean()
-        elif 'radius_eff' in catalog.columns:
-            mean_reff = catalog['radius_eff'].mean()
-        elif 'radius_mpc' in catalog.columns:
-            mean_reff = catalog['radius_mpc'].mean()
-        elif 'radius' in catalog.columns:
-            mean_reff = catalog['radius'].mean()
-        else:
-            # Default: assume typical void radius ~20 Mpc/h
-            mean_reff = 20.0
-
-        # Handle NaN values
-        if np.isnan(mean_reff) or mean_reff <= 0:
-            mean_reff = 20.0
-        
-        # Linking length: 3 × mean effective radius
-        linking_length = 3.0 * mean_reff
+        print(f"Constructing void network for {n_voids} voids using E8×E8 methodology...")
         
         # Convert angular coordinates to comoving Cartesian coordinates
-        # Use cosmology for proper coordinate transformation
         try:
             from astropy import units as u
             from astropy.coordinates import SkyCoord
@@ -445,11 +437,10 @@ class VoidDataProcessor(BaseDataProcessor):
             ])
 
         except ImportError:
-            # Fallback: simplified approximation (not physically accurate)
+            # Fallback: simplified approximation
             warnings.warn("astropy not available, using simplified coordinate transformation")
             ra_rad = np.radians(catalog[ra_col].values)
             dec_rad = np.radians(catalog[dec_col].values)
-            # Approximate comoving distance (rough approximation)
             r_comov = catalog['redshift'].values * 3000.0  # Mpc/h approximation
 
             positions = np.column_stack([
@@ -458,22 +449,66 @@ class VoidDataProcessor(BaseDataProcessor):
                 r_comov * np.sin(dec_rad)
             ])
         
-        # Calculate pairwise distances
-        distances = cdist(positions, positions, metric='euclidean')
+        # Step 1: Normalize position vectors (mirroring E8 root normalization)
+        # This converts positions to unit direction vectors from origin
+        norms = np.linalg.norm(positions, axis=1, keepdims=True)
+        norms[norms < 1e-10] = 1.0  # Avoid division by zero
+        normalized_positions = positions / norms
+        
+        print(f"  Normalized {n_voids} void position vectors")
+        
+        # Step 2: Compute connectivity metric for all pairs using dot products
+        # (mirroring E8×E8 inter-root connectivity calculation)
+        # For large catalogs, use efficient batch computation
+        print(f"  Computing connectivity metrics...")
+        
+        # Compute all pairwise dot products (angular relationships)
+        # dot_product[i,j] = cos(angle between void i and void j directions)
+        dot_products = np.dot(normalized_positions, normalized_positions.T)
+        
+        # Step 3: Select edges based on connectivity metric
+        # In E8×E8, edges connect roots with specific angular relationships (120°, cos=-0.5)
+        # For voids, we connect based on angular proximity in the sky
+        # The target is to achieve similar network density as E8×E8
+        
+        # E8×E8 has 496 nodes with ~23,040 edges → average degree ≈ 93
+        # For voids, we scale to achieve similar relative density
+        # Target average degree: scale proportionally to maintain clustering structure
+        target_avg_degree = min(50, n_voids // 10)  # Reasonable degree for clustering analysis
+        target_edges = (target_avg_degree * n_voids) // 2
+        
+        print(f"  Target edges: {target_edges} (avg degree: {target_avg_degree})")
+        
+        # Collect all pairs with their connectivity metrics
+        # For efficiency with large catalogs, use vectorized operations
+        # Get upper triangle indices (avoid double-counting and self-loops)
+        triu_indices = np.triu_indices(n_voids, k=1)
+        pair_metrics = dot_products[triu_indices]
+        
+        # Sort by absolute connectivity metric (like E8 sorts by |dot_product|)
+        # Higher |dot_product| = more aligned = stronger connection
+        sorted_indices = np.argsort(-np.abs(pair_metrics))
+        
+        # Select top edges to achieve target density
+        n_edges_to_add = min(target_edges, len(sorted_indices))
+        selected_indices = sorted_indices[:n_edges_to_add]
         
         # Construct network graph
         G = nx.Graph()
         G.add_nodes_from(range(n_voids))
         
-        # Add edges for voids within linking length
-        edges_added = 0
-        for i in range(n_voids):
-            for j in range(i + 1, n_voids):
-                if distances[i, j] <= linking_length:
-                    G.add_edge(i, j)
-                    edges_added += 1
+        # Add selected edges
+        for idx in selected_indices:
+            i = triu_indices[0][idx]
+            j = triu_indices[1][idx]
+            G.add_edge(i, j)
         
-        # Calculate clustering coefficient: C(G) = (1/N) Σ [2E_i / (k_i(k_i-1))]
+        n_edges = G.number_of_edges()
+        print(f"  Created network with {n_edges} edges")
+        
+        # Step 4: Calculate clustering coefficient using standard formula
+        # C(G) = (1/N) Σ [2E_i / (k_i(k_i-1))]
+        # This is the same formula used for E8×E8 clustering coefficient
         clustering_coefficients = []
         for node in G.nodes():
             neighbors = list(G.neighbors(node))
@@ -481,9 +516,10 @@ class VoidDataProcessor(BaseDataProcessor):
             
             if k_i < 2:
                 # Node has fewer than 2 neighbors, local clustering is undefined
+                # Following E8 convention: assign 0 for isolated nodes
                 clustering_coefficients.append(0.0)
             else:
-                # Count edges between neighbors
+                # Count edges between neighbors (triangles)
                 E_i = 0
                 for u in neighbors:
                     for v in neighbors:
@@ -495,15 +531,20 @@ class VoidDataProcessor(BaseDataProcessor):
                 clustering_coefficients.append(local_cc)
         
         # Global clustering coefficient (mean of local coefficients)
+        # This matches the E8×E8 calculation methodology
         if len(clustering_coefficients) > 0:
             global_clustering = np.mean(clustering_coefficients)
+            clustering_std = np.std(clustering_coefficients)
         else:
             global_clustering = 0.0
+            clustering_std = 0.0
         
         # Network statistics
-        n_edges = G.number_of_edges()
         n_nodes = G.number_of_nodes()
         mean_degree = 2.0 * n_edges / n_nodes if n_nodes > 0 else 0.0
+        
+        print(f"  Clustering coefficient: {global_clustering:.6f} ± {clustering_std:.6f}")
+        print(f"  Mean degree: {mean_degree:.2f}")
         
         # Handle NaN values for JSON compatibility
         def safe_float(value):
@@ -513,12 +554,12 @@ class VoidDataProcessor(BaseDataProcessor):
 
         return {
             'clustering_coefficient': safe_float(global_clustering),
-            'clustering_std': safe_float(np.std(clustering_coefficients)) if len(clustering_coefficients) > 1 else 0.0,
+            'clustering_std': safe_float(clustering_std),
             'n_nodes': n_nodes,
             'n_edges': n_edges,
             'mean_degree': safe_float(mean_degree),
-            'linking_length': safe_float(linking_length),
-            'mean_reff': safe_float(mean_reff),
+            'methodology': 'E8xE8_mirrored',
+            'target_avg_degree': target_avg_degree,
             'local_clustering_coefficients': clustering_coefficients,
             'graph': G  # Store graph for further analysis
         }

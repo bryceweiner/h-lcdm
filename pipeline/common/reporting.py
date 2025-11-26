@@ -443,62 +443,19 @@ The H-ΛCDM framework makes specific, parameter-free predictions across multiple
         return formatted
 
     def _format_void_results(self, results: Dict[str, Any]) -> str:
-        """Format void analysis results for the H-ΛCDM vs ΛCDM framework."""
+        """Format void analysis results."""
         formatted = ""
 
-        # Void data summary
-        void_data = results.get('void_data', {})
-        if void_data:
-            formatted += f"- **Voids analyzed:** {void_data.get('total_voids', 0):,}\n"
-            survey_breakdown = void_data.get('survey_breakdown', {})
-            if survey_breakdown:
-                formatted += f"- **Survey breakdown:** {', '.join([f'{k}: {v:,}' for k, v in survey_breakdown.items()])}\n"
+        if 'analysis_summary' in results:
+            summary = results['analysis_summary']
+            formatted += f"- **Voids analyzed:** {summary.get('total_voids_analyzed', 0)}\n"
 
-        # Network analysis
-        network_analysis = void_data.get('network_analysis', {})
-        if network_analysis and 'error' not in network_analysis:
-            formatted += f"- **Network nodes:** {network_analysis.get('n_nodes', 'N/A'):,}\n"
-            formatted += f"- **Network edges:** {network_analysis.get('n_edges', 'N/A'):,}\n"
-            formatted += f"- **Mean degree:** {network_analysis.get('mean_degree', 'N/A'):.2f}\n"
+            clustering = summary.get('clustering_summary', {})
+            formatted += f"- **Clustering coefficient:** {clustering.get('observed_cc', 'N/A'):.3f}\n"
+            formatted += f"- **Theoretical value:** {clustering.get('theoretical_cc', 'N/A'):.3f}\n"
+            formatted += f"- **Consistency:** {clustering.get('statistical_consistency', False)}\n"
 
-        # Clustering analysis
-        clustering_analysis = results.get('clustering_analysis', {})
-        if clustering_analysis:
-            c_obs = clustering_analysis.get('observed_clustering_coefficient', 0.0)
-            c_std = clustering_analysis.get('observed_clustering_std', 0.0)
-            formatted += f"- **Observed clustering:** C_obs = {c_obs:.3f} ± {c_std:.3f}\n"
-
-            # Model comparison
-            model_comparison = clustering_analysis.get('model_comparison', {})
-            if model_comparison:
-                best_model = model_comparison.get('best_model', 'unknown')
-                scores = model_comparison.get('overall_scores', {})
-                hlcdm_score = scores.get('hlcdm_combined', float('inf'))
-                lcmd_score = scores.get('lcmd_connectivity_only', float('inf'))
-
-                formatted += f"- **Best model:** {best_model.upper()}\n"
-                formatted += f"- **H-ΛCDM χ² score:** {hlcdm_score:.1f}\n"
-                formatted += f"- **ΛCDM χ² score:** {lcmd_score:.1f}\n"
-
-                # Detailed preferences
-                detailed = model_comparison.get('detailed_preferences', {})
-                if detailed.get('connectivity_hlcdm_better'):
-                    formatted += f"- **Connectivity analysis:** Favors H-ΛCDM\n"
-                if detailed.get('baryonic_hlcdm_better'):
-                    formatted += f"- **Baryonic analysis:** Favors H-ΛCDM\n"
-
-            # Processing costs
-            processing_costs = clustering_analysis.get('processing_costs', {})
-            if processing_costs:
-                connectivity_obs = processing_costs.get('connectivity_cost_observed', {}).get('value', 0.0)
-                baryonic_obs = processing_costs.get('baryonic_cost_observed', {}).get('value', 0.0)
-                formatted += f"- **Connectivity cost:** {connectivity_obs:.3f}\n"
-                formatted += f"- **Baryonic cost:** {baryonic_obs:.3f}\n"
-
-            # Interpretation
-            interpretation = clustering_analysis.get('interpretation', '')
-            if interpretation:
-                formatted += f"- **Interpretation:** {interpretation[:200]}{'...' if len(interpretation) > 200 else ''}\n"
+            formatted += f"- **Overall conclusion:** {summary.get('overall_conclusion', 'N/A')}\n"
 
         return formatted
 
@@ -1876,14 +1833,30 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
         
         return results_section
 
+    def _load_extended_validation(self, pipeline_name: str) -> Dict[str, Any]:
+        """Load extended validation results from separate file."""
+        try:
+            extended_file = Path("results") / "json" / f"{pipeline_name}_results_extended.json"
+            if extended_file.exists():
+                with open(extended_file, 'r') as f:
+                    extended_data = json.load(f)
+                return extended_data.get('results', {}).get('validation_extended', {})
+        except Exception:
+            pass
+        return {}
+
     def _generate_pipeline_validation(self, pipeline_name: str, results: Dict[str, Any]) -> str:
         """Generate pipeline-specific validation."""
         validation = f"## Validation\n\n"
-        
+
         # Get validation results from the results dict
         # Results structure: {'main': {...}, 'validation': {...}, 'validation_extended': {...}}
         basic_val = results.get('validation', {})
         extended_val = results.get('validation_extended', {})
+
+        # If no extended validation in results, try loading from separate file
+        if not extended_val:
+            extended_val = self._load_extended_validation(pipeline_name)
         
         if basic_val:
             overall_status = basic_val.get('overall_status', 'UNKNOWN')
@@ -1907,23 +1880,41 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                 
                 validation += "\n"
             
-            # Add null hypothesis test details if available
-            null_test = basic_val.get('null_hypothesis_test', {})
+            # Add null hypothesis test details if available (check both basic and extended validation)
+            null_test = basic_val.get('null_hypothesis_test', {}) or extended_val.get('null_hypothesis', {})
             if null_test and isinstance(null_test, dict):
                 validation += "### Null Hypothesis Testing\n\n"
-                null_hypothesis = null_test.get('null_hypothesis', 'N/A')
-                alternative = null_test.get('alternative_hypothesis', 'N/A')
-                rejected = null_test.get('null_hypothesis_rejected', False)
-                p_value = null_test.get('p_value', None)
-                
-                validation += f"**Null Hypothesis:** {null_hypothesis}\n\n"
-                validation += f"**Alternative Hypothesis:** {alternative}\n\n"
-                
-                if p_value is not None:
-                    validation += f"**p-value:** {p_value:.4f}\n\n"
-                
-                validation += f"**Result:** {'Null hypothesis rejected' if rejected else 'Null hypothesis not rejected (null result)'}\n\n"
-                
+                # Handle different data structures from basic vs extended validation
+                if 'null_hypothesis' in null_test:
+                    # Basic validation structure
+                    null_hypothesis = null_test.get('null_hypothesis', 'N/A')
+                    alternative = null_test.get('alternative_hypothesis', 'N/A')
+                    rejected = null_test.get('null_hypothesis_rejected', False)
+                    p_value = null_test.get('p_value', None)
+
+                    validation += f"**Null Hypothesis:** {null_hypothesis}\n\n"
+                    validation += f"**Alternative Hypothesis:** {alternative}\n\n"
+
+                    if p_value is not None:
+                        validation += f"**p-value:** {p_value:.4f}\n\n"
+
+                    validation += f"**Result:** {'Null hypothesis rejected' if rejected else 'Null hypothesis not rejected (null result)'}\n\n"
+                else:
+                    # Extended validation structure
+                    p_value = null_test.get('p_value', None)
+                    sigma = null_test.get('sigma', None)
+                    rejected = null_test.get('reject_null', 'False') == 'True'
+
+                    validation += f"**Null Hypothesis:** Void clustering follows random Poisson process\n\n"
+                    validation += f"**Alternative Hypothesis:** Void clustering shows non-random structure\n\n"
+
+                    if p_value is not None:
+                        validation += f"**p-value:** {p_value:.5f}\n\n"
+                    if sigma is not None:
+                        validation += f"**Significance:** {sigma:.1f}σ\n\n"
+
+                    validation += f"**Result:** {'Null hypothesis rejected' if rejected else 'Null hypothesis not rejected (null result)'}\n\n"
+
                 if 'interpretation' in null_test:
                     validation += f"**Interpretation:** {null_test['interpretation']}\n\n"
         else:

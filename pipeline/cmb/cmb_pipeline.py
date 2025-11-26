@@ -1858,13 +1858,13 @@ class CMBPipeline(AnalysisPipeline):
 
             # Model 2: H-ΛCDM with phase transitions (4 parameters: base amplitude, tilt, transition amplitude, position)
             # Simplified: add oscillatory features for phase transitions
-            c_ell_hlcmd = c_ell_lcdm * (1 + 0.1 * np.sin(ell_data / 100))
-            residuals_hlcmd = c_ell_data - c_ell_hlcmd
-            sigma_hlcmd = np.std(residuals_hlcmd)
-            log_likelihood_hlcmd = -0.5 * n_data_points * np.log(2 * np.pi * sigma_hlcmd**2) - \
-                                   0.5 * np.sum(residuals_hlcmd**2) / sigma_hlcmd**2
+            c_ell_hlcdm = c_ell_lcdm * (1 + 0.1 * np.sin(ell_data / 100))
+            residuals_hlcdm = c_ell_data - c_ell_hlcdm
+            sigma_hlcdm = np.std(residuals_hlcdm)
+            log_likelihood_hlcdm = -0.5 * n_data_points * np.log(2 * np.pi * sigma_hlcdm**2) - \
+                                   0.5 * np.sum(residuals_hlcdm**2) / sigma_hlcdm**2
 
-            hlcdm_model = self.calculate_bic_aic(log_likelihood_hlcmd, 4, n_data_points)
+            hlcdm_model = self.calculate_bic_aic(log_likelihood_hlcdm, 4, n_data_points)
 
             # Determine preferred model
             if lcdm_model['bic'] < hlcdm_model['bic']:
