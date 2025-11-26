@@ -1904,7 +1904,6 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                         validation += f"\n**Comparison to Fundamental Values:**\n"
                         eta_comp = comparison.get('thermodynamic_efficiency', {})
                         lcdm_comp = comparison.get('lcdm', {})
-                        e8_comp = comparison.get('e8_pure_substrate', {})
                         
                         if eta_comp:
                             eta_val = eta_comp.get('value', 'N/A')
@@ -1922,14 +1921,6 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                             validation += f"- ΛCDM (C = {lcdm_str}): "
                             validation += f"{sig_str}σ, "
                             validation += f"{'within 95% CI' if lcdm_comp.get('within_ci_95', False) else 'outside 95% CI'}\n"
-                        if e8_comp:
-                            e8_val = e8_comp.get('value', 'N/A')
-                            e8_sig = e8_comp.get('sigma', 'N/A')
-                            e8_str = f"{e8_val:.4f}" if isinstance(e8_val, (int, float)) else str(e8_val)
-                            sig_str = f"{e8_sig:.1f}" if isinstance(e8_sig, (int, float)) else str(e8_sig)
-                            validation += f"- E8×E8 pure substrate (C_E8 = {e8_str}): "
-                            validation += f"{sig_str}σ, "
-                            validation += f"{'within 95% CI' if e8_comp.get('within_ci_95', False) else 'outside 95% CI'}\n"
                     
                     if 'interpretation' in bootstrap:
                         validation += f"\n{bootstrap['interpretation']}\n"
@@ -1974,15 +1965,6 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                             lcdm_dist_str = f"{lcdm_dist:.4f}" if isinstance(lcdm_dist, (int, float)) else str(lcdm_dist)
                             validation += f"- ΛCDM (C = {lcdm_val_str}): "
                             validation += f"{lcdm_sig_str}σ, distance = {lcdm_dist_str}\n"
-                        if e8_comp:
-                            e8_val = e8_comp.get('value', 'N/A')
-                            e8_sig = e8_comp.get('sigma', 'N/A')
-                            e8_dist = e8_comp.get('distance', 'N/A')
-                            e8_val_str = f"{e8_val:.4f}" if isinstance(e8_val, (int, float)) else str(e8_val)
-                            e8_sig_str = f"{e8_sig:.1f}" if isinstance(e8_sig, (int, float)) else str(e8_sig)
-                            e8_dist_str = f"{e8_dist:.4f}" if isinstance(e8_dist, (int, float)) else str(e8_dist)
-                            validation += f"- E8×E8 pure substrate (C_E8 = {e8_val_str}): "
-                            validation += f"{e8_sig_str}σ, distance = {e8_dist_str}\n"
                     
                     if 'interpretation' in jackknife:
                         validation += f"\n{jackknife['interpretation']}\n"
@@ -2005,7 +1987,6 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                     if consistency:
                         eta_consistency = consistency.get('thermodynamic_efficiency', {})
                         lcdm_consistency = consistency.get('lcdm', {})
-                        e8_consistency = consistency.get('e8_pure_substrate', {})
                         
                         validation += f"\n**Consistency with Fundamental Values:**\n"
                         if eta_consistency:
@@ -2024,14 +2005,6 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                             lcdm_rate_str = f"{lcdm_rate*100:.0f}" if isinstance(lcdm_rate, (int, float)) else str(lcdm_rate)
                             validation += f"- ΛCDM (C = {lcdm_val_str}): "
                             validation += f"{lcdm_folds}/{loo.get('n_folds', 'N/A')} folds ({lcdm_rate_str}%)\n"
-                        if e8_consistency:
-                            e8_val = e8_consistency.get('value', 'N/A')
-                            e8_folds = e8_consistency.get('consistent_folds', 'N/A')
-                            e8_rate = e8_consistency.get('consistency_rate', 0)
-                            e8_val_str = f"{e8_val:.4f}" if isinstance(e8_val, (int, float)) else str(e8_val)
-                            e8_rate_str = f"{e8_rate*100:.0f}" if isinstance(e8_rate, (int, float)) else str(e8_rate)
-                            validation += f"- E8×E8 pure substrate (C_E8 = {e8_val_str}): "
-                            validation += f"{e8_folds}/{loo.get('n_folds', 'N/A')} folds ({e8_rate_str}%)\n"
                     
                     if 'interpretation' in loo:
                         validation += f"\n{loo['interpretation']}\n"

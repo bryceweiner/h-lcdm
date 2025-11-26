@@ -141,6 +141,19 @@ class VoidDataProcessor(BaseDataProcessor):
                 except Exception as e:
                     logger.error(f"    ✗ VIDE public catalog download failed: {e}")
 
+            # Load VoidFinder-generated catalogs
+            if 'voidfinder_sdss_dr16' in surveys:
+                logger.info("DataLoader: Loading VoidFinder SDSS DR16 catalog...")
+                try:
+                    voidfinder_catalog = self.loader.load_voidfinder_catalog('sdss_dr16')
+                    if voidfinder_catalog is not None and len(voidfinder_catalog) > 0:
+                        real_catalogs['voidfinder_sdss_dr16'] = voidfinder_catalog
+                        logger.info(f"    ✓ VoidFinder SDSS DR16: {len(voidfinder_catalog)} voids")
+                    else:
+                        logger.warning("    ✗ VoidFinder SDSS DR16 catalog not available (run --voidfinder first)")
+                except Exception as e:
+                    logger.error(f"    ✗ VoidFinder catalog load failed: {e}")
+
         except Exception as e:
             logger.error(f"Error downloading real catalogs: {e}")
             raise DataUnavailableError(f"Void catalog loading failed: {e}")
