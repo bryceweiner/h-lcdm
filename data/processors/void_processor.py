@@ -16,11 +16,15 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 from datetime import datetime
 import warnings
+import logging
 import networkx as nx
 from scipy.spatial.distance import cdist
 
 from .base_processor import BaseDataProcessor
 from ..loader import DataLoader, DataUnavailableError
+
+# Configure module logger
+logger = logging.getLogger(__name__)
 
 
 class VoidDataProcessor(BaseDataProcessor):
@@ -62,9 +66,11 @@ class VoidDataProcessor(BaseDataProcessor):
         """
         dataset_name = "void_catalogs_combined_processed"
         
-        # Default to all available surveys (state-of-the-art published void catalogs)
+        # Default to surveys with publicly available data via direct download
+        # Available surveys: sdss_dr7_douglass, sdss_dr7_clampitt, desi, vide_public
+        # Note: vide_public requires manual download from https://cloud.aquila-consortium.org/s/DCiWkdeW8Wogr59
         if surveys is None:
-            surveys = ['sdss_dr7_douglass', 'sdss_dr7_clampitt']
+            surveys = ['sdss_dr7_douglass', 'sdss_dr7_clampitt', 'desi']
 
         # Check if processed data exists and is fresh
         deduplicated_cache_path = self.processed_data_dir / "voids_deduplicated.pkl"
@@ -73,11 +79,11 @@ class VoidDataProcessor(BaseDataProcessor):
             # Check if we have processed data
             cached_data = self.load_processed_data(dataset_name)
             if cached_data and 'catalog' in cached_data:
-                print(f"Using cached void catalog processed data")
+                logger.info("Using cached void catalog processed data")
                 return cached_data
 
-        print("Processing cosmic void catalogs...")
-        print("Downloading real void catalogs...")
+        logger.info("Processing cosmic void catalogs...")
+        logger.info("Downloading real void catalogs...")
 
         # Download and load real catalogs from DataLoader
         real_catalogs = {}
@@ -85,35 +91,58 @@ class VoidDataProcessor(BaseDataProcessor):
         try:
             # Download Douglass SDSS DR7 catalogs
             if 'sdss_dr7_douglass' in surveys:
-                print("[INFO] DataLoader: Downloading voidfinder catalog...")
+                logger.info("DataLoader: Downloading SDSS DR7 Douglass catalog...")
                 vast_catalogs = self.loader.download_vast_sdss_dr7_catalogs()
                 if vast_catalogs and len(vast_catalogs) > 0:
                     real_catalogs.update(vast_catalogs)
                     for name, df in vast_catalogs.items():
                         if isinstance(df, pd.DataFrame):
-                            print(f"    ✓ {name}: {len(df)} voids")
+                            logger.info(f"    ✓ {name}: {len(df)} voids")
                 else:
-                    print("    ✗ VAST catalogs not available")
-                    print("Using mock Douglass catalog (real download failed)")
-                    real_catalogs['douglass_mock'] = self._generate_sdss_dr7_douglass_catalog()
+                    logger.warning("    ✗ VAST catalogs not available")
 
             # Download Clampitt & Jain catalog
             if 'sdss_dr7_clampitt' in surveys:
-                print("[INFO] DataLoader: Downloading Clampitt & Jain catalog...")
+                logger.info("DataLoader: Downloading Clampitt & Jain catalog...")
                 clampitt_catalog = self.loader.download_clampitt_jain_catalog()
                 if not clampitt_catalog.empty:
                     real_catalogs['clampitt_jain'] = clampitt_catalog
-                    print(f"    ✓ Clampitt & Jain: {len(clampitt_catalog)} voids")
+                    logger.info(f"    ✓ Clampitt & Jain: {len(clampitt_catalog)} voids")
                 else:
-                    raise DataUnavailableError("Clampitt & Jain catalog download not implemented")
+                    logger.warning("    ✗ Clampitt & Jain catalog not available")
 
-            # Note: ZOBOV and VIDE are void-finding algorithms, not catalogs themselves.
-            # Void catalogs are created by applying these algorithms to survey data.
-            # We use the published void catalogs from Douglass et al. and Clampitt & Jain,
-            # which represent the state-of-the-art peer-reviewed void catalogs.
+            # Download DESI DESIVAST catalogs
+            if 'desi' in surveys:
+                logger.info("DataLoader: Downloading DESI DESIVAST catalogs...")
+                try:
+                    desi_catalogs = self.loader.download_desivast_void_catalogs()
+                    if desi_catalogs and len(desi_catalogs) > 0:
+                        real_catalogs.update(desi_catalogs)
+                        for name, df in desi_catalogs.items():
+                            if isinstance(df, pd.DataFrame):
+                                logger.info(f"    ✓ {name}: {len(df)} voids")
+                    else:
+                        logger.warning("    ✗ DESI DESIVAST catalogs not available")
+                except Exception as e:
+                    logger.error(f"    ✗ DESI catalog download failed: {e}")
+
+            # Download VIDE public void catalogs (includes 2MRS and other surveys)
+            if 'vide_public' in surveys:
+                logger.info("DataLoader: Downloading VIDE public void catalogs...")
+                try:
+                    vide_catalogs = self.loader.download_vide_public_void_catalogs()
+                    if vide_catalogs and len(vide_catalogs) > 0:
+                        real_catalogs.update(vide_catalogs)
+                        for name, df in vide_catalogs.items():
+                            if isinstance(df, pd.DataFrame):
+                                logger.info(f"    ✓ {name}: {len(df)} voids")
+                    else:
+                        logger.warning("    ✗ VIDE public catalogs not available")
+                except Exception as e:
+                    logger.error(f"    ✗ VIDE public catalog download failed: {e}")
 
         except Exception as e:
-            print(f"Error downloading real catalogs: {e}")
+            logger.error(f"Error downloading real catalogs: {e}")
             raise DataUnavailableError(f"Void catalog loading failed: {e}")
 
         # Combine all catalogs
@@ -121,29 +150,29 @@ class VoidDataProcessor(BaseDataProcessor):
         for name, catalog in real_catalogs.items():
             if isinstance(catalog, pd.DataFrame) and len(catalog) > 0:
                 all_catalogs.append(catalog)
-                print(f"✓ {name}: {len(catalog)} voids")
+                logger.info(f"✓ {name}: {len(catalog)} voids")
 
         if not all_catalogs:
-            print("No void catalogs available")
+            logger.error("No void catalogs available")
             return {}
 
         # Combine into single DataFrame
         combined = pd.concat(all_catalogs, ignore_index=True)
-        print(f"Combined catalog: {len(combined)} voids before deduplication")
+        logger.info(f"Combined catalog: {len(combined)} voids before deduplication")
 
         # Remove duplicates with caching
         if deduplicated_cache_path.exists() and not force_reprocess:
-            print("  Loading deduplicated catalog from cache...")
+            logger.info("  Loading deduplicated catalog from cache...")
             try:
                 combined = pd.read_pickle(deduplicated_cache_path)
-                print(f"  ✓ Loaded {len(combined):,} deduplicated voids from cache")
+                logger.info(f"  ✓ Loaded {len(combined):,} deduplicated voids from cache")
             except Exception as e:
-                print(f"  ⚠ Cache load failed ({e}), re-running duplicate removal...")
+                logger.warning(f"  ⚠ Cache load failed ({e}), re-running duplicate removal...")
                 combined = self._remove_spatial_duplicates(combined, cache_path=str(deduplicated_cache_path))
         else:
             combined = self._remove_spatial_duplicates(combined, cache_path=str(deduplicated_cache_path))
 
-        print(f"After deduplication: {len(combined)} voids")
+        logger.info(f"After deduplication: {len(combined)} voids")
 
         # Apply quality cuts
         combined = self._apply_quality_cuts(combined)
@@ -396,15 +425,21 @@ class VoidDataProcessor(BaseDataProcessor):
         n_voids = len(catalog)
         
         # Calculate mean effective radius for linking length
-        if 'reff' in catalog.columns:
+        # Check columns in order of preference (most complete first)
+        if 'radius_mpc' in catalog.columns and catalog['radius_mpc'].notna().sum() > 0:
+            mean_reff = catalog['radius_mpc'].mean()
+        elif 'radius_eff' in catalog.columns and catalog['radius_eff'].notna().sum() > 0:
+            mean_reff = catalog['radius_eff'].mean()
+        elif 'reff' in catalog.columns and catalog['reff'].notna().sum() > 0:
             mean_reff = catalog['reff'].mean()
-        elif 'radius' in catalog.columns:
+        elif 'radius' in catalog.columns and catalog['radius'].notna().sum() > 0:
             mean_reff = catalog['radius'].mean()
         else:
             # Default: assume typical void radius ~20 Mpc/h
             mean_reff = 20.0
         
-        # Linking length: 3 × mean effective radius
+        # Linking length: 3 × mean effective radius (per clustering_discovery.tex)
+        # This is the standard methodology for void network construction
         linking_length = 3.0 * mean_reff
         
         # Convert angular coordinates to comoving Cartesian coordinates
@@ -528,23 +563,21 @@ class VoidDataProcessor(BaseDataProcessor):
             # Try to download Douglass et al. catalogs
             douglass_catalogs = self.loader.download_vast_sdss_dr7_catalogs()
             if douglass_catalogs:
-                print(f"Downloaded real Douglass catalogs: {sum(len(df) for df in douglass_catalogs.values())} voids")
+                logger.info(f"Downloaded real Douglass catalogs: {sum(len(df) for df in douglass_catalogs.values())} voids")
                 return douglass_catalogs
 
         except Exception as e:
-            print(f"Failed to download real catalogs: {e}")
+            logger.error(f"Failed to download real catalogs: {e}")
 
         # Return empty dict if download fails
         return {}
 
     def _process_douglass_catalogs(self, real_catalogs: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
         """Process Douglass et al. catalogs."""
-        if real_catalogs and 'voidfinder' in real_catalogs:
-            catalog = real_catalogs['voidfinder'].copy()
-        else:
-            # Fallback to mock data if real download fails
-            print("Using mock Douglass catalog (real download failed)")
-            catalog = self._generate_sdss_dr7_douglass_catalog()
+        if not real_catalogs or 'voidfinder' not in real_catalogs:
+            raise DataUnavailableError("Douglass SDSS DR7 catalog not available - real data required")
+        
+        catalog = real_catalogs['voidfinder'].copy()
 
         # Apply processing
         catalog = self._apply_quality_cuts(catalog)
@@ -557,27 +590,18 @@ class VoidDataProcessor(BaseDataProcessor):
             'metadata': {
                 'survey': 'sdss_dr7_douglass',
                 'n_voids': len(catalog),
-                'source': 'real_data' if real_catalogs else 'mock_data',
+                'source': 'real_data',
                 'reference': 'Douglass et al. 2023, ApJS, 265, 7'
             }
         }
 
     def _process_clampitt_catalog(self, real_catalogs: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
         """Process Clampitt & Jain catalog."""
-        try:
-            clampitt_catalog = self.loader.download_clampitt_jain_catalog()
-            if not clampitt_catalog.empty:
-                catalog = clampitt_catalog.copy()
-                source = 'real_data'
-                reference = 'Clampitt & Jain 2015'
-            else:
-                raise Exception("Empty catalog")
-        except Exception:
-            # Fallback to mock data
-            print("Using mock Clampitt catalog (real download failed)")
-            catalog = self._generate_sdss_dr7_clampitt_catalog()
-            source = 'mock_data'
-            reference = 'Mock data'
+        clampitt_catalog = self.loader.download_clampitt_jain_catalog()
+        if clampitt_catalog.empty:
+            raise DataUnavailableError("Clampitt & Jain catalog not available - real data required")
+        
+        catalog = clampitt_catalog.copy()
 
         # Apply processing
         catalog = self._apply_quality_cuts(catalog)
@@ -590,84 +614,10 @@ class VoidDataProcessor(BaseDataProcessor):
             'metadata': {
                 'survey': 'sdss_dr7_clampitt',
                 'n_voids': len(catalog),
-                'source': source,
-                'reference': reference
+                'source': 'real_data',
+                'reference': 'Clampitt & Jain 2015'
             }
         }
-
-    # Catalog generation methods (with realistic void counts)
-    def _generate_sdss_dr7_douglass_catalog(self) -> pd.DataFrame:
-        """Generate SDSS DR7 Douglass et al. catalog with realistic void counts."""
-        # Based on Douglass et al. 2023, the catalog contains ~36,000 voids
-        # Use realistic distribution matching the paper
-        np.random.seed(42)
-        n_voids = 36000  # Match the original catalog size
-
-        return pd.DataFrame({
-            'void_id': range(n_voids),
-            'ra_deg': np.random.uniform(100, 270, n_voids),  # SDSS footprint
-            'dec_deg': np.random.uniform(-10, 70, n_voids),
-            'redshift': np.random.uniform(0.02, 0.4, n_voids),
-            'radius_mpc': np.random.lognormal(1.2, 0.4, n_voids),
-            'density_contrast': np.random.normal(-0.7, 0.15, n_voids),
-            'survey': ['sdss_dr7_douglass'] * n_voids,
-            'algorithm': ['VoidFinder'] * n_voids,
-            'source': ['real_data_download_required'] * n_voids
-        })
-
-    def _generate_sdss_dr7_clampitt_catalog(self) -> pd.DataFrame:
-        """Generate SDSS DR7 Clampitt & Jain catalog with realistic counts."""
-        np.random.seed(43)
-        n_voids = 8000  # Realistic count for Clampitt & Jain catalog
-
-        catalog = pd.DataFrame({
-            'void_id': range(n_voids),
-            'ra_deg': np.random.uniform(100, 270, n_voids),
-            'dec_deg': np.random.uniform(-10, 70, n_voids),
-            'redshift': np.random.uniform(0.02, 0.4, n_voids),
-            'radius_mpc': np.random.lognormal(1.1, 0.35, n_voids),
-            'density_contrast': np.random.normal(-0.75, 0.12, n_voids),
-            'survey': ['sdss_dr7_clampitt'] * n_voids,
-            'algorithm': ['tidal_shape'] * n_voids
-        })
-
-        # Add shape information
-        catalog['axis_ratio_ba'] = np.random.beta(2, 3, n_voids)
-        catalog['axis_ratio_ca'] = np.random.beta(1.5, 4, n_voids)
-
-        return catalog
-
-    def _generate_zobov_catalog(self) -> pd.DataFrame:
-        """Generate ZOBOV algorithm catalog with realistic counts."""
-        np.random.seed(44)
-        n_voids = 12000  # Realistic count for ZOBOV catalog
-
-        return pd.DataFrame({
-            'void_id': range(n_voids),
-            'ra_deg': np.random.uniform(100, 270, n_voids),
-            'dec_deg': np.random.uniform(-10, 70, n_voids),
-            'redshift': np.random.uniform(0.02, 0.4, n_voids),
-            'radius_mpc': np.random.lognormal(1.0, 0.3, n_voids),
-            'density_contrast': np.random.normal(-0.8, 0.1, n_voids),
-            'survey': ['zobov'] * n_voids,
-            'algorithm': ['zobov'] * n_voids
-        })
-
-    def _generate_vide_catalog(self) -> pd.DataFrame:
-        """Generate VIDE pipeline catalog with realistic counts."""
-        np.random.seed(45)
-        n_voids = 6000  # Realistic count for VIDE catalog
-
-        return pd.DataFrame({
-            'void_id': range(n_voids),
-            'ra_deg': np.random.uniform(100, 270, n_voids),
-            'dec_deg': np.random.uniform(-10, 70, n_voids),
-            'redshift': np.random.uniform(0.02, 0.4, n_voids),
-            'radius_mpc': np.random.lognormal(1.3, 0.45, n_voids),
-            'density_contrast': np.random.normal(-0.65, 0.18, n_voids),
-            'survey': ['vide'] * n_voids,
-            'algorithm': ['vide'] * n_voids
-        })
 
     def _apply_quality_cuts(self, catalog: pd.DataFrame) -> pd.DataFrame:
         """
@@ -695,19 +645,19 @@ class VoidDataProcessor(BaseDataProcessor):
             size_cut = catalog['radius_mpc'] >= 5.0
             quality_mask &= size_cut
             n_passed = size_cut.sum()
-            print(f"    Size cuts: {n_passed}/{len(catalog)} passed (R_eff >= 5 Mpc/h)")
+            logger.info(f"    Size cuts: {n_passed}/{len(catalog)} passed (R_eff >= 5 Mpc/h)")
 
         # Redshift cuts: reasonable range (matches original: 0.005 < z < 1.2)
         if 'redshift' in catalog.columns:
             z_cut = (catalog['redshift'] > 0.005) & (catalog['redshift'] < 1.2)
             quality_mask &= z_cut
-            print(f"    Redshift cuts: {z_cut.sum()}/{len(catalog)} passed (0.005 < z < 1.2)")
+            logger.info(f"    Redshift cuts: {z_cut.sum()}/{len(catalog)} passed (0.005 < z < 1.2)")
 
-        # Aspect ratio cuts: physical values (only for synthetic catalogs)
+        # Aspect ratio cuts: physical values
         if 'aspect_ratio' in catalog.columns:
             aspect_cut = (catalog['aspect_ratio'] > 1.0) & (catalog['aspect_ratio'] < 10.0)
             quality_mask &= aspect_cut
-            print(f"    Aspect ratio cuts: {aspect_cut.sum()}/{len(catalog)} passed (1.0 < ratio < 10.0)")
+            logger.info(f"    Aspect ratio cuts: {aspect_cut.sum()}/{len(catalog)} passed (1.0 < ratio < 10.0)")
 
         # Central density cuts: void-like (very permissive for real catalogs)
         if 'central_density' in catalog.columns:
@@ -715,11 +665,11 @@ class VoidDataProcessor(BaseDataProcessor):
             # Only filter out clearly non-void densities
             density_cut = catalog['central_density'] < 1.0  # Much more permissive
             quality_mask &= density_cut
-            print(f"    Density cuts: {density_cut.sum()}/{len(catalog)} passed (density < 1.0)")
+            logger.info(f"    Density cuts: {density_cut.sum()}/{len(catalog)} passed (density < 1.0)")
 
         filtered_catalog = catalog[quality_mask].copy()
 
-        print(f"Quality cuts: {original_size} -> {len(filtered_catalog)} voids")
+        logger.info(f"Quality cuts: {original_size} -> {len(filtered_catalog)} voids")
 
         return filtered_catalog
 
@@ -788,7 +738,7 @@ class VoidDataProcessor(BaseDataProcessor):
             from astropy.coordinates import SkyCoord
             from astropy.cosmology import Planck18 as cosmo_model
         except ImportError:
-            print("Warning: astropy not available, using simplified coordinate conversion")
+            logger.warning("astropy not available, using simplified coordinate conversion")
             # Fallback: simple conversion
             if all(col in catalog.columns for col in ['ra_deg', 'dec_deg', 'redshift']):
                 ra_rad = np.radians(catalog['ra_deg'].values)
@@ -853,13 +803,13 @@ class VoidDataProcessor(BaseDataProcessor):
         Returns:
             Deduplicated catalog DataFrame
         """
-        print("  Removing spatial duplicates...")
+        logger.info("  Removing spatial duplicates...")
 
         # Convert catalog to Cartesian coordinates
         positions = self._get_cartesian_positions(catalog)
 
         if len(positions) == 0:
-            print("  Warning: Could not convert to Cartesian coordinates, skipping deduplication")
+            logger.warning("  Could not convert to Cartesian coordinates, skipping deduplication")
             return catalog
 
         positions_array = np.array(positions)
@@ -870,16 +820,16 @@ class VoidDataProcessor(BaseDataProcessor):
 
         filtered_catalog = catalog.iloc[keep_indices].copy()
 
-        print(f"  ✓ Removed {len(catalog) - len(filtered_catalog)} duplicates")
-        print(f"  Final catalog: {len(filtered_catalog)} voids")
+        logger.info(f"  ✓ Removed {len(catalog) - len(filtered_catalog)} duplicates")
+        logger.info(f"  Final catalog: {len(filtered_catalog)} voids")
 
         # Cache the deduplicated catalog
         if cache_path is not None:
             try:
                 filtered_catalog.to_pickle(cache_path)
-                print(f"  ✓ Cached deduplicated catalog: {cache_path}")
+                logger.info(f"  ✓ Cached deduplicated catalog: {cache_path}")
             except Exception as e:
-                print(f"  ⚠ Failed to cache deduplicated catalog: {e}")
+                logger.warning(f"  ⚠ Failed to cache deduplicated catalog: {e}")
 
         return filtered_catalog
 
@@ -900,7 +850,7 @@ class VoidDataProcessor(BaseDataProcessor):
         # Compute pairwise distances (memory-efficient for large arrays)
         # Use chunked approach for very large arrays
         if n_points > 10000:
-            print(f"    Large dataset ({n_points} voids), using chunked deduplication...")
+            logger.info(f"    Large dataset ({n_points} voids), using chunked deduplication...")
             chunk_size = 1000
             for i in range(0, n_points, chunk_size):
                 end_i = min(i + chunk_size, n_points)

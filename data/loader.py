@@ -24,12 +24,16 @@ import tempfile
 import tarfile
 import zipfile
 import gzip
+import logging
 import requests
 import numpy as np
 import pandas as pd
 from typing import Tuple, Optional, Dict, List, Any
 from pathlib import Path
 from io import BytesIO, StringIO
+
+# Configure module logger
+logger = logging.getLogger(__name__)
 
 try:
     from astroquery.skyview import SkyView
@@ -109,20 +113,17 @@ class DataLoader:
 
     def info(self, message: str):
         """Log info message."""
-        log_line = f"[INFO] DataLoader: {message}"
-        print(log_line)
+        logger.info(f"DataLoader: {message}")
         self._write_to_log(message, "INFO")
 
     def warning(self, message: str):
         """Log warning message."""
-        log_line = f"[WARNING] DataLoader: {message}"
-        print(log_line)
+        logger.warning(f"DataLoader: {message}")
         self._write_to_log(message, "WARNING")
 
     def log_message(self, message: str):
         """Log message (compatibility with old codebase)."""
-        log_line = f"[INFO] DataLoader: {message}"
-        print(log_line)
+        logger.info(f"DataLoader: {message}")
         self._write_to_log(message, "INFO")
 
     # ========================================================================
@@ -727,6 +728,427 @@ class DataLoader:
         except Exception as e:
             self.warning(f"Error parsing Clampitt & Jain catalog: {e}")
             raise
+
+    def download_desivast_void_catalogs(self) -> Dict[str, pd.DataFrame]:
+        """
+        Download DESIVAST void catalogs from DESI Data Release 1.
+        
+        Downloads void catalogs from the DESI Value-Added Survey Tracers (DESIVAST)
+        project, which identified voids in the DESI Year 1 Bright Galaxy Survey.
+        
+        Reference: Douglass et al. 2024, arXiv:2411.00148
+        Data: https://data.desi.lbl.gov/public/dr1/vac/desivast/
+        
+        Returns:
+            dict: Dictionary containing DataFrames for each void catalog type
+        """
+        # DESI public data URLs for DESIVAST catalogs
+        # Source: https://data.desi.lbl.gov/public/dr1/vac/dr1/desivast/v1.0/
+        base_url = "https://data.desi.lbl.gov/public/dr1/vac/dr1/desivast/v1.0/"
+        downloaded_dir = self.downloaded_data_dir / "desivast_dr1"
+        
+        # DESIVAST catalog files (VoidFinder, V2/VIDE, V2/REVOLVER, V2/ZOBOV - NGC and SGC)
+        # From: https://data.desi.lbl.gov/public/dr1/vac/dr1/desivast/v1.0/
+        catalog_files = {
+            'voidfinder_ngc': 'DESIVAST_BGS_VOLLIM_VoidFinder_NGC.fits',
+            'voidfinder_sgc': 'DESIVAST_BGS_VOLLIM_VoidFinder_SGC.fits',
+            'v2_vide_ngc': 'DESIVAST_BGS_VOLLIM_V2_VIDE_NGC.fits',
+            'v2_vide_sgc': 'DESIVAST_BGS_VOLLIM_V2_VIDE_SGC.fits',
+            'v2_revolver_ngc': 'DESIVAST_BGS_VOLLIM_V2_REVOLVER_NGC.fits',
+            'v2_revolver_sgc': 'DESIVAST_BGS_VOLLIM_V2_REVOLVER_SGC.fits',
+            'v2_zobov_ngc': 'DESIVAST_BGS_VOLLIM_V2_ZOBOV_NGC.fits',
+            'v2_zobov_sgc': 'DESIVAST_BGS_VOLLIM_V2_ZOBOV_SGC.fits',
+        }
+        
+        # Check if already downloaded
+        if downloaded_dir.exists() and all((downloaded_dir / f).exists() for f in catalog_files.values()):
+            self.log_message(f"✓ DESIVAST catalogs already downloaded: {downloaded_dir}")
+        else:
+            self.log_message("="*60)
+            self.log_message("DOWNLOADING DESIVAST VOID CATALOGS (DESI DR1)")
+            self.log_message("="*60)
+            self.log_message(f"Source: DESI Data Release 1 (Douglass et al. 2024)")
+            self.log_message(f"Base URL: {base_url}")
+            
+            downloaded_dir.mkdir(parents=True, exist_ok=True)
+            
+            for catalog_name, filename in catalog_files.items():
+                url = base_url + filename
+                local_path = downloaded_dir / filename
+                
+                if local_path.exists():
+                    self.log_message(f"  ✓ {filename} already exists")
+                    continue
+                
+                try:
+                    self.log_message(f"  Downloading {filename}...")
+                    response = requests.get(url, stream=True, timeout=300)
+                    response.raise_for_status()
+                    
+                    with open(local_path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                    
+                    self.log_message(f"    ✓ Downloaded {filename}")
+                    
+                except Exception as e:
+                    self.warning(f"    ✗ Failed to download {filename}: {e}")
+                    continue
+        
+        # Parse the downloaded FITS files
+        catalogs = {}
+        
+        if not ASTROPY_AVAILABLE:
+            self.warning("astropy not available, cannot parse FITS files")
+            return catalogs
+        
+        for catalog_name, filename in catalog_files.items():
+            local_path = downloaded_dir / filename
+            
+            if not local_path.exists():
+                continue
+            
+            try:
+                with fits.open(local_path) as hdul:
+                    data = hdul[1].data
+                    table = Table(data)
+                    df = table.to_pandas()
+                    
+                    # Standardize column names based on DESIVAST format
+                    # DESIVAST uses: x, y, z (comoving), radius, ra, dec, redshift
+                    column_mapping = {
+                        'x': 'x_mpc',
+                        'y': 'y_mpc',
+                        'z': 'z_mpc',
+                        'radius': 'radius_mpc',
+                        'ra': 'ra_deg',
+                        'dec': 'dec_deg',
+                        'redshift': 'redshift',
+                        'Reff': 'radius_eff',
+                        'RA': 'ra_deg',
+                        'DEC': 'dec_deg',
+                    }
+                    
+                    # Apply column mapping (case-insensitive)
+                    for old_col, new_col in column_mapping.items():
+                        if old_col in df.columns:
+                            df = df.rename(columns={old_col: new_col})
+                        elif old_col.lower() in [c.lower() for c in df.columns]:
+                            actual_col = [c for c in df.columns if c.lower() == old_col.lower()][0]
+                            df = df.rename(columns={actual_col: new_col})
+                    
+                    # Ensure radius_mpc exists
+                    if 'radius_mpc' not in df.columns and 'radius_eff' in df.columns:
+                        df['radius_mpc'] = df['radius_eff']
+                    
+                    # Add survey and algorithm identifiers
+                    algorithm = 'VOIDFINDER' if 'voidfinder' in catalog_name else 'V2'
+                    cap = 'NGC' if 'ngc' in catalog_name else 'SGC'
+                    df['survey'] = f'DESI_DR1_{algorithm}_{cap}'
+                    df['algorithm'] = algorithm
+                    
+                    # Calculate volume if radius available
+                    if 'radius_mpc' in df.columns:
+                        df['volume_mpc3'] = (4/3) * np.pi * (df['radius_mpc'])**3
+                    
+                    # Set defaults for missing columns
+                    if 'central_density' not in df.columns:
+                        df['central_density'] = 0.1
+                    if 'asphericity' not in df.columns:
+                        df['asphericity'] = 2.0
+                    if 'edge_flag' not in df.columns:
+                        df['edge_flag'] = 0
+                    
+                    catalogs[f'desi_{catalog_name}'] = df
+                    self.log_message(f"  ✓ Parsed DESIVAST {catalog_name}: {len(df)} voids")
+                    
+            except Exception as e:
+                self.warning(f"Error parsing DESIVAST {catalog_name}: {e}")
+                continue
+        
+        self.log_message(f"✓ DESIVAST catalogs loaded: {len(catalogs)} types")
+        return catalogs
+
+    def download_vide_public_void_catalogs(self) -> Dict[str, pd.DataFrame]:
+        """
+        Download VIDE public void catalogs from cosmicvoids.net.
+        
+        Downloads the public void catalog archive from the VIDE project which
+        contains voids from multiple surveys including SDSS, 2MRS, and others.
+        
+        Reference: Sutter et al. 2012, ApJ, 761, 44
+        Data: https://bitbucket.org/cosmicvoids/vide_public/wiki/Home
+        Archive: https://cloud.aquila-consortium.org/s/DCiWkdeW8Wogr59
+        
+        Returns:
+            dict: Dictionary of DataFrames for each survey's void catalog
+        """
+        # VIDE public void catalog archive from cosmicvoids.net / Aquila consortium
+        url = "https://cloud.aquila-consortium.org/s/DCiWkdeW8Wogr59/download?path=%2F&files=void_catalog_2015.03.31.tar.gz"
+        archive_file = self.downloaded_data_dir / "void_catalog_2015.03.31.tar.gz"
+        extracted_dir = self.downloaded_data_dir / "vide_public_catalogs"
+        
+        catalogs = {}
+        
+        # Check if already extracted
+        if extracted_dir.exists() and any(extracted_dir.glob("*.dat")):
+            self.log_message(f"✓ VIDE public catalogs already extracted: {extracted_dir}")
+        else:
+            # Check if archive exists
+            if not archive_file.exists():
+                self.log_message("="*60)
+                self.log_message("DOWNLOADING VIDE PUBLIC VOID CATALOGS")
+                self.log_message("="*60)
+                self.log_message(f"Source: cosmicvoids.net (Sutter et al. 2012)")
+                self.log_message(f"URL: {url}")
+                
+                try:
+                    self.log_message(f"Downloading void_catalog_2015.03.31.tar.gz...")
+                    response = requests.get(url, stream=True, timeout=600)
+                    response.raise_for_status()
+                    
+                    with open(archive_file, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                    
+                    self.log_message(f"✓ Downloaded to: {archive_file}")
+                    
+                except Exception as e:
+                    raise DataUnavailableError(f"VIDE public catalog download failed: {e}")
+            
+            # Extract the archive
+            self.log_message("Extracting archive...")
+            extracted_dir.mkdir(parents=True, exist_ok=True)
+            
+            try:
+                with tarfile.open(archive_file, 'r:gz') as tar:
+                    tar.extractall(path=extracted_dir)
+                self.log_message(f"✓ Extracted to: {extracted_dir}")
+            except Exception as e:
+                raise DataUnavailableError(f"Failed to extract VIDE archive: {e}")
+        
+        # Parse the extracted catalog files
+        # The VIDE public catalog contains multiple surveys
+        catalog_files = list(extracted_dir.rglob("*.dat")) + list(extracted_dir.rglob("*.txt"))
+        
+        for catalog_file in catalog_files:
+            try:
+                # Try to identify survey from filename
+                filename = catalog_file.name.lower()
+                
+                if '2mrs' in filename or '2mass' in filename:
+                    survey_name = '2MRS'
+                elif 'sdss' in filename:
+                    survey_name = 'SDSS_VIDE'
+                elif 'boss' in filename:
+                    survey_name = 'BOSS_VIDE'
+                else:
+                    survey_name = catalog_file.stem.upper()
+                
+                # Parse the catalog (VIDE format: typically ra, dec, z, radius, etc.)
+                df = self._parse_vide_catalog_file(catalog_file, survey_name)
+                
+                if df is not None and len(df) > 0:
+                    catalog_key = f"vide_{survey_name.lower().replace(' ', '_')}"
+                    catalogs[catalog_key] = df
+                    self.log_message(f"  ✓ Parsed {survey_name}: {len(df)} voids")
+                    
+            except Exception as e:
+                self.warning(f"  ✗ Failed to parse {catalog_file.name}: {e}")
+                continue
+        
+        self.log_message(f"✓ VIDE public catalogs loaded: {len(catalogs)} surveys")
+        return catalogs
+    
+    def _parse_vide_catalog_file(self, filepath: Path, survey_name: str) -> Optional[pd.DataFrame]:
+        """
+        Parse a VIDE format void catalog file.
+        
+        VIDE catalogs typically have columns: x, y, z (comoving), radius, etc.
+        or ra, dec, redshift, radius format.
+        """
+        try:
+            # Try reading with different delimiters and formats
+            # First try whitespace-delimited
+            df = pd.read_csv(filepath, sep=r'\s+', comment='#', header=None)
+            
+            # VIDE format typically has: x, y, z, radius, (other columns)
+            # or: ra, dec, redshift, radius
+            n_cols = len(df.columns)
+            
+            if n_cols >= 4:
+                # Check if first column looks like RA (0-360) or x coordinate
+                col0_range = df.iloc[:, 0].max() - df.iloc[:, 0].min()
+                
+                if col0_range > 100 and df.iloc[:, 0].max() <= 360:
+                    # Likely RA, Dec, z, radius format
+                    df.columns = ['ra_deg', 'dec_deg', 'redshift', 'radius_mpc'] + [f'col_{i}' for i in range(4, n_cols)]
+                else:
+                    # Likely x, y, z, radius format (comoving coordinates)
+                    df.columns = ['x_mpc', 'y_mpc', 'z_mpc', 'radius_mpc'] + [f'col_{i}' for i in range(4, n_cols)]
+                    
+                    # Convert comoving to ra, dec, redshift if needed
+                    if 'ra_deg' not in df.columns:
+                        # Calculate spherical coordinates from Cartesian
+                        r = np.sqrt(df['x_mpc']**2 + df['y_mpc']**2 + df['z_mpc']**2)
+                        df['ra_deg'] = np.degrees(np.arctan2(df['y_mpc'], df['x_mpc'])) % 360
+                        df['dec_deg'] = np.degrees(np.arcsin(df['z_mpc'] / r))
+                        # Approximate redshift from comoving distance (simplified)
+                        df['redshift'] = r / 3000.0  # Very rough approximation
+                
+                # Add survey metadata
+                df['survey'] = survey_name
+                df['algorithm'] = 'VIDE'
+                
+                # Calculate volume
+                if 'radius_mpc' in df.columns:
+                    df['volume_mpc3'] = (4/3) * np.pi * (df['radius_mpc'])**3
+                
+                # Set defaults
+                df['central_density'] = 0.1
+                df['asphericity'] = 2.0
+                df['edge_flag'] = 0
+                
+                return df
+            
+            return None
+            
+        except Exception as e:
+            return None
+
+    def download_2mrs_void_catalog(self) -> pd.DataFrame:
+        """
+        Download 2MRS void catalog from the VIDE public catalogs.
+        
+        Extracts the 2MRS portion from the VIDE public void catalog archive.
+        
+        Reference: Sutter et al. 2012, ApJ, 761, 44
+        Data: https://bitbucket.org/cosmicvoids/vide_public/wiki/Home
+        
+        Returns:
+            pd.DataFrame: Void catalog with standardized column names
+        """
+        # First try to get from VIDE public catalogs
+        vide_catalogs = self.download_vide_public_void_catalogs()
+        
+        # Look for 2MRS catalog
+        for key, df in vide_catalogs.items():
+            if '2mrs' in key.lower() or '2mass' in key.lower():
+                self.log_message(f"✓ Found 2MRS catalog in VIDE public data: {len(df)} voids")
+                return df
+        
+        # If no specific 2MRS catalog, return the combined VIDE catalogs
+        if vide_catalogs:
+            # Combine all catalogs
+            all_dfs = list(vide_catalogs.values())
+            combined = pd.concat(all_dfs, ignore_index=True)
+            self.log_message(f"✓ Using combined VIDE public catalogs: {len(combined)} voids")
+            return combined
+        
+        raise DataUnavailableError("2MRS/VIDE void catalog not available")
+
+    def download_des_void_catalog(self) -> pd.DataFrame:
+        """
+        Download DES (Dark Energy Survey) void catalog.
+        
+        Downloads void catalogs from the Dark Energy Survey. DES Y3 void catalogs
+        were published in Fang et al. (2019) and subsequent works.
+        
+        Reference: Fang et al. 2019, MNRAS, 490, 3573
+        
+        Returns:
+            pd.DataFrame: Void catalog with standardized column names
+        """
+        # DES void catalogs from Zenodo/DES data release
+        # DES Y3 void catalog from Fang et al. 2019
+        url = "https://des.ncsa.illinois.edu/releases/y3a2/Y3voids/DES_Y3_voids.fits"
+        cached_file = self.downloaded_data_dir / "des_y3_voids.fits"
+        
+        # Alternative: try CDS archive
+        alt_urls = [
+            "https://cdsarc.cds.unistra.fr/ftp/J/MNRAS/490/3573/voids.fits",
+        ]
+        
+        # Check if already cached
+        if cached_file.exists():
+            self.log_message(f"✓ DES void catalog already cached: {cached_file}")
+        else:
+            self.log_message("="*60)
+            self.log_message("DOWNLOADING DES VOID CATALOG")
+            self.log_message("="*60)
+            self.log_message(f"Source: DES Year 3 (Fang et al. 2019)")
+            
+            downloaded = False
+            for try_url in [url] + alt_urls:
+                try:
+                    self.log_message(f"Trying: {try_url}")
+                    response = requests.get(try_url, stream=True, timeout=300)
+                    response.raise_for_status()
+                    
+                    with open(cached_file, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                    
+                    self.log_message(f"✓ Downloaded to: {cached_file}")
+                    downloaded = True
+                    break
+                    
+                except Exception as e:
+                    self.warning(f"Failed: {e}")
+                    continue
+            
+            if not downloaded:
+                raise DataUnavailableError("DES void catalog download failed - no public URL available")
+        
+        # Parse the FITS file
+        if not ASTROPY_AVAILABLE:
+            raise DataUnavailableError("astropy not available, cannot parse FITS file")
+        
+        try:
+            with fits.open(cached_file) as hdul:
+                data = hdul[1].data
+                table = Table(data)
+                df = table.to_pandas()
+                
+                # Standardize column names
+                column_mapping = {
+                    'RA': 'ra_deg',
+                    'DEC': 'dec_deg',
+                    'Z': 'redshift',
+                    'RADIUS': 'radius_mpc',
+                    'R_EFF': 'radius_mpc',
+                    'DELTA': 'central_density',
+                }
+                
+                for old_col, new_col in column_mapping.items():
+                    if old_col in df.columns:
+                        df = df.rename(columns={old_col: new_col})
+                
+                # Add survey and algorithm identifiers
+                df['survey'] = 'DES_Y3'
+                df['algorithm'] = 'VIDE'
+                
+                # Calculate volume if radius available
+                if 'radius_mpc' in df.columns:
+                    df['volume_mpc3'] = (4/3) * np.pi * (df['radius_mpc'])**3
+                
+                # Set defaults
+                if 'central_density' not in df.columns:
+                    df['central_density'] = 0.1
+                df['asphericity'] = 2.0
+                df['edge_flag'] = 0
+                
+                self.log_message(f"✓ Loaded DES void catalog: {len(df)} voids")
+                if len(df) > 0:
+                    self.log_message(f"  Redshift range: z = {df['redshift'].min():.3f} to {df['redshift'].max():.3f}")
+                
+                return df
+                
+        except Exception as e:
+            raise DataUnavailableError(f"Error parsing DES catalog: {e}")
 
     # ========================================================================
     # BAO DATA LOADING (Published literature values)
@@ -1459,12 +1881,10 @@ class DataLoader:
                 df.to_pickle(cache_file)
                 return df
             else:
-                self.warning("No Legacy Survey catalog found in Vizier")
-                return self._generate_fallback_galaxy_catalog('legacy', z_min, z_max, mag_limit)
+                raise DataUnavailableError("No Legacy Survey catalog found in Vizier")
 
         except Exception as e:
-            self.warning(f"Legacy Survey catalog loading failed: {e}, using fallback")
-            return self._generate_fallback_galaxy_catalog('legacy', z_min, z_max, mag_limit)
+            raise DataUnavailableError(f"Legacy Survey catalog loading failed: {e}")
 
     def load_euclid_galaxy_catalog(self, z_min: float = 0.1, z_max: float = 2.0,
                                   mag_limit: float = 24.0) -> pd.DataFrame:
@@ -1489,68 +1909,6 @@ class DataLoader:
 
         # Euclid data may not be publicly available yet
         raise DataUnavailableError("Euclid data not publicly available")
-
-    def _generate_fallback_galaxy_catalog(self, survey: str, z_min: float, z_max: float,
-                                        mag_limit: float) -> pd.DataFrame:
-        """
-        Generate fallback galaxy catalog for testing when real data unavailable.
-
-        Parameters:
-            survey: Survey name
-            z_min: Minimum redshift
-            z_max: Maximum redshift
-            mag_limit: Magnitude limit
-
-        Returns:
-            pd.DataFrame: Synthetic galaxy catalog
-        """
-        np.random.seed(42)
-
-        n_galaxies = 10000
-
-        # Generate realistic galaxy properties
-        z = np.random.uniform(z_min, z_max, n_galaxies)
-        ra = np.random.uniform(0, 360, n_galaxies)
-        dec = np.random.uniform(-30, 30, n_galaxies)  # SDSS-like footprint
-
-        # Magnitude distributions (simplified)
-        r_mag = np.random.uniform(15, mag_limit, n_galaxies)
-        u_minus_r = np.random.normal(2.2, 0.5, n_galaxies)
-        g_minus_r = np.random.normal(0.8, 0.3, n_galaxies)
-        r_minus_i = np.random.normal(0.4, 0.2, n_galaxies)
-
-        # Derived magnitudes
-        u_mag = r_mag + u_minus_r
-        g_mag = r_mag + g_minus_r
-        i_mag = r_mag - r_minus_i
-        z_mag = i_mag - np.random.normal(0.3, 0.1, n_galaxies)
-
-        # Morphological parameters
-        petrosian_radius = 10**np.random.normal(1.2, 0.3, n_galaxies)  # arcsec
-        half_light_radius = petrosian_radius * np.random.uniform(0.3, 0.8, n_galaxies)
-        concentration = np.random.uniform(2.5, 5.0, n_galaxies)
-
-        df = pd.DataFrame({
-            'ra': ra,
-            'dec': dec,
-            'z': z,
-            'z_err': z * 0.05,  # 5% redshift error
-            'r_mag': r_mag,
-            'u_mag': u_mag,
-            'g_mag': g_mag,
-            'i_mag': i_mag,
-            'z_mag': z_mag,
-            'u_minus_r': u_minus_r,
-            'g_minus_r': g_minus_r,
-            'r_minus_i': r_minus_i,
-            'petrosian_radius': petrosian_radius,
-            'half_light_radius': half_light_radius,
-            'concentration': concentration,
-            'survey': survey
-        })
-
-        self.log_message(f"Generated fallback {survey} catalog with {len(df)} galaxies")
-        return df
 
     # ========================================================================
     # UTILITY METHODS

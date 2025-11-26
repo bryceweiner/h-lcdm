@@ -222,16 +222,16 @@ class DataManifest:
             h_lcdm_signals_blinded=['enhanced_sound_horizon_rs_150.71']
         ))
 
-        # Void data sources (deduplicated)
+        # Void data sources (deduplicated from multiple surveys)
         self.add_source(DataSource(
             name='voids_deduplicated',
             modality='void',
-            survey='SDSS DR7 (combined Douglass+Clampitt+ZOBOV+VIDE)',
-            n_samples=8000,  # estimated after deduplication
+            survey='SDSS DR7 + DESI DR1 + DES Y3 + 2MRS (combined)',
+            n_samples=50000,  # estimated after deduplication
             features=['ra', 'dec', 'z', 'size', 'ellipticity', 'density_contrast', 'alignment_angles'],
-            redshift_range=(0.01, 0.15),
+            redshift_range=(0.005, 0.9),
             data_quality='gold',
-            provenance='Douglass et al. 2023 + deduplication',
+            provenance='Douglass et al. 2023 + Clampitt & Jain 2015 + DESIVAST 2024 + DES Y3 + 2MRS',
             h_lcdm_signals_blinded=['e8_hetereotic_alignment_C_25_32']
         ))
 

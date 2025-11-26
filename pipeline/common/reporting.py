@@ -805,11 +805,14 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
         """Generate pipeline-specific results."""
         results_section = f"## Analysis Results\n\n"
         
-        # Get main results - check both 'main' key and top-level
-        main_results = results.get('main', {})
+        # Get main results - handle nested structure {pipeline, timestamp, results, metadata}
+        # The actual data is in results['results'] for saved JSON files
+        actual_results = results.get('results', results)
+        
+        main_results = actual_results.get('main', {})
         if not main_results or len(main_results) == 0:
-            # If main is empty, use top-level results (which is what gets saved)
-            main_results = {k: v for k, v in results.items() if k not in ['validation', 'validation_extended']}
+            # If main is empty, use actual_results (which contains the pipeline data)
+            main_results = {k: v for k, v in actual_results.items() if k not in ['validation', 'validation_extended']}
         
         # Extract key findings based on pipeline type
         if pipeline_name == 'gamma':
@@ -1615,110 +1618,93 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
             if clustering_analysis and 'error' not in clustering_analysis:
                 results_section += "### Network Clustering Analysis\n\n"
                 
-                clustering_comparison = clustering_analysis.get('clustering_comparison', {})
-                processing_costs = clustering_analysis.get('processing_costs', {})
+                # Get observed clustering coefficient (new structure)
+                observed_cc = clustering_analysis.get('observed_clustering_coefficient', 0)
+                observed_std = clustering_analysis.get('observed_clustering_std', 0.03)
                 
-                # Observed clustering coefficient
-                observed = clustering_comparison.get('observed', {})
-                observed_cc = observed.get('value', 'N/A')
-                observed_std = observed.get('std', 0.03)
+                # Ensure numeric types for formatting
+                if isinstance(observed_cc, str):
+                    try:
+                        observed_cc = float(observed_cc)
+                    except (ValueError, TypeError):
+                        observed_cc = 0.0
+                if isinstance(observed_std, str):
+                    try:
+                        observed_std = float(observed_std)
+                    except (ValueError, TypeError):
+                        observed_std = 0.03
                 
                 results_section += f"**Observed Clustering Coefficient:** C_obs = {observed_cc:.3f} ± {observed_std:.3f}\n\n"
                 
-                # Three fundamental clustering coefficient values
+                # Fundamental values
+                fundamental_values = clustering_analysis.get('fundamental_values', {})
+                c_hlcdm = fundamental_values.get('c_hlcdm', 0.443)
+                c_lcdm = fundamental_values.get('c_lcdm', 0.0)
+                c_e8 = fundamental_values.get('c_e8', 0.781)
+                
                 results_section += "**Fundamental Clustering Coefficient Values:**\n\n"
+                results_section += f"- **H-ΛCDM Thermodynamic Prediction:** η_natural = {c_hlcdm:.4f} = (1-ln(2))/ln(2)\n"
+                results_section += f"  *Physical meaning:* Processing required to precipitate baryonic matter from pure information\n\n"
+                results_section += f"- **E8×E8 Pure Substrate:** C_E8 = {c_e8:.4f} (25/32)\n"
+                results_section += f"  *Physical meaning:* Pure computational substrate potential without thermodynamic constraints\n\n"
+                results_section += f"- **ΛCDM Prediction:** C = {c_lcdm:.2f} (isotropic universe)\n"
+                results_section += f"  *Physical meaning:* Standard cosmological model predicts no preferred clustering structure\n\n"
                 
-                # Thermodynamic Efficiency
-                eta_data = clustering_comparison.get('thermodynamic_efficiency', {})
-                if eta_data:
-                    eta_val = eta_data.get('value', 0.443)
-                    eta_sigma = eta_data.get('sigma', 0)
-                    results_section += f"- **Thermodynamic Efficiency:** η_natural = {eta_val:.4f} = (1-ln(2))/ln(2), difference: {eta_sigma:.1f}σ\n"
-                    results_section += f"  *Physical meaning:* Processing required to precipitate baryonic matter from pure information\n\n"
+                # Test results
+                test_results = clustering_analysis.get('test_results', {})
+                if test_results:
+                    results_section += "### Statistical Tests\n\n"
+                    
+                    for test_key, test_data in test_results.items():
+                        if isinstance(test_data, dict):
+                            test_name = test_data.get('test_name', test_key)
+                            description = test_data.get('description', '')
+                            sigma = test_data.get('sigma', 0)
+                            chi2 = test_data.get('chi2', 0)
+                            passed = test_data.get('passed', False)
+                            
+                            # Handle string 'True'/'False' from JSON
+                            if isinstance(passed, str):
+                                passed = passed.lower() == 'true'
+                            
+                            status = "✓ PASSED" if passed else "✗ FAILED"
+                            results_section += f"**{test_name}:** {status}\n"
+                            results_section += f"- {description}\n"
+                            results_section += f"- Difference: {sigma:.2f}σ, χ² = {chi2:.2f}\n\n"
                 
-                # E8×E8 Pure Substrate
-                e8_data = clustering_comparison.get('e8_pure_substrate', {})
-                if e8_data:
-                    e8_val = e8_data.get('value', 0.781)
-                    e8_sigma = e8_data.get('sigma', 0)
-                    results_section += f"- **E8×E8 Pure Substrate:** C_E8 = {e8_val:.4f} (25/32), difference: {e8_sigma:.1f}σ\n"
-                    results_section += f"  *Physical meaning:* Pure computational substrate potential without thermodynamic constraints\n\n"
-                
-                # ΛCDM
-                lcdm_data = clustering_comparison.get('lcdm', {})
-                if lcdm_data:
-                    lcdm_val = lcdm_data.get('value', 0.42)
-                    lcdm_std = lcdm_data.get('std', 0.08)
-                    lcdm_sigma = lcdm_data.get('sigma', 0)
-                    results_section += f"- **ΛCDM Prediction:** C = {lcdm_val:.2f} ± {lcdm_std:.2f}, difference: {lcdm_sigma:.1f}σ\n"
-                    results_section += f"  *Physical meaning:* Standard cosmological model prediction from gravitational structure formation\n\n"
-                
-                # Comprehensive Processing Cost Analysis
-                if processing_costs:
-                    results_section += "**Comprehensive Processing Cost Analysis:**\n\n"
-
-                    # Network connectivity costs
-                    conn_observed = processing_costs.get('connectivity_cost_observed', {})
-                    conn_hlcdm = processing_costs.get('connectivity_cost_hlcdm', {})
-                    conn_lcdm = processing_costs.get('connectivity_cost_lcdm', {})
-
-                    if conn_observed:
-                        results_section += "**Network Connectivity Costs:**\n"
-                        results_section += f"- **Observed:** C_E8(G) - C_obs = {conn_observed.get('value', 'N/A'):.4f}\n"
-                        results_section += f"  *{conn_observed.get('interpretation', '')}*\n"
-                        results_section += f"- **H-ΛCDM Theoretical:** C_E8(G) - η_natural = {conn_hlcdm.get('value', 'N/A'):.4f}\n"
-                        results_section += f"  *{conn_hlcdm.get('interpretation', '')}*\n"
-                        results_section += f"- **ΛCDM Theoretical:** C_E8(G) - ΛCDM = {conn_lcdm.get('value', 'N/A'):.4f}\n"
-                        results_section += f"  *{conn_lcdm.get('interpretation', '')}*\n\n"
-
-                    # Baryonic processing costs
-                    baryonic_obs = processing_costs.get('baryonic_cost_observed', {})
-                    baryonic_hlcdm = processing_costs.get('baryonic_cost_hlcdm', {})
-
-                    if baryonic_obs:
-                        results_section += "**Baryonic Matter Processing Costs:**\n"
-                        results_section += f"- **Observed:** C_obs = {baryonic_obs.get('value', 'N/A'):.4f}\n"
-                        results_section += f"  *{baryonic_obs.get('interpretation', '')}*\n"
-                        results_section += f"- **H-ΛCDM Theoretical:** η_natural = {baryonic_hlcdm.get('value', 'N/A'):.4f}\n"
-                        results_section += f"  *{baryonic_hlcdm.get('interpretation', '')}*\n"
-                        results_section += f"  *{baryonic_hlcdm.get('physical_meaning', '')}*\n\n"
-                
-                # Interpretation
-                interpretation = clustering_analysis.get('interpretation', '')
-                if interpretation:
-                    results_section += f"**Interpretation:** {interpretation}\n\n"
-                
-                # Comprehensive model comparison results
+                # Model comparison
                 model_comparison = clustering_analysis.get('model_comparison', {})
-                best_model = model_comparison.get('best_model', 'unknown')
-                overall_scores = model_comparison.get('overall_scores', {})
-                connectivity_costs = model_comparison.get('connectivity_costs', {})
-                baryonic_costs = model_comparison.get('baryonic_costs', {})
-                detailed_prefs = model_comparison.get('detailed_preferences', {})
-
-                results_section += "### Model Comparison Results\n\n"
-
-                # Overall model preference
-                if best_model == 'hlcdm':
-                    results_section += f"**Overall Finding:** ✓ H-ΛCDM Model Preferred (combined χ² = {overall_scores.get('hlcdm_combined', 0):.1f})\n\n"
-                elif best_model == 'lcmd':
-                    results_section += f"**Overall Finding:** ✓ ΛCDM Model Preferred (χ² = {overall_scores.get('lcmd_connectivity_only', 0):.1f})\n\n"
-                else:
-                    results_section += "**Overall Finding:** No clear model preference\n\n"
-
-                # Detailed analysis breakdown
-                results_section += "**Connectivity Cost Analysis:**\n"
-                results_section += f"- Observed: C_E8(G) - C_obs = {connectivity_costs.get('observed', 0):.3f}\n"
-                results_section += f"- H-ΛCDM theoretical: C_E8(G) - η_natural = {connectivity_costs.get('hlcdm_theoretical', 0):.3f}\n"
-                results_section += f"- ΛCDM theoretical: C_E8(G) - ΛCDM = {connectivity_costs.get('lcmd_theoretical', 0):.3f}\n"
-                results_section += f"- H-ΛCDM fit: χ² = {connectivity_costs.get('chi2_observed_vs_hlcdm', 0):.1f}\n"
-                results_section += f"- ΛCDM fit: χ² = {connectivity_costs.get('chi2_observed_vs_lcdm', 0):.1f}\n\n"
-
-                results_section += "**Baryonic Cost Analysis:**\n"
-                results_section += f"- Observed: C_obs = {baryonic_costs.get('observed', 0):.3f}\n"
-                results_section += f"- H-ΛCDM theoretical: η_natural = {baryonic_costs.get('hlcdm_theoretical', 0):.3f}\n"
-                results_section += f"- Fit quality: χ² = {baryonic_costs.get('chi2_observed_vs_hlcdm', 0):.1f}\n\n"
-
+                if model_comparison:
+                    results_section += "### Model Comparison Results\n\n"
+                    
+                    best_model = model_comparison.get('best_model', 'unknown')
+                    
+                    # Get chi2 values from overall_scores or connectivity_costs
+                    overall_scores = model_comparison.get('overall_scores', {})
+                    connectivity_costs = model_comparison.get('connectivity_costs', {})
+                    
+                    hlcdm_chi2 = overall_scores.get('hlcdm_combined', 0) or connectivity_costs.get('chi2_observed_vs_hlcdm', 0)
+                    lcdm_chi2 = overall_scores.get('lcmd_connectivity_only', 0) or connectivity_costs.get('chi2_observed_vs_lcdm', 0)
+                    delta_chi2 = lcdm_chi2 - hlcdm_chi2
+                    
+                    # Determine preference strength based on delta chi2
+                    if delta_chi2 > 10:
+                        preference_strength = "very strong"
+                    elif delta_chi2 > 6:
+                        preference_strength = "strong"
+                    elif delta_chi2 > 2:
+                        preference_strength = "moderate"
+                    elif delta_chi2 > 0:
+                        preference_strength = "weak"
+                    else:
+                        preference_strength = "inconclusive"
+                    
+                    results_section += f"**Best Fit Model:** {best_model.upper()}\n\n"
+                    results_section += f"- H-ΛCDM combined χ²: {hlcdm_chi2:.2f}\n"
+                    results_section += f"- ΛCDM combined χ²: {lcdm_chi2:.2f}\n"
+                    results_section += f"- Δχ² = {delta_chi2:.2f}\n"
+                    results_section += f"- Preference strength: {preference_strength}\n\n"
+                
                 # Interpretation
                 interpretation = clustering_analysis.get('interpretation', '')
                 if interpretation:
@@ -1838,9 +1824,11 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
         validation = f"## Validation\n\n"
         
         # Get validation results from the results dict
-        # Results structure: {'main': {...}, 'validation': {...}, 'validation_extended': {...}}
-        basic_val = results.get('validation', {})
-        extended_val = results.get('validation_extended', {})
+        # Handle nested structure {pipeline, timestamp, results, metadata}
+        actual_results = results.get('results', results)
+        
+        basic_val = actual_results.get('validation', {})
+        extended_val = actual_results.get('validation_extended', {})
         
         if basic_val:
             overall_status = basic_val.get('overall_status', 'UNKNOWN')
@@ -2264,12 +2252,15 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
         """Generate pipeline-specific conclusion."""
         conclusion = f"## Conclusion\n\n"
         
-        # Get main results and validation
-        main_results = results.get('main', {})
-        if not main_results:
-            main_results = results
+        # Handle nested structure {pipeline, timestamp, results, metadata}
+        actual_results = results.get('results', results)
         
-        validation = results.get('validation', {})
+        # Get main results and validation
+        main_results = actual_results.get('main', {})
+        if not main_results:
+            main_results = actual_results
+        
+        validation = actual_results.get('validation', {})
         overall_status = validation.get('overall_status', 'UNKNOWN')
         
         # Extract key findings
