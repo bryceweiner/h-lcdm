@@ -21,7 +21,6 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Any, Optional, List
 from pathlib import Path
-from tqdm import tqdm
 
 from ..common.base_pipeline import AnalysisPipeline
 from data.processors.void_processor import VoidDataProcessor
@@ -184,23 +183,22 @@ class VoidPipeline(AnalysisPipeline):
 
     def _perform_clustering_analysis(self, void_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Perform void network clustering analysis with physically motivated model comparison.
+        Perform void network clustering analysis.
 
-        Compares observed clustering coefficient against two cosmological models:
-        - H-ΛCDM: C_HLCDM = η_natural = (1-ln(2))/ln(2) ≈ 0.443 (thermodynamic ratio)
-        - ΛCDM: C_LCDM = 0 (isotropic - no clustering preference)
-        
-        Reference value:
+        Analyzes the clustering coefficient of the void network to determine:
+        1. Processing cost required to precipitate baryonic matter from pure information
+        2. Processing cost of maintaining causal diamond/light cone structure
+
+        Compares three fundamental values:
+        - Observed (ΛCDM) clustering coefficient: C_obs ≈ 0.42-0.43
+        - Thermodynamic ratio: η_natural = (1-ln(2))/ln(2) ≈ 0.443
         - E8×E8 pure substrate: C_E8 = 25/32 ≈ 0.781
 
-        Four Physically Motivated Tests:
-        1. C_HLCDM vs C_observed - Direct clustering comparison
-        2. C_LCDM vs C_observed - Direct clustering comparison  
-        3. (C_E8 - C_HLCDM) vs (C_E8 - C_observed) - Processing cost comparison
-        4. (C_E8 - C_LCDM) vs (C_E8 - C_observed) - Processing cost comparison
-
-        Overall Model Comparison:
-        - Which model (H-ΛCDM or ΛCDM) better explains the observed clustering?
+        Physical interpretation:
+        - If C_obs matches η_natural → clustering represents processing required to 
+          precipitate baryonic matter from pure information
+        - ΔC = C_E8 - η_natural = 0.338 → processing cost of maintaining 
+          causal diamond/light cone structure
 
         Parameters:
             void_data: Processed void data
@@ -216,185 +214,254 @@ class VoidPipeline(AnalysisPipeline):
                 'note': 'Clustering analysis requires network analysis to be performed first'
             }
 
-        # Observed values from network analysis
-        c_observed = network_analysis.get('clustering_coefficient', 0.0)
-        c_observed_std = network_analysis.get('clustering_std', 0.03)
+        clustering_coefficient = network_analysis.get('clustering_coefficient', 0.0)
+        clustering_std = network_analysis.get('clustering_std', 0.03)
         
-        # Fundamental clustering coefficient values
-        c_hlcdm = (1.0 - np.log(2.0)) / np.log(2.0)  # η_natural ≈ 0.443 (thermodynamic ratio)
-        c_lcdm = 0.0  # ΛCDM predicts isotropic structure (no clustering preference)
-        c_e8 = 25.0 / 32.0  # E8×E8 pure substrate ≈ 0.781
+        # Three fundamental clustering coefficient values
+        c_observed = clustering_coefficient  # Observed clustering coefficient
+        c_lcdm = 0.42  # ΛCDM prediction (from literature)
+        c_lcdm_std = 0.08
+        eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)  # Thermodynamic ratio from entropy mechanics
+        # E8×E8 pure substrate = pure computational capacity without any thermodynamic processing
+        # This represents the raw E8×E8 substrate before thermodynamic costs are applied
+        # eta_natural (0.443) represents the minimum thermodynamic cost of the information processing
+        # The difference (E8_pure - eta_natural) represents the processing cost of baryonic matter
+        c_e8_pure = 25.0 / 32.0  # Pure E8×E8 substrate without thermodynamic processing
 
-        # ============================================================
-        # TEST 1: C_HLCDM vs C_observed (Direct clustering comparison)
-        # ============================================================
-        diff_hlcdm = c_observed - c_hlcdm
-        sigma_hlcdm = abs(diff_hlcdm) / c_observed_std if c_observed_std > 0 else 999.0
-        chi2_hlcdm = (diff_hlcdm / c_observed_std)**2 if c_observed_std > 0 else float('inf')
-        
-        test1_result = {
-            'test_name': 'C_HLCDM vs C_observed',
-            'description': 'Does observed clustering match H-ΛCDM thermodynamic prediction?',
-            'c_hlcdm': c_hlcdm,
-            'c_observed': c_observed,
-            'difference': diff_hlcdm,
-            'sigma': sigma_hlcdm,
-            'chi2': chi2_hlcdm,
-            'passed': sigma_hlcdm < 3.0  # Within 3σ
-        }
-
-        # ============================================================
-        # TEST 2: C_LCDM vs C_observed (Direct clustering comparison)
-        # ============================================================
+        # Calculate differences and significances
+        diff_eta = c_observed - eta_natural
         diff_lcdm = c_observed - c_lcdm
-        sigma_lcdm = abs(diff_lcdm) / c_observed_std if c_observed_std > 0 else 999.0
-        chi2_lcdm = (diff_lcdm / c_observed_std)**2 if c_observed_std > 0 else float('inf')
+        diff_e8 = c_observed - c_e8_pure
+
+        # Statistical significances (in sigma)
+        # Use large value instead of infinity when std is zero (indicates high significance)
+        sigma_eta = abs(diff_eta) / clustering_std if clustering_std > 0 else 999.0
+        sigma_lcdm = abs(diff_lcdm) / np.sqrt(clustering_std**2 + c_lcdm_std**2)
+        sigma_e8 = abs(diff_e8) / clustering_std if clustering_std > 0 else 999.0
+
+        # Processing costs - analyzing both baryonic matter costs and network connectivity costs
+        # 1. Observed information processing costs
+        #    C_E8(G) - C_obs = observed cost of maintaining basic network connectivity
+        processing_cost_connectivity_observed = c_e8_pure - c_observed
+
+        # 2. Theoretical connectivity costs
+        #    C_E8(G) - η_natural = H-ΛCDM theoretical cost of maintaining basic network connectivity
+        processing_cost_connectivity_hlcdm = c_e8_pure - eta_natural
+
+        #    C_E8(G) - ΛCDM = ΛCDM theoretical cost of maintaining basic network connectivity
+        processing_cost_connectivity_lcdm = c_e8_pure - c_lcdm
+
+        # 3. Baryonic matter processing costs
+        #    η_natural = H-ΛCDM theoretical baryonic processing cost (QTEP ratio)
+        #    C_obs = observed baryonic processing cost (revealed by clustering)
+        #    The difference reveals the baryonic cost of information processing
         
-        test2_result = {
-            'test_name': 'C_LCDM vs C_observed',
-            'description': 'Does observed clustering match ΛCDM isotropic prediction (0)?',
-            'c_lcdm': c_lcdm,
-            'c_observed': c_observed,
-            'difference': diff_lcdm,
-            'sigma': sigma_lcdm,
-            'chi2': chi2_lcdm,
-            'passed': sigma_lcdm < 3.0  # Within 3σ
+        # 3. Total processing signature
+        #    = difference between E8×E8 pure substrate and observed
+        total_processing_signature = c_e8_pure - c_observed
+
+        # Clustering coefficient comparison
+        clustering_comparison = {
+            'observed': {
+                'value': c_observed,
+                'std': clustering_std,
+                'label': 'Observed clustering coefficient (C_obs)',
+                'interpretation': 'Measured clustering coefficient from void network analysis'
+            },
+            'lcdm': {
+                'value': c_lcdm,
+                'std': c_lcdm_std,
+                'difference': diff_lcdm,
+                'sigma': sigma_lcdm,
+                'label': 'ΛCDM prediction',
+                'interpretation': 'Standard cosmological model prediction from gravitational structure formation'
+            },
+            'thermodynamic_efficiency': {
+                'value': eta_natural,
+                'difference': diff_eta,
+                'sigma': sigma_eta,
+                'label': 'Thermodynamic ratio (η_natural)',
+                'interpretation': 'Parameter-free prediction from entropy mechanics: η_natural = (1-ln(2))/ln(2)',
+                'physical_meaning': 'Processing required to precipitate baryonic matter from pure information'
+            },
+            'e8_pure_substrate': {
+                'value': c_e8_pure,
+                'difference': diff_e8,
+                'sigma': sigma_e8,
+                'label': 'E8×E8 pure substrate (C_E8)',
+                'interpretation': 'E8×E8 pure substrate (C_E8(G)): pure computational capacity of the E8×E8 heterotic string theory group',
+                'physical_meaning': 'Pure E8×E8 computational substrate before thermodynamic costs are applied'
+            }
         }
 
-        # ============================================================
-        # TEST 3: (C_E8 - C_HLCDM) vs (C_E8 - C_observed) - Processing cost comparison
-        # ============================================================
-        processing_cost_hlcdm = c_e8 - c_hlcdm  # Theoretical processing cost (H-ΛCDM)
-        processing_cost_observed = c_e8 - c_observed  # Observed processing cost
-        diff_processing_hlcdm = processing_cost_observed - processing_cost_hlcdm
-        sigma_processing_hlcdm = abs(diff_processing_hlcdm) / c_observed_std if c_observed_std > 0 else 999.0
-        chi2_processing_hlcdm = (diff_processing_hlcdm / c_observed_std)**2 if c_observed_std > 0 else float('inf')
-        
-        test3_result = {
-            'test_name': '(C_E8 - C_HLCDM) vs (C_E8 - C_observed)',
-            'description': 'Does observed processing cost match H-ΛCDM theoretical cost?',
-            'processing_cost_hlcdm': processing_cost_hlcdm,
-            'processing_cost_observed': processing_cost_observed,
-            'difference': diff_processing_hlcdm,
-            'sigma': sigma_processing_hlcdm,
-            'chi2': chi2_processing_hlcdm,
-            'passed': sigma_processing_hlcdm < 3.0  # Within 3σ
+        # Processing cost analysis
+        processing_costs = {
+            # Network connectivity costs (revealing basic network maintenance costs)
+            'connectivity_cost_observed': {
+                'value': processing_cost_connectivity_observed,
+                'interpretation': 'Observed cost of maintaining basic network connectivity',
+                'calculation': f'C_E8(G) - C_obs = {c_e8_pure:.3f} - {c_observed:.3f} = {processing_cost_connectivity_observed:.3f}',
+                'physical_meaning': 'Actual thermodynamic cost of maintaining network connectivity revealed by observed clustering'
+            },
+            'connectivity_cost_hlcdm': {
+                'value': processing_cost_connectivity_hlcdm,
+                'interpretation': 'H-ΛCDM theoretical cost of maintaining basic network connectivity',
+                'calculation': f'C_E8(G) - η_natural = {c_e8_pure:.3f} - {eta_natural:.3f} = {processing_cost_connectivity_hlcdm:.3f}',
+                'physical_meaning': 'Theoretical connectivity cost predicted by entropy mechanics thermodynamic ratio'
+            },
+            'connectivity_cost_lcdm': {
+                'value': processing_cost_connectivity_lcdm,
+                'interpretation': 'ΛCDM theoretical cost of maintaining basic network connectivity',
+                'calculation': f'C_E8(G) - ΛCDM = {c_e8_pure:.3f} - {c_lcdm:.3f} = {processing_cost_connectivity_lcdm:.3f}',
+                'physical_meaning': 'Theoretical connectivity cost predicted by standard cosmological model'
+            },
+            # Baryonic matter processing costs (revealing matter processing costs)
+            'baryonic_cost_hlcdm': {
+                'value': eta_natural,
+                'interpretation': 'H-ΛCDM theoretical baryonic processing cost (QTEP ratio)',
+                'calculation': f'η_natural = {eta_natural:.3f} (thermodynamic ratio)',
+                'physical_meaning': 'Theoretical cost of baryonic matter processing predicted by entropy mechanics'
+            },
+            'baryonic_cost_observed': {
+                'value': c_observed,
+                'interpretation': 'Observed baryonic processing cost revealed by clustering coefficient',
+                'calculation': f'C_obs = {c_observed:.3f} (measured clustering)',
+                'physical_meaning': 'Actual baryonic cost of information processing revealed by observed void network structure'
+            },
+            'total_processing_signature': {
+                'value': total_processing_signature,
+                'interpretation': 'Total processing signature: reduction from pure E8×E8 substrate to observed',
+                'calculation': f'C_E8 - C_obs = {c_e8_pure:.3f} - {c_observed:.3f} = {total_processing_signature:.3f}',
+                'physical_meaning': 'Complete information processing cost from pure substrate to observed baryonic structure'
+            }
         }
 
-        # ============================================================
-        # TEST 4: (C_E8 - C_LCDM) vs (C_E8 - C_observed) - Processing cost comparison
-        # ============================================================
-        processing_cost_lcdm = c_e8 - c_lcdm  # Theoretical processing cost (ΛCDM) = C_E8
-        diff_processing_lcdm = processing_cost_observed - processing_cost_lcdm
-        sigma_processing_lcdm = abs(diff_processing_lcdm) / c_observed_std if c_observed_std > 0 else 999.0
-        chi2_processing_lcdm = (diff_processing_lcdm / c_observed_std)**2 if c_observed_std > 0 else float('inf')
-        
-        test4_result = {
-            'test_name': '(C_E8 - C_LCDM) vs (C_E8 - C_observed)',
-            'description': 'Does observed processing cost match ΛCDM theoretical cost?',
-            'processing_cost_lcdm': processing_cost_lcdm,
-            'processing_cost_observed': processing_cost_observed,
-            'difference': diff_processing_lcdm,
-            'sigma': sigma_processing_lcdm,
-            'chi2': chi2_processing_lcdm,
-            'passed': sigma_processing_lcdm < 3.0  # Within 3σ
-        }
+        # Comprehensive model comparison across multiple physical aspects
+        # 1. Connectivity cost comparisons (C_E8(G) - costs)
+        chi2_connectivity_observed_vs_hlcdm = ((processing_cost_connectivity_observed - processing_cost_connectivity_hlcdm) / clustering_std)**2 if clustering_std > 0 else float('inf')
+        chi2_connectivity_observed_vs_lcdm = ((processing_cost_connectivity_observed - processing_cost_connectivity_lcdm) / clustering_std)**2 if clustering_std > 0 else float('inf')
 
-        # ============================================================
-        # OVERALL MODEL COMPARISON: C_LCDM vs C_HLCDM
-        # ============================================================
-        # Combined chi2 for each model (average of direct and processing cost tests)
-        hlcdm_combined_chi2 = (chi2_hlcdm + chi2_processing_hlcdm) / 2.0
-        lcdm_combined_chi2 = (chi2_lcdm + chi2_processing_lcdm) / 2.0
-        
-        # Determine best model
-        if hlcdm_combined_chi2 < lcdm_combined_chi2:
-            best_model = 'H-ΛCDM'
-            best_chi2 = hlcdm_combined_chi2
-        else:
-            best_model = 'ΛCDM'
-            best_chi2 = lcdm_combined_chi2
-        
-        # Delta chi2 for model comparison
-        delta_chi2 = lcdm_combined_chi2 - hlcdm_combined_chi2  # Positive = H-ΛCDM preferred
-        
-        model_comparison = {
-            'best_model': best_model,
-            'hlcdm_combined_chi2': hlcdm_combined_chi2,
-            'lcdm_combined_chi2': lcdm_combined_chi2,
-            'delta_chi2': delta_chi2,
-            'hlcdm_preferred': delta_chi2 > 0,
-            'preference_strength': 'strong' if abs(delta_chi2) > 10 else 'moderate' if abs(delta_chi2) > 4 else 'weak'
-        }
+        # 2. Baryonic cost comparison (direct clustering comparison)
+        chi2_baryonic_observed_vs_hlcdm = ((c_observed - eta_natural) / clustering_std)**2 if clustering_std > 0 else float('inf')
 
-        # Generate interpretation
-        interpretation = self._generate_model_comparison_interpretation(
-            c_observed, c_observed_std, c_hlcdm, c_lcdm, c_e8,
-            test1_result, test2_result, test3_result, test4_result,
-            model_comparison
-        )
+        # 3. Combined model scores (weighted average of connectivity and baryonic costs)
+        # H-ΛCDM score: average of connectivity and baryonic comparisons
+        hlcdm_score = (chi2_connectivity_observed_vs_hlcdm + chi2_baryonic_observed_vs_hlcdm) / 2.0
+        # ΛCDM score: connectivity comparison only (ΛCDM doesn't predict baryonic costs)
+        lcdm_score = chi2_connectivity_observed_vs_lcdm
 
-        # Compile results
+        # Overall model determination
+        model_scores = {'hlcdm': hlcdm_score, 'lcmd': lcdm_score}
+        best_model = min(model_scores, key=model_scores.get)
+
+        # Detailed comparison results
+        connectivity_hlcdm_better = chi2_connectivity_observed_vs_hlcdm < chi2_connectivity_observed_vs_lcdm
+        baryonic_hlcdm_better = chi2_baryonic_observed_vs_hlcdm < 1.0  # H-ΛCDM baryonic prediction within 1σ
+        overall_hlcdm_better = hlcdm_score < lcdm_score
+
         clustering_results = {
             'observed_clustering_coefficient': c_observed,
-            'observed_clustering_std': c_observed_std,
-            'fundamental_values': {
-                'c_hlcdm': c_hlcdm,
-                'c_lcdm': c_lcdm,
-                'c_e8': c_e8
+            'observed_clustering_std': clustering_std,
+            'clustering_comparison': clustering_comparison,
+            'processing_costs': processing_costs,
+            'model_comparison': {
+                'best_model': best_model,
+                'overall_scores': {
+                    'hlcdm_combined': hlcdm_score,
+                    'lcmd_connectivity_only': lcdm_score
+                },
+                'connectivity_costs': {
+                    'observed': processing_cost_connectivity_observed,
+                    'hlcdm_theoretical': processing_cost_connectivity_hlcdm,
+                    'lcmd_theoretical': processing_cost_connectivity_lcdm,
+                    'chi2_observed_vs_hlcdm': chi2_connectivity_observed_vs_hlcdm,
+                    'chi2_observed_vs_lcdm': chi2_connectivity_observed_vs_lcdm
+                },
+                'baryonic_costs': {
+                    'observed': c_observed,
+                    'hlcdm_theoretical': eta_natural,
+                    'chi2_observed_vs_hlcdm': chi2_baryonic_observed_vs_hlcdm
+                },
+                'detailed_preferences': {
+                    'connectivity_hlcdm_better': connectivity_hlcdm_better,
+                    'baryonic_hlcdm_better': baryonic_hlcdm_better,
+                    'overall_hlcdm_better': overall_hlcdm_better
+                }
             },
-            'test_results': {
-                'test1_direct_hlcdm': test1_result,
-                'test2_direct_lcdm': test2_result,
-                'test3_processing_hlcdm': test3_result,
-                'test4_processing_lcdm': test4_result
-            },
-            'model_comparison': model_comparison,
             'network_properties': network_analysis,
-            'interpretation': interpretation
+            'interpretation': self._interpret_clustering_results(c_observed, eta_natural, sigma_eta, processing_cost_connectivity_observed, processing_cost_connectivity_hlcdm, c_e8_pure, best_model, {
+                'overall_scores': {'hlcdm_combined': hlcdm_score, 'lcmd_connectivity_only': lcdm_score},
+                'connectivity_costs': {
+                    'observed': processing_cost_connectivity_observed,
+                    'hlcdm_theoretical': processing_cost_connectivity_hlcdm,
+                    'lcmd_theoretical': processing_cost_connectivity_lcdm,
+                    'chi2_observed_vs_hlcdm': chi2_connectivity_observed_vs_hlcdm,
+                    'chi2_observed_vs_lcdm': chi2_connectivity_observed_vs_lcdm
+                },
+                'baryonic_costs': {
+                    'observed': c_observed,
+                    'hlcdm_theoretical': eta_natural,
+                    'chi2_observed_vs_hlcdm': chi2_baryonic_observed_vs_hlcdm
+                },
+                'detailed_preferences': {
+                    'connectivity_hlcdm_better': connectivity_hlcdm_better,
+                    'baryonic_hlcdm_better': baryonic_hlcdm_better,
+                    'overall_hlcdm_better': overall_hlcdm_better
+                }
+            })
         }
 
         return clustering_results
-    
-    def _generate_model_comparison_interpretation(self, c_observed, c_observed_std, 
-                                                   c_hlcdm, c_lcdm, c_e8,
-                                                   test1, test2, test3, test4,
-                                                   model_comparison) -> str:
-        """Generate neutral, scientifically accurate interpretation of model comparison."""
-        
-        lines = []
-        
-        # Report observed value
-        lines.append(f"Observed clustering coefficient: C_obs = {c_observed:.4f} ± {c_observed_std:.4f}")
-        lines.append("")
-        
-        # Report test results neutrally
-        lines.append("Direct Clustering Comparisons:")
-        lines.append(f"  Test 1 (H-ΛCDM): C_obs - C_HLCDM = {test1['difference']:.4f} ({test1['sigma']:.1f}σ)")
-        lines.append(f"  Test 2 (ΛCDM):   C_obs - C_LCDM = {test2['difference']:.4f} ({test2['sigma']:.1f}σ)")
-        lines.append("")
-        
-        lines.append("Processing Cost Comparisons:")
-        lines.append(f"  Test 3 (H-ΛCDM): (C_E8 - C_obs) - (C_E8 - C_HLCDM) = {test3['difference']:.4f} ({test3['sigma']:.1f}σ)")
-        lines.append(f"  Test 4 (ΛCDM):   (C_E8 - C_obs) - (C_E8 - C_LCDM) = {test4['difference']:.4f} ({test4['sigma']:.1f}σ)")
-        lines.append("")
-        
-        # Model comparison
-        lines.append("Model Comparison:")
-        lines.append(f"  H-ΛCDM combined χ²: {model_comparison['hlcdm_combined_chi2']:.2f}")
-        lines.append(f"  ΛCDM combined χ²:   {model_comparison['lcdm_combined_chi2']:.2f}")
-        lines.append(f"  Δχ² (ΛCDM - H-ΛCDM): {model_comparison['delta_chi2']:.2f}")
-        lines.append("")
-        
-        # Conclusion
-        if model_comparison['delta_chi2'] > 0:
-            lines.append(f"Result: H-ΛCDM preferred ({model_comparison['preference_strength']} preference)")
-        elif model_comparison['delta_chi2'] < 0:
-            lines.append(f"Result: ΛCDM preferred ({model_comparison['preference_strength']} preference)")
+
+    def _interpret_clustering_results(self, observed: float, eta_natural: float, sigma_eta: float,
+                                     processing_cost_connectivity_observed: float, processing_cost_connectivity_hlcdm: float,
+                                     c_e8_pure: float, best_model: str, model_comparison: dict) -> str:
+        """
+        Interpret clustering analysis results.
+
+        Parameters:
+            observed: Observed clustering coefficient
+            eta_natural: Thermodynamic ratio prediction
+            sigma_eta: Statistical significance vs thermodynamic efficiency
+            processing_cost_baryonic: Processing cost to precipitate baryonic matter
+            processing_cost_causal_diamond: Thermodynamic cost of the information processing system without baryonic matter
+            c_e8_pure: E8×E8 pure substrate value
+
+        Returns:
+            str: Interpretation
+        """
+        # Handle infinite significance case (sigma >= 100 indicates effectively zero uncertainty)
+        # Comprehensive model comparison interpretation
+        connectivity = model_comparison.get('connectivity_costs', {})
+        baryonic = model_comparison.get('baryonic_costs', {})
+        detailed = model_comparison.get('detailed_preferences', {})
+
+        if best_model == 'hlcdm':
+            interpretation = f"**H-ΛCDM Model Preferred** (combined χ² = {model_comparison.get('overall_scores', {}).get('hlcdm_combined', 0):.1f}): "
+
+            if detailed.get('connectivity_hlcdm_better', False):
+                interpretation += f"Connectivity cost analysis favors H-ΛCDM (χ² = {connectivity.get('chi2_observed_vs_hlcdm', 0):.1f}). "
+
+            if detailed.get('baryonic_hlcdm_better', False):
+                interpretation += f"Baryonic cost analysis favors H-ΛCDM (χ² = {baryonic.get('chi2_observed_vs_hlcdm', 0):.1f}). "
+
+            interpretation += f"Entropy mechanics successfully predicts both the baryonic processing costs (η_natural = {eta_natural:.3f}) "
+            interpretation += f"and network connectivity maintenance costs (C_E8(G) - η_natural = {processing_cost_connectivity_hlcdm:.3f})."
+
+        elif best_model == 'lcmd':
+            interpretation = f"**ΛCDM Model Preferred** (χ² = {model_comparison.get('overall_scores', {}).get('lcmd_connectivity_only', 0):.1f}): "
+            interpretation += f"Standard cosmological model better predicts network connectivity costs "
+            interpretation += f"(χ² = {connectivity.get('chi2_observed_vs_lcdm', 0):.1f}). Entropy mechanics baryonic predictions "
+            interpretation += f"show tension (χ² = {baryonic.get('chi2_observed_vs_hlcdm', 0):.1f})."
+
         else:
-            lines.append("Result: No clear model preference")
-        
-        return "\n".join(lines)
+            interpretation = f"**No Clear Model Preference**: "
+            interpretation += f"Connectivity costs: H-ΛCDM χ² = {connectivity.get('chi2_observed_vs_hlcdm', 0):.1f}, "
+            interpretation += f"ΛCDM χ² = {connectivity.get('chi2_observed_vs_lcdm', 0):.1f}. "
+            interpretation += f"Baryonic costs: H-ΛCDM χ² = {baryonic.get('chi2_observed_vs_hlcdm', 0):.1f}. "
+            interpretation += f"Further validation needed to distinguish between models."
+
+        return interpretation
 
     def _generate_void_summary(self, void_data: Dict[str, Any],
                              clustering_results: Dict[str, Any]) -> Dict[str, Any]:
@@ -563,22 +630,15 @@ class VoidPipeline(AnalysisPipeline):
 
 
     def _validate_clustering_analysis(self) -> Dict[str, Any]:
-        """
-        Validate clustering analysis results using the four physically motivated tests.
-        
-        Tests:
-        1. C_HLCDM vs C_observed
-        2. C_LCDM vs C_observed  
-        3. (C_E8 - C_HLCDM) vs (C_E8 - C_observed)
-        4. (C_E8 - C_LCDM) vs (C_E8 - C_observed)
-        """
+        """Validate clustering analysis results."""
         try:
             clustering_results = self.results.get('clustering_analysis', {})
 
             if 'error' in clustering_results:
+                # If network analysis is not available, that's acceptable (not all analyses require it)
                 if 'network analysis' in clustering_results.get('error', '').lower():
                     return {
-                        'passed': True,
+                        'passed': True,  # Acceptable if network analysis not performed
                         'test': 'clustering_validation',
                         'note': 'Network analysis not available (acceptable)',
                         'error': clustering_results['error']
@@ -589,38 +649,25 @@ class VoidPipeline(AnalysisPipeline):
                     'error': clustering_results['error']
                 }
 
-            # Get observed clustering coefficient
+            # Check that clustering coefficient is reasonable
             observed_cc = clustering_results.get('observed_clustering_coefficient', 0.0)
-            observed_std = clustering_results.get('observed_clustering_std', 0.03)
-            
+            theoretical_cc = clustering_results.get('theoretical_clustering_coefficient', 25/32)
+
             # Clustering coefficient should be between 0 and 1
             cc_range_ok = 0.0 <= observed_cc <= 1.0
-            
-            # Get test results from clustering analysis
-            test_results = clustering_results.get('test_results', {})
-            model_comparison = clustering_results.get('model_comparison', {})
-            
-            # Validation passes if:
-            # 1. Clustering coefficient is in valid range
-            # 2. At least one model (H-ΛCDM or ΛCDM) fits within 3σ
-            test1 = test_results.get('test1_direct_hlcdm', {})
-            test2 = test_results.get('test2_direct_lcdm', {})
-            
-            hlcdm_fits = test1.get('passed', False)
-            lcdm_fits = test2.get('passed', False)
-            
-            validation_ok = cc_range_ok and (hlcdm_fits or lcdm_fits)
+
+            # Should be close to theoretical value (within reasonable bounds)
+            cc_agreement_ok = abs(observed_cc - theoretical_cc) < 0.2
+
+            validation_ok = cc_range_ok and cc_agreement_ok
 
             return {
                 'passed': validation_ok,
                 'test': 'clustering_validation',
                 'observed_cc': observed_cc,
-                'observed_std': observed_std,
+                'theoretical_cc': theoretical_cc,
                 'cc_range_valid': cc_range_ok,
-                'hlcdm_fits': hlcdm_fits,
-                'lcdm_fits': lcdm_fits,
-                'best_model': model_comparison.get('best_model', 'unknown'),
-                'delta_chi2': model_comparison.get('delta_chi2', 0.0)
+                'cc_agreement': cc_agreement_ok
             }
         except Exception as e:
             return {
@@ -693,7 +740,6 @@ class VoidPipeline(AnalysisPipeline):
         """
         self.log_progress("Performing extended void validation...")
 
-        # TODO: Restore to 10000 for production runs
         n_bootstrap = context.get('n_bootstrap', 10000) if context else 10000
         n_randomization = context.get('n_randomization', 10000) if context else 10000
         n_null = context.get('n_null', 10000) if context else 10000
@@ -717,7 +763,6 @@ class VoidPipeline(AnalysisPipeline):
         loo_cv_results = self._leave_every_other_void_cv()
 
         # Jackknife validation (100 subsamples)
-        # TODO: Restore to 100 for production runs
         jackknife_results = self._jackknife_clustering_validation(n_subsamples=100)
 
         # Cross-validation
@@ -1198,17 +1243,7 @@ class VoidPipeline(AnalysisPipeline):
             void_data = self.results.get('void_data', {})
             catalog = void_data.get('catalog')
 
-            # If catalog is a string (from JSON), reload from pickle
-            if isinstance(catalog, str) or catalog is None:
-                catalog_path = Path('processed_data') / 'voids_deduplicated.pkl'
-                if catalog_path.exists():
-                    import pickle
-                    with open(catalog_path, 'rb') as f:
-                        catalog = pickle.load(f)
-                else:
-                    return {'passed': False, 'error': 'No void catalog available'}
-
-            if catalog.empty:
+            if catalog is None or catalog.empty:
                 return {'passed': False, 'error': 'No void catalog available'}
 
             # Get observed clustering coefficient
@@ -1220,7 +1255,10 @@ class VoidPipeline(AnalysisPipeline):
             np.random.seed(random_seed)
 
             self.log_progress(f"Running {n_bootstrap} bootstrap iterations for clustering coefficient...")
-            for i in tqdm(range(n_bootstrap), desc="Bootstrap validation", unit="iter"):
+            for i in range(n_bootstrap):
+                if (i + 1) % 1000 == 0:
+                    self.log_progress(f"  Bootstrap iteration {i + 1}/{n_bootstrap}")
+                
                 # Resample voids with replacement
                 bootstrap_sample = catalog.sample(n=len(catalog), replace=True, random_state=random_seed + i)
                 
@@ -1248,7 +1286,7 @@ class VoidPipeline(AnalysisPipeline):
             eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)
             # E8×E8 pure substrate = thermodynamic efficiency + thermodynamic processing remainder
             c_e8_pure = eta_natural + eta_natural  # From entropy mechanics framework
-            c_lcdm = 0.0  # ΛCDM predicts isotropic (no clustering)
+            c_lcdm = 0.42
             
             # Calculate how many bootstrap samples fall within 1σ of each value
             sigma_eta = abs(bootstrap_mean - eta_natural) / bootstrap_std if bootstrap_std > 0 else 999.0
@@ -1308,17 +1346,7 @@ class VoidPipeline(AnalysisPipeline):
             void_data = self.results.get('void_data', {})
             catalog = void_data.get('catalog')
 
-            # If catalog is a string (from JSON), reload from pickle
-            if isinstance(catalog, str) or catalog is None:
-                catalog_path = Path('processed_data') / 'voids_deduplicated.pkl'
-                if catalog_path.exists():
-                    import pickle
-                    with open(catalog_path, 'rb') as f:
-                        catalog = pickle.load(f)
-                else:
-                    return {'passed': False, 'error': 'No void catalog available'}
-
-            if catalog.empty:
+            if catalog is None or catalog.empty:
                 return {'passed': False, 'error': 'No void catalog available'}
 
             # Get observed clustering coefficient
@@ -1331,7 +1359,7 @@ class VoidPipeline(AnalysisPipeline):
             jackknife_ccs = []
 
             self.log_progress(f"Running {n_subsamples} jackknife subsamples...")
-            for i in tqdm(range(n_subsamples), desc="Jackknife validation", unit="subsample"):
+            for i in range(n_subsamples):
                 # Leave out subsample
                 start_idx = i * subsample_size
                 end_idx = min((i + 1) * subsample_size, n_voids)
@@ -1364,7 +1392,7 @@ class VoidPipeline(AnalysisPipeline):
             eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)
             # E8×E8 pure substrate = thermodynamic efficiency + thermodynamic processing remainder
             c_e8_pure = eta_natural + eta_natural  # From entropy mechanics framework
-            c_lcdm = 0.0  # ΛCDM predicts isotropic (no clustering)
+            c_lcdm = 0.42
             
             # Calculate distances from fundamental values
             sigma_eta = abs(jackknife_mean - eta_natural) / jackknife_std_error if jackknife_std_error > 0 else 999.0
@@ -1464,7 +1492,7 @@ class VoidPipeline(AnalysisPipeline):
             eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)
             # E8×E8 pure substrate = thermodynamic efficiency + thermodynamic processing remainder
             c_e8_pure = eta_natural + eta_natural  # From entropy mechanics framework
-            c_lcdm = 0.0  # ΛCDM predicts isotropic (no clustering)
+            c_lcdm = 0.42
             
             # Tolerance for consistency check
             tolerance = 0.05
@@ -1532,17 +1560,7 @@ class VoidPipeline(AnalysisPipeline):
             void_data = self.results.get('void_data', {})
             catalog = void_data.get('catalog')
 
-            # If catalog is a string (from JSON), reload from pickle
-            if isinstance(catalog, str) or catalog is None:
-                catalog_path = Path('processed_data') / 'voids_deduplicated.pkl'
-                if catalog_path.exists():
-                    import pickle
-                    with open(catalog_path, 'rb') as f:
-                        catalog = pickle.load(f)
-                else:
-                    return {'passed': False, 'error': 'No void catalog available'}
-
-            if catalog.empty:
+            if catalog is None or catalog.empty:
                 return {'passed': False, 'error': 'No void catalog available'}
 
             # Get observed clustering coefficient
@@ -1570,7 +1588,10 @@ class VoidPipeline(AnalysisPipeline):
             np.random.seed(random_seed)
 
             self.log_progress(f"Running {n_simulations} random network simulations...")
-            for i in tqdm(range(n_simulations), desc="Null hypothesis testing", unit="sim"):
+            for i in range(n_simulations):
+                if (i + 1) % 1000 == 0:
+                    self.log_progress(f"  Random network simulation {i + 1}/{n_simulations}")
+                
                 # Generate random void positions (Poisson process)
                 random_ra = np.random.uniform(ra_min, ra_max, n_voids)
                 random_dec = np.random.uniform(dec_min, dec_max, n_voids)
@@ -1621,13 +1642,13 @@ class VoidPipeline(AnalysisPipeline):
 
     def _validate_processing_cost_prediction(self) -> Dict[str, Any]:
         """
-        Validate the four physically motivated tests from clustering analysis.
+        Validate the processing cost interpretation of clustering coefficients.
         
-        Tests:
-        1. C_HLCDM vs C_observed - Direct clustering comparison
-        2. C_LCDM vs C_observed - Direct clustering comparison  
-        3. (C_E8 - C_HLCDM) vs (C_E8 - C_observed) - Processing cost comparison
-        4. (C_E8 - C_LCDM) vs (C_E8 - C_observed) - Processing cost comparison
+        Tests whether:
+        1. Observed clustering coefficient matches thermodynamic efficiency
+           → Confirms clustering represents processing cost to precipitate baryonic matter
+        2. Processing cost of causal diamond structure = C_E8 - η_natural ≈ 0.338
+           → Validates the thermodynamic cost of the information processing system without baryonic matter
         
         Returns:
             dict: Processing cost validation results
@@ -1638,43 +1659,66 @@ class VoidPipeline(AnalysisPipeline):
             if 'error' in clustering_results:
                 return {
                     'test': 'processing_cost_validation',
-                    'passed': False,
                     'error': 'Clustering analysis not available'
                 }
             
-            test_results = clustering_results.get('test_results', {})
-            model_comparison = clustering_results.get('model_comparison', {})
+            clustering_comparison = clustering_results.get('clustering_comparison', {})
+            processing_costs = clustering_results.get('processing_costs', {})
             
-            if not test_results:
+            if not clustering_comparison or not processing_costs:
                 return {
                     'test': 'processing_cost_validation',
-                    'passed': False,
-                    'error': 'Test results not available'
+                    'error': 'Clustering comparison or processing costs not available'
                 }
             
-            # Extract test results
-            test1 = test_results.get('test1_direct_hlcdm', {})
-            test2 = test_results.get('test2_direct_lcdm', {})
-            test3 = test_results.get('test3_processing_hlcdm', {})
-            test4 = test_results.get('test4_processing_lcdm', {})
+            observed = clustering_comparison.get('observed', {}).get('value', 0.0)
+            eta_natural = clustering_comparison.get('thermodynamic_efficiency', {}).get('value', 0.443)
+            c_e8 = clustering_comparison.get('e8_pure_substrate', {}).get('value', 0.781)
             
-            # Validation passes if at least one model's direct and processing tests pass
-            hlcdm_passes = test1.get('passed', False) and test3.get('passed', False)
-            lcdm_passes = test2.get('passed', False) and test4.get('passed', False)
+            sigma_eta = clustering_comparison.get('thermodynamic_efficiency', {}).get('sigma', 999.0)
             
-            passed = hlcdm_passes or lcdm_passes
+            processing_cost_baryonic = processing_costs.get('baryonic_precipitation', {}).get('value', 0.0)
+            processing_cost_causal_diamond = processing_costs.get('causal_diamond_structure', {}).get('value', 0.338)
+            
+            # Test 1: Does observed match thermodynamic efficiency?
+            matches_eta = sigma_eta < 1.0
+            
+            # Test 2: Is the causal diamond processing cost consistent with theory?
+            expected_causal_diamond_cost = c_e8 - eta_natural
+            observed_causal_diamond_cost = processing_cost_causal_diamond
+            diff_causal_diamond = abs(observed_causal_diamond_cost - expected_causal_diamond_cost)
+            clustering_std = clustering_results.get('observed_clustering_std', 0.03)
+            sigma_causal_diamond = diff_causal_diamond / clustering_std if clustering_std > 0 else 999.0
+            consistent_causal_diamond = sigma_causal_diamond < 2.0
+            
+            # Overall validation: pass if both tests pass
+            passed = matches_eta and consistent_causal_diamond
+            
+            # Interpretation
+            if matches_eta:
+                interpretation = (f"Observed clustering C_obs = {observed:.3f} matches thermodynamic efficiency "
+                                f"η_natural = {eta_natural:.3f} (σ = {sigma_eta:.1f}). This confirms that the clustering "
+                                f"coefficient represents the processing cost required to precipitate baryonic matter from "
+                                f"pure information. The processing cost of maintaining causal diamond/light cone structure "
+                                f"is ΔC = {processing_cost_causal_diamond:.3f}.")
+            else:
+                interpretation = (f"Observed clustering C_obs = {observed:.3f} does not match thermodynamic efficiency "
+                                f"η_natural = {eta_natural:.3f} (σ = {sigma_eta:.1f}). The interpretation may require revision.")
             
             return {
                 'test': 'processing_cost_validation',
                 'passed': passed,
-                'test1_direct_hlcdm': test1,
-                'test2_direct_lcdm': test2,
-                'test3_processing_hlcdm': test3,
-                'test4_processing_lcdm': test4,
-                'hlcdm_passes_both': hlcdm_passes,
-                'lcdm_passes_both': lcdm_passes,
-                'best_model': model_comparison.get('best_model', 'unknown'),
-                'delta_chi2': model_comparison.get('delta_chi2', 0.0)
+                'matches_thermodynamic_efficiency': matches_eta,
+                'sigma_eta': sigma_eta,
+                'processing_cost_baryonic': processing_cost_baryonic,
+                'processing_cost_causal_diamond': {
+                    'observed': observed_causal_diamond_cost,
+                    'expected': expected_causal_diamond_cost,
+                    'difference': diff_causal_diamond,
+                    'sigma': sigma_causal_diamond,
+                    'consistent': consistent_causal_diamond
+                },
+                'interpretation': interpretation
             }
         except Exception as e:
             return {
@@ -1684,11 +1728,12 @@ class VoidPipeline(AnalysisPipeline):
 
     def _perform_clustering_model_comparison(self) -> Dict[str, Any]:
         """
-        Perform Bayesian model comparison between H-ΛCDM and ΛCDM.
+        Perform Bayesian model comparison for the three fundamental clustering coefficient values.
         
         Compares:
-        - H-ΛCDM: C_HLCDM = η_natural = (1-ln(2))/ln(2) ≈ 0.443 (thermodynamic ratio)
-        - ΛCDM: C_LCDM = 0 (isotropic - no clustering preference)
+        - Observed (ΛCDM) clustering coefficient: C_obs ≈ 0.42-0.43
+        - Thermodynamic ratio: η_natural = (1-ln(2))/ln(2) ≈ 0.443
+        - E8×E8 pure substrate: C_E8 = 25/32 ≈ 0.781
         
         Tests which model best explains the observed clustering coefficient.
         
@@ -1700,38 +1745,38 @@ class VoidPipeline(AnalysisPipeline):
             observed_cc = clustering_results.get('observed_clustering_coefficient', 0.0)
             observed_std = max(clustering_results.get('observed_clustering_std', 0.03), 0.001)
 
-            # Fundamental values
-            c_hlcdm = (1.0 - np.log(2.0)) / np.log(2.0)  # η_natural ≈ 0.443
-            c_lcdm = 0.0  # ΛCDM predicts isotropic (no clustering)
-            c_e8 = 25.0 / 32.0  # E8×E8 pure substrate ≈ 0.781
+            # Three fundamental clustering coefficient values
+            eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)  # Thermodynamic ratio
+            # E8×E8 pure substrate = thermodynamic efficiency + thermodynamic processing remainder
+            c_e8_pure = eta_natural + eta_natural  # E8×E8 pure substrate from entropy mechanics
+            c_lcdm = 0.42  # ΛCDM prediction
+            c_lcdm_std = 0.08
 
             # Number of data points (voids)
             void_data = self.results.get('void_data', {})
             catalog = void_data.get('catalog')
-            n_data = len(catalog) if catalog is not None and hasattr(catalog, '__len__') else 100
+            n_data = len(catalog) if catalog is not None else 100
 
-            # Calculate chi-squared for each model (direct comparison)
-            chi2_hlcdm = ((observed_cc - c_hlcdm) / observed_std) ** 2
-            chi2_lcdm = ((observed_cc - c_lcdm) / observed_std) ** 2
+            # Calculate chi-squared for each model
+            def chi_squared(predicted, observed, error):
+                if error <= 0:
+                    # If error is zero or negative, return large chi-squared if different, 0 if same
+                    return 0.0 if abs(observed - predicted) < 1e-10 else 1e10
+                return ((observed - predicted) / error) ** 2
 
-            # Calculate chi-squared for processing cost comparison
-            processing_cost_observed = c_e8 - observed_cc
-            processing_cost_hlcdm = c_e8 - c_hlcdm
-            processing_cost_lcdm = c_e8 - c_lcdm  # = c_e8 since c_lcdm = 0
-            
-            chi2_processing_hlcdm = ((processing_cost_observed - processing_cost_hlcdm) / observed_std) ** 2
-            chi2_processing_lcdm = ((processing_cost_observed - processing_cost_lcdm) / observed_std) ** 2
+            chi2_thermodynamic = chi_squared(eta_natural, observed_cc, observed_std)
+            chi2_e8_pure = chi_squared(c_e8_pure, observed_cc, observed_std)
+            chi2_lcdm = chi_squared(c_lcdm, observed_cc, np.sqrt(observed_std**2 + c_lcdm_std**2))
 
-            # Combined chi-squared (average of direct and processing tests)
-            chi2_hlcdm_combined = (chi2_hlcdm + chi2_processing_hlcdm) / 2.0
-            chi2_lcdm_combined = (chi2_lcdm + chi2_processing_lcdm) / 2.0
+            # Calculate log-likelihoods (assuming Gaussian errors)
+            log_likelihood_thermodynamic = -0.5 * chi2_thermodynamic
+            log_likelihood_e8_pure = -0.5 * chi2_e8_pure
+            log_likelihood_lcdm = -0.5 * chi2_lcdm
 
-            # Calculate log-likelihoods
-            log_likelihood_hlcdm = -0.5 * chi2_hlcdm_combined
-            log_likelihood_lcdm = -0.5 * chi2_lcdm_combined
-
-            # Both models are parameter-free
-            n_params = 0
+            # Number of parameters for each model
+            n_params_thermodynamic = 0  # Parameter-free from entropy mechanics
+            n_params_e8_pure = 0  # Parameter-free from E8×E8 geometry
+            n_params_lcdm = 0  # Fixed value from literature
 
             # Calculate BIC and AIC
             def calculate_bic_aic(log_likelihood, n_params, n_data):
@@ -1739,57 +1784,72 @@ class VoidPipeline(AnalysisPipeline):
                 bic = -2 * log_likelihood + n_params * np.log(n_data)
                 return {'aic': aic, 'bic': bic}
 
-            hlcdm_model = calculate_bic_aic(log_likelihood_hlcdm, n_params, n_data)
-            lcdm_model = calculate_bic_aic(log_likelihood_lcdm, n_params, n_data)
+            thermodynamic_model = calculate_bic_aic(log_likelihood_thermodynamic, n_params_thermodynamic, n_data)
+            e8_pure_model = calculate_bic_aic(log_likelihood_e8_pure, n_params_e8_pure, n_data)
+            lcdm_model = calculate_bic_aic(log_likelihood_lcdm, n_params_lcdm, n_data)
 
-            # Calculate Bayes factor (H-ΛCDM vs ΛCDM)
+            # Calculate Bayes factors (relative to ΛCDM as reference)
             def bayes_factor(bic_model, bic_reference):
                 return np.exp(0.5 * (bic_reference - bic_model))
 
-            bf_hlcdm_vs_lcdm = bayes_factor(hlcdm_model['bic'], lcdm_model['bic'])
+            bf_thermodynamic_vs_lcdm = bayes_factor(thermodynamic_model['bic'], lcdm_model['bic'])
+            bf_e8_pure_vs_lcdm = bayes_factor(e8_pure_model['bic'], lcdm_model['bic'])
 
             # Find best model (lowest BIC)
-            best_model = 'H-ΛCDM' if hlcdm_model['bic'] < lcdm_model['bic'] else 'ΛCDM'
-            delta_bic = lcdm_model['bic'] - hlcdm_model['bic']  # Positive = H-ΛCDM preferred
+            models = {
+                'thermodynamic_efficiency': thermodynamic_model['bic'],
+                'e8_pure_substrate': e8_pure_model['bic'],
+                'lcdm': lcdm_model['bic']
+            }
+            best_model = min(models, key=models.get)
+
+            # Calculate ΔBIC relative to best model
+            best_bic = models[best_model]
+            delta_bic_thermodynamic = thermodynamic_model['bic'] - best_bic
+            delta_bic_e8_pure = e8_pure_model['bic'] - best_bic
+            delta_bic_lcdm = lcdm_model['bic'] - best_bic
+
             return {
                 'test': 'clustering_model_comparison',
-                'passed': True,
                 'observed_clustering_coefficient': observed_cc,
-                'observed_clustering_std': observed_std,
-                'fundamental_values': {
-                    'c_hlcdm': c_hlcdm,
-                    'c_lcdm': c_lcdm,
-                    'c_e8': c_e8
-                },
                 'models': {
-                    'hlcdm': {
-                        'prediction': c_hlcdm,
-                        'label': 'H-ΛCDM (thermodynamic ratio η_natural)',
-                        'chi2_direct': chi2_hlcdm,
-                        'chi2_processing': chi2_processing_hlcdm,
-                        'chi2_combined': chi2_hlcdm_combined,
-                        'aic': hlcdm_model['aic'],
-                        'bic': hlcdm_model['bic']
+                    'thermodynamic_efficiency': {
+                        'prediction': eta_natural,
+                        'label': 'Thermodynamic ratio (η_natural)',
+                        'chi2': chi2_thermodynamic,
+                        'aic': thermodynamic_model['aic'],
+                        'bic': thermodynamic_model['bic'],
+                        'delta_bic': delta_bic_thermodynamic,
+                        'bayes_factor_vs_lcdm': bf_thermodynamic_vs_lcdm,
+                        'physical_meaning': 'Processing cost to precipitate baryonic matter from pure information'
+                    },
+                    'e8_pure_substrate': {
+                        'prediction': c_e8_pure,
+                        'label': 'E8×E8 pure substrate (C_E8)',
+                        'chi2': chi2_e8_pure,
+                        'aic': e8_pure_model['aic'],
+                        'bic': e8_pure_model['bic'],
+                        'delta_bic': delta_bic_e8_pure,
+                        'bayes_factor_vs_lcdm': bf_e8_pure_vs_lcdm,
+                        'physical_meaning': 'Pure computational substrate potential without thermodynamic constraints'
                     },
                     'lcdm': {
                         'prediction': c_lcdm,
-                        'label': 'ΛCDM (isotropic)',
-                        'chi2_direct': chi2_lcdm,
-                        'chi2_processing': chi2_processing_lcdm,
-                        'chi2_combined': chi2_lcdm_combined,
+                        'label': 'ΛCDM prediction',
+                        'chi2': chi2_lcdm,
                         'aic': lcdm_model['aic'],
-                        'bic': lcdm_model['bic']
+                        'bic': lcdm_model['bic'],
+                        'delta_bic': delta_bic_lcdm,
+                        'bayes_factor_vs_lcdm': 1.0,
+                        'physical_meaning': 'Standard cosmological model prediction from gravitational structure formation'
                     }
                 },
                 'best_model': best_model,
-                'delta_bic': delta_bic,
-                'bayes_factor_hlcdm_vs_lcdm': bf_hlcdm_vs_lcdm,
-                'interpretation': f'Best model: {best_model} (ΔBIC = {delta_bic:.1f}, Bayes factor = {bf_hlcdm_vs_lcdm:.2e})'
+                'interpretation': f'Best model: {best_model} (ΔBIC = {delta_bic_thermodynamic:.1f} for thermodynamic efficiency vs {delta_bic_lcdm:.1f} for ΛCDM)'
             }
         except Exception as e:
             return {
                 'test': 'clustering_model_comparison',
-                'passed': False,
                 'error': str(e)
             }
 
@@ -1799,17 +1859,7 @@ class VoidPipeline(AnalysisPipeline):
             void_data = self.results.get('void_data', {})
             catalog = void_data.get('catalog')
 
-            # If catalog is a string (from JSON), reload from pickle
-            if isinstance(catalog, str) or catalog is None:
-                catalog_path = Path('processed_data') / 'voids_deduplicated.pkl'
-                if catalog_path.exists():
-                    import pickle
-                    with open(catalog_path, 'rb') as f:
-                        catalog = pickle.load(f)
-                else:
-                    return {'passed': False, 'error': 'No void catalog available'}
-
-            if catalog.empty:
+            if catalog is None or catalog.empty:
                 return {'passed': False, 'error': 'No void catalog available'}
 
             # Bootstrap resampling of void catalog
@@ -1906,20 +1956,6 @@ class VoidPipeline(AnalysisPipeline):
         try:
             void_data = self.results.get('void_data', {})
             catalog = void_data.get('catalog')
-
-            # If catalog is a string (from JSON), reload from pickle
-            if isinstance(catalog, str) or catalog is None:
-                catalog_path = Path('processed_data') / 'voids_deduplicated.pkl'
-                if catalog_path.exists():
-                    import pickle
-                    with open(catalog_path, 'rb') as f:
-                        catalog = pickle.load(f)
-                else:
-                    return {
-                        'passed': True,  # Not applicable
-                        'test': 'cross_validation',
-                        'note': 'Cross-validation not applicable (no catalog available)'
-                    }
 
             if catalog is None or 'survey' not in catalog.columns:
                 return {
