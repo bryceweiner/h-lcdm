@@ -2464,11 +2464,11 @@ class BAOPipeline(AnalysisPipeline):
             lcdm_model = self.calculate_bic_aic(log_likelihood_lcdm, 0, n_data_points)
 
             # Model 2: H-ΛCDM (α = -5.7, fixed, 0 parameters)
-            alpha_hlcmd = -5.7
-            residuals_hlcmd = alpha_values - alpha_hlcmd
-            log_likelihood_hlcmd = -0.5 * np.sum((residuals_hlcmd / alpha_errors)**2 + np.log(2 * np.pi * alpha_errors**2))
+            alpha_hlcdm = -5.7
+            residuals_hlcdm = alpha_values - alpha_hlcdm
+            log_likelihood_hlcdm = -0.5 * np.sum((residuals_hlcdm / alpha_errors)**2 + np.log(2 * np.pi * alpha_errors**2))
 
-            hlcdm_model = self.calculate_bic_aic(log_likelihood_hlcmd, 0, n_data_points)
+            hlcdm_model = self.calculate_bic_aic(log_likelihood_hlcdm, 0, n_data_points)
 
             # Model 3: Free α (1 parameter)
             alpha_free = np.average(alpha_values, weights=1/alpha_errors**2)
@@ -2480,7 +2480,7 @@ class BAOPipeline(AnalysisPipeline):
             # Find best model
             models = {
                 'lambdacdm': (lcdm_model, alpha_lcdm),
-                'hlcdm': (hlcdm_model, alpha_hlcmd),
+                'hlcdm': (hlcdm_model, alpha_hlcdm),
                 'free': (free_model, alpha_free)
             }
 

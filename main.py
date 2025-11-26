@@ -434,6 +434,8 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
     Returns:
         dict: Pipeline results
     """
+    import json  # Import at function level to ensure it's always available
+    
     if not quiet:
         print(f"\n{'='*60}")
         print(f"RUNNING {pipeline_name.upper()} PIPELINE")
@@ -441,34 +443,180 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
 
     results = {}
 
-    try:
-        # Run main analysis
-        if not quiet:
-            print(f"Executing {pipeline_name} analysis...")
-        results['main'] = pipeline_obj.run(config.get('context', {}))
-
-        # Run basic validation
-        if config.get('validate_basic', False):
+    # Data persistence paths
+    json_path = Path("results") / "json" / f"{pipeline_name}_results.json"
+    extended_json_path = Path("results") / "json" / f"{pipeline_name}_results_extended.json"
+    
+    # Check what data products already exist
+    main_results_exist = False
+    basic_validation_exists = False
+    extended_validation_exists = False
+    
+    # Check for main results
+    if json_path.exists() and json_path.stat().st_size > 0:
+        try:
+            with open(json_path, 'r') as f:
+                saved_data = json.load(f)
+            saved_results = saved_data.get('results', {})
+            if saved_results.get('main') or saved_results.get('clustering_analysis'):
+                main_results_exist = True
+                results = saved_results
+                if not quiet:
+                    print(f"✓ Found existing main analysis results")
+            if saved_results.get('validation'):
+                basic_validation_exists = True
+                if not quiet:
+                    print(f"✓ Found existing basic validation results")
+        except Exception as e:
             if not quiet:
-                print(f"Running basic validation for {pipeline_name}...")
-            results['validation'] = pipeline_obj.validate(config.get('context', {}))
-
-        # Run extended validation
-        if config.get('validate_extended', False):
+                print(f"⚠ Could not load {json_path}: {e}")
+    
+    # Check for extended validation results
+    if extended_json_path.exists() and extended_json_path.stat().st_size > 0:
+        try:
+            with open(extended_json_path, 'r') as f:
+                extended_data = json.load(f)
+            extended_results = extended_data.get('results', {}).get('validation_extended', {})
+            if extended_results:
+                extended_validation_exists = True
+                results['validation_extended'] = _convert_json_booleans(extended_results)
+                if not quiet:
+                    print(f"✓ Found existing extended validation results")
+        except Exception as e:
             if not quiet:
-                print(f"Running extended validation for {pipeline_name}...")
-            results['validation_extended'] = pipeline_obj.validate_extended(config.get('context', {}))
-
+                print(f"⚠ Could not load {extended_json_path}: {e}")
+    
+    # Determine what needs to run
+    need_main_analysis = not main_results_exist
+    need_basic_validation = config.get('validate_basic', False) and not basic_validation_exists
+    need_extended_validation = config.get('validate_extended', False) and not extended_validation_exists
+    
+    # If all requested data products exist, skip to reporting
+    if not need_main_analysis and not need_basic_validation and not need_extended_validation:
         if not quiet:
-            print(f"✓ {pipeline_name.upper()} pipeline completed successfully")
+            print(f"All requested data products exist for {pipeline_name}, skipping to reporting...")
+        return results
+    
+    # Run only what's needed
+    if need_main_analysis or need_basic_validation or need_extended_validation:
+        try:
+            # Run main analysis if needed
+            if need_main_analysis:
+                if not quiet:
+                    print(f"Executing {pipeline_name} analysis...")
+                main_results = pipeline_obj.run(config.get('context', {}))
+                # Merge main results into results dict
+                if isinstance(main_results, dict):
+                    results.update(main_results)
+                results['main'] = main_results
 
-    except Exception as e:
-        print(f"✗ Error in {pipeline_name} pipeline: {e}")
-        results['error'] = str(e)
-        import traceback
-        results['traceback'] = traceback.format_exc()
+            # Run basic validation if needed
+            if need_basic_validation:
+                if not quiet:
+                    print(f"Running basic validation for {pipeline_name}...")
+                results['validation'] = pipeline_obj.validate(config.get('context', {}))
+
+            # Run extended validation if needed
+            if need_extended_validation:
+                if not quiet:
+                    print(f"Running extended validation for {pipeline_name}...")
+                results['validation_extended'] = pipeline_obj.validate_extended(config.get('context', {}))
+
+            # Save results after each stage completes
+            # Save main results to JSON
+            try:
+                existing_data = {}
+                if json_path.exists():
+                    with open(json_path, 'r') as f:
+                        existing_data = json.load(f)
+
+                if 'results' not in existing_data:
+                    existing_data['results'] = {}
+                
+                # Save all results except extended validation (which has its own file)
+                basic_results = {k: v for k, v in results.items() if k != 'validation_extended'}
+                existing_data['results'].update(basic_results)
+                existing_data = _sanitize_for_json(existing_data)
+
+                with open(json_path, 'w') as f:
+                    json.dump(existing_data, f, indent=2, default=str)
+
+                if not quiet:
+                    print(f"✓ Results saved: {json_path}")
+
+            except Exception as e:
+                print(f"Warning: Could not save results: {e}")
+
+            # Save extended validation to separate file if it was run
+            if 'validation_extended' in results:
+                try:
+                    extended_data = {
+                        'pipeline': pipeline_name,
+                        'timestamp': int(time.time()),
+                        'results': {
+                            'validation_extended': results['validation_extended']
+                        },
+                        'metadata': {
+                            'description': f'Extended validation results for {pipeline_name} pipeline',
+                            'validation_type': 'extended',
+                            'generated_from_main_results': f'{pipeline_name}_results.json'
+                        }
+                    }
+                    extended_data = _sanitize_for_json(extended_data)
+                    
+                    with open(extended_json_path, 'w') as f:
+                        json.dump(extended_data, f, indent=2, default=str)
+
+                    if not quiet:
+                        print(f"✓ Extended validation saved: {extended_json_path}")
+
+                except Exception as e:
+                    print(f"ERROR: Could not save extended validation results: {e}")
+
+        except Exception as e:
+            print(f"✗ Error in {pipeline_name} pipeline: {e}")
+            results['error'] = str(e)
+            import traceback
+            results['traceback'] = traceback.format_exc()
 
     return results
+
+
+def _sanitize_for_json(obj):
+    """
+    Sanitize data for JSON serialization by converting inf/nan to None.
+    
+    Parameters:
+        obj: Object to sanitize
+        
+    Returns:
+        Sanitized object safe for JSON serialization
+    """
+    import math
+    
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_for_json(item) for item in obj]
+    elif isinstance(obj, float):
+        if math.isinf(obj) or math.isnan(obj):
+            return None
+        return obj
+    return obj
+
+
+def _convert_json_booleans(obj):
+    """Convert string representations of booleans to actual booleans."""
+    if isinstance(obj, dict):
+        return {k: _convert_json_booleans(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_convert_json_booleans(item) for item in obj]
+    elif isinstance(obj, str):
+        if obj.lower() == 'true':
+            return True
+        elif obj.lower() == 'false':
+            return False
+    return obj
 
 
 def generate_reports(all_results: Dict[str, Any], output_dir: str,

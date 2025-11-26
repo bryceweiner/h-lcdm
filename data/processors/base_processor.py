@@ -131,9 +131,16 @@ class BaseDataProcessor(ABC):
         Returns:
             Data or None if not found
         """
-        file_path = self.get_processed_data_path(dataset_name)
+        # Try PKL first (default)
+        file_path_pkl = self.get_processed_data_path(dataset_name, '.pkl')
+        file_path_json = self.get_processed_data_path(dataset_name, '.json')
 
-        if not file_path.exists():
+        file_path = None
+        if file_path_pkl.exists():
+            file_path = file_path_pkl
+        elif file_path_json.exists():
+            file_path = file_path_json
+        else:
             return None
 
         try:
@@ -142,14 +149,14 @@ class BaseDataProcessor(ABC):
             elif file_path.suffix == '.json':
                 with open(file_path, 'r') as f:
                     package = json.load(f)
-                return package.get('data')
+                return package
             elif file_path.suffix == '.npy':
                 return np.load(file_path)
             else:
                 import pickle
                 with open(file_path, 'rb') as f:
                     package = pickle.load(f)
-                return package.get('data')
+                return package
         except Exception:
             return None
 
