@@ -42,6 +42,7 @@ from pipeline.gamma import GammaPipeline
 from pipeline.bao import BAOPipeline
 from pipeline.cmb import CMBPipeline
 from pipeline.void import VoidPipeline
+from pipeline.voidfinder import VoidFinderPipeline
 from pipeline.hlcdm import HLCDMPipeline
 from pipeline.ml import MLPipeline
 from pipeline.common.reporting import HLambdaDMReporter
@@ -116,6 +117,71 @@ def parse_arguments():
         help='Run void analysis (E8×E8 alignments). '
              'Optional arguments: validate, extended. '
              'Example: --void validate extended'
+    )
+
+    parser.add_argument(
+        '--voidfinder',
+        nargs='*',
+        metavar='VALIDATION',
+        help='Run VoidFinder pipeline (generate void catalogs from galaxy surveys). '
+             'Optional arguments: validate, extended. '
+             'Example: --voidfinder validate'
+    )
+
+    parser.add_argument(
+        '--voidfinder-catalog',
+        type=str,
+        default='sdss_dr16',
+        choices=['sdss_dr16'],
+        help='Galaxy catalog to use for void finding (default: sdss_dr16)'
+    )
+
+    parser.add_argument(
+        '--chunk-size',
+        type=int,
+        default=100000,
+        help='Batch size for processing galaxies (default: 100000)'
+    )
+
+    parser.add_argument(
+        '--abs-mag-limit',
+        type=float,
+        default=-20.0,
+        help='Absolute magnitude limit for volume-limited sample (default: -20.0)'
+    )
+
+    parser.add_argument(
+        '--num-cpus',
+        type=int,
+        default=None,
+        help='Number of CPUs for VAST parallelization (default: None = use all physical cores)'
+    )
+
+    parser.add_argument(
+        '--save-after',
+        type=int,
+        default=10000,
+        help='Save VAST checkpoint after every N cells processed (default: 10000 = enabled)'
+    )
+
+    parser.add_argument(
+        '--use-start-checkpoint',
+        action='store_true',
+        help='Resume from VAST checkpoint file if found (default: False)'
+    )
+
+    parser.add_argument(
+        '--grid-size',
+        type=float,
+        default=50.0,
+        help='VAST grid edge length in Mpc (default: 50.0 Mpc)'
+    )
+
+    parser.add_argument(
+        '--z-bin-size',
+        type=float,
+        default=None,
+        help='Process in redshift bins of this size (e.g., 0.05 for bins of 0.05 redshift width). None = no binning (default: None)'
     )
 
     parser.add_argument(
@@ -297,6 +363,7 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
         'bao': args.bao,
         'cmb': args.cmb,
         'void': args.void,
+        'voidfinder': args.voidfinder,
         'hlcdm': args.hlcdm,
         'ml': args.ml
     }
@@ -390,6 +457,19 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
                 pipeline_config[pipeline_name]['context'].update({
                     'surveys': args.void_surveys
                 })
+            elif pipeline_name == 'voidfinder':
+                pipeline_config[pipeline_name]['context'].update({
+                    'catalog': args.voidfinder_catalog,
+                    'z_min': args.z_min,
+                    'z_max': args.z_max,
+                    'chunk_size': args.chunk_size,
+                    'abs_mag_limit': args.abs_mag_limit,
+                    'num_cpus': args.num_cpus,
+                    'save_after': args.save_after,
+                    'use_start_checkpoint': args.use_start_checkpoint,
+                    'grid_size': args.grid_size,
+                    'z_bin_size': args.z_bin_size
+                })
             elif pipeline_name == 'cmb':
                 pipeline_config[pipeline_name]['context'].update({
                     'datasets': args.cmb_datasets
@@ -422,6 +502,7 @@ def initialize_pipelines(output_dir: str) -> Dict[str, Any]:
         'bao': BAOPipeline(output_dir),
         'cmb': CMBPipeline(output_dir),
         'void': VoidPipeline(output_dir),
+        'voidfinder': VoidFinderPipeline(output_dir),
         'hlcdm': HLCDMPipeline(output_dir),
         'ml': MLPipeline(output_dir)
     }

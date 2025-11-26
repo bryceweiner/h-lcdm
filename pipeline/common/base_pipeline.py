@@ -59,6 +59,37 @@ class AnalysisPipeline(ABC):
         # Set up log file
         self.log_file = self.logs_dir / f"{self.name}_pipeline.log"
         self._log_file_handle = None
+        
+        # Configure logging to also write to pipeline log file
+        import logging
+        pipeline_logger = logging.getLogger(f"pipeline.{self.name}")
+        pipeline_logger.setLevel(logging.INFO)
+        
+        # Check if file handler for this log file already exists
+        log_file_str = str(self.log_file)
+        has_file_handler = any(
+            isinstance(h, logging.FileHandler) and hasattr(h, 'baseFilename') and h.baseFilename == log_file_str
+            for h in pipeline_logger.handlers
+        )
+        
+        if not has_file_handler:
+            # Add file handler for this pipeline
+            file_handler = logging.FileHandler(self.log_file, mode='a', encoding='utf-8')
+            file_handler.setLevel(logging.INFO)
+            file_formatter = logging.Formatter('[%(asctime)s] %(name)s: %(message)s', datefmt='%H:%M:%S')
+            file_handler.setFormatter(file_formatter)
+            pipeline_logger.addHandler(file_handler)
+            
+            # Also configure data loader/processor loggers to write to this file
+            data_logger = logging.getLogger('data')
+            data_logger.setLevel(logging.INFO)
+            # Check if data logger already has this file handler
+            data_has_handler = any(
+                isinstance(h, logging.FileHandler) and hasattr(h, 'baseFilename') and h.baseFilename == log_file_str
+                for h in data_logger.handlers
+            )
+            if not data_has_handler:
+                data_logger.addHandler(file_handler)
 
         # Initialize data directories
         self.downloaded_data_dir = Path("downloaded_data")
@@ -821,11 +852,14 @@ class AnalysisPipeline(ABC):
         Parameters:
             message (str): Progress message
         """
+        import logging
+        logger = logging.getLogger(f"pipeline.{self.name}")
+        
         timestamp = time.strftime("%H:%M:%S")
         log_line = f"[{timestamp}] {self.name}: {message}"
         
-        # Print to console
-        print(log_line)
+        # Use logging instead of print
+        logger.info(message)
         
         # Write to log file
         try:
@@ -840,10 +874,8 @@ class AnalysisPipeline(ABC):
             self._log_file_handle.write(log_line + "\n")
             self._log_file_handle.flush()
         except Exception as e:
-            # Log to stderr if file logging fails, but don't crash
-            import sys
-            sys.stderr.write(f"Warning: Failed to write to log file {self.log_file}: {e}\n")
-            sys.stderr.write(f"Original message: {log_line}\n")
+            # Log to logger if file logging fails, but don't crash
+            logger.warning(f"Failed to write to log file {self.log_file}: {e}")
     
     def close_log_file(self):
         """Close the log file handle."""
