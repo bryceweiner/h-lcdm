@@ -1833,30 +1833,14 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
         
         return results_section
 
-    def _load_extended_validation(self, pipeline_name: str) -> Dict[str, Any]:
-        """Load extended validation results from separate file."""
-        try:
-            extended_file = Path("results") / "json" / f"{pipeline_name}_results_extended.json"
-            if extended_file.exists():
-                with open(extended_file, 'r') as f:
-                    extended_data = json.load(f)
-                return extended_data.get('results', {}).get('validation_extended', {})
-        except Exception:
-            pass
-        return {}
-
     def _generate_pipeline_validation(self, pipeline_name: str, results: Dict[str, Any]) -> str:
         """Generate pipeline-specific validation."""
         validation = f"## Validation\n\n"
-
+        
         # Get validation results from the results dict
         # Results structure: {'main': {...}, 'validation': {...}, 'validation_extended': {...}}
         basic_val = results.get('validation', {})
         extended_val = results.get('validation_extended', {})
-
-        # If no extended validation in results, try loading from separate file
-        if not extended_val:
-            extended_val = self._load_extended_validation(pipeline_name)
         
         if basic_val:
             overall_status = basic_val.get('overall_status', 'UNKNOWN')
@@ -1880,41 +1864,23 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
                 
                 validation += "\n"
             
-            # Add null hypothesis test details if available (check both basic and extended validation)
-            null_test = basic_val.get('null_hypothesis_test', {}) or extended_val.get('null_hypothesis', {})
+            # Add null hypothesis test details if available
+            null_test = basic_val.get('null_hypothesis_test', {})
             if null_test and isinstance(null_test, dict):
                 validation += "### Null Hypothesis Testing\n\n"
-                # Handle different data structures from basic vs extended validation
-                if 'null_hypothesis' in null_test:
-                    # Basic validation structure
-                    null_hypothesis = null_test.get('null_hypothesis', 'N/A')
-                    alternative = null_test.get('alternative_hypothesis', 'N/A')
-                    rejected = null_test.get('null_hypothesis_rejected', False)
-                    p_value = null_test.get('p_value', None)
-
-                    validation += f"**Null Hypothesis:** {null_hypothesis}\n\n"
-                    validation += f"**Alternative Hypothesis:** {alternative}\n\n"
-
-                    if p_value is not None:
-                        validation += f"**p-value:** {p_value:.4f}\n\n"
-
-                    validation += f"**Result:** {'Null hypothesis rejected' if rejected else 'Null hypothesis not rejected (null result)'}\n\n"
-                else:
-                    # Extended validation structure
-                    p_value = null_test.get('p_value', None)
-                    sigma = null_test.get('sigma', None)
-                    rejected = null_test.get('reject_null', 'False') == 'True'
-
-                    validation += f"**Null Hypothesis:** Void clustering follows random Poisson process\n\n"
-                    validation += f"**Alternative Hypothesis:** Void clustering shows non-random structure\n\n"
-
-                    if p_value is not None:
-                        validation += f"**p-value:** {p_value:.5f}\n\n"
-                    if sigma is not None:
-                        validation += f"**Significance:** {sigma:.1f}σ\n\n"
-
-                    validation += f"**Result:** {'Null hypothesis rejected' if rejected else 'Null hypothesis not rejected (null result)'}\n\n"
-
+                null_hypothesis = null_test.get('null_hypothesis', 'N/A')
+                alternative = null_test.get('alternative_hypothesis', 'N/A')
+                rejected = null_test.get('null_hypothesis_rejected', False)
+                p_value = null_test.get('p_value', None)
+                
+                validation += f"**Null Hypothesis:** {null_hypothesis}\n\n"
+                validation += f"**Alternative Hypothesis:** {alternative}\n\n"
+                
+                if p_value is not None:
+                    validation += f"**p-value:** {p_value:.4f}\n\n"
+                
+                validation += f"**Result:** {'Null hypothesis rejected' if rejected else 'Null hypothesis not rejected (null result)'}\n\n"
+                
                 if 'interpretation' in null_test:
                     validation += f"**Interpretation:** {null_test['interpretation']}\n\n"
         else:

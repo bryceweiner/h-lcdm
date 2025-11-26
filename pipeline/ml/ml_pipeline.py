@@ -795,8 +795,8 @@ class MLPipeline(AnalysisPipeline):
             raise DataUnavailableError(f"E8 construction failed: {e}")
 
         # Use standard E8 angles
-        e8_angles = np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2,
-                              2*np.pi/3, 3*np.pi/4, 5*np.pi/6])
+            e8_angles = np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2, 
+                                  2*np.pi/3, 3*np.pi/4, 5*np.pi/6])
 
         # Load observational data for pattern matching
         # Use CMB data as primary source for E8 pattern detection
@@ -1095,7 +1095,7 @@ class MLPipeline(AnalysisPipeline):
         gamma_dimensionless = gamma_z / H_z
         
         # Standard E8 angles
-        e8_angles = np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2,
+        e8_angles = np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2, 
                               2*np.pi/3, 3*np.pi/4, 5*np.pi/6])
         
         # Chiral amplitude from geometry
