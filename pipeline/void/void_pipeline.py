@@ -803,6 +803,10 @@ class VoidPipeline(AnalysisPipeline):
         """
         self.log_progress("Performing extended void validation...")
 
+        # Ensure analysis results are loaded before running validation
+        if not self.results:
+            self.results = self.load_results() or self.run()
+
         # TODO: Restore to 10000/10000/10000/100 for production runs
         n_bootstrap = context.get('n_bootstrap', 2) if context else 2
         n_randomization = context.get('n_randomization', 2) if context else 2
