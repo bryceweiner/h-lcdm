@@ -20,10 +20,19 @@ For detailed help:
 import argparse
 import sys
 import os
+import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import time
 import json
+
+# Configure root logger to output to console
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(name)s: %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # Add the project root to Python path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -216,9 +225,9 @@ def parse_arguments():
     parser.add_argument(
         '--void-surveys',
         nargs='+',
-        default=['sdss_dr7_douglass', 'sdss_dr7_clampitt'],
-        choices=['sdss_dr7_douglass', 'sdss_dr7_clampitt'],
-        help='Void surveys to analyze (default: sdss_dr7_douglass sdss_dr7_clampitt)'
+        default=['sdss_dr7_douglass', 'sdss_dr7_clampitt', 'desi'],
+        choices=['sdss_dr7_douglass', 'sdss_dr7_clampitt', 'desi', 'vide_public'],
+        help='Void surveys to analyze. vide_public requires manual download from cosmicvoids.net'
     )
 
     parser.add_argument(
@@ -437,9 +446,9 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
     import json  # Import at function level to ensure it's always available
     
     if not quiet:
-        print(f"\n{'='*60}")
-        print(f"RUNNING {pipeline_name.upper()} PIPELINE")
-        print(f"{'='*60}")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"RUNNING {pipeline_name.upper()} PIPELINE")
+        logger.info(f"{'='*60}")
 
     results = {}
 
@@ -462,14 +471,14 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
                 main_results_exist = True
                 results = saved_results
                 if not quiet:
-                    print(f"✓ Found existing main analysis results")
+                    logger.info(f"✓ Found existing main analysis results")
             if saved_results.get('validation'):
                 basic_validation_exists = True
                 if not quiet:
-                    print(f"✓ Found existing basic validation results")
+                    logger.info(f"✓ Found existing basic validation results")
         except Exception as e:
             if not quiet:
-                print(f"⚠ Could not load {json_path}: {e}")
+                logger.warning(f"⚠ Could not load {json_path}: {e}")
     
     # Check for extended validation results
     if extended_json_path.exists() and extended_json_path.stat().st_size > 0:
@@ -481,10 +490,10 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
                 extended_validation_exists = True
                 results['validation_extended'] = _convert_json_booleans(extended_results)
                 if not quiet:
-                    print(f"✓ Found existing extended validation results")
+                    logger.info(f"✓ Found existing extended validation results")
         except Exception as e:
             if not quiet:
-                print(f"⚠ Could not load {extended_json_path}: {e}")
+                logger.warning(f"⚠ Could not load {extended_json_path}: {e}")
     
     # Determine what needs to run
     need_main_analysis = not main_results_exist
@@ -494,7 +503,7 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
     # If all requested data products exist, skip to reporting
     if not need_main_analysis and not need_basic_validation and not need_extended_validation:
         if not quiet:
-            print(f"All requested data products exist for {pipeline_name}, skipping to reporting...")
+            logger.info(f"All requested data products exist for {pipeline_name}, skipping to reporting...")
         return results
     
     # Run only what's needed
@@ -503,7 +512,7 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
             # Run main analysis if needed
             if need_main_analysis:
                 if not quiet:
-                    print(f"Executing {pipeline_name} analysis...")
+                    logger.info(f"Executing {pipeline_name} analysis...")
                 main_results = pipeline_obj.run(config.get('context', {}))
                 # Merge main results into results dict
                 if isinstance(main_results, dict):
@@ -513,13 +522,13 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
             # Run basic validation if needed
             if need_basic_validation:
                 if not quiet:
-                    print(f"Running basic validation for {pipeline_name}...")
+                    logger.info(f"Running basic validation for {pipeline_name}...")
                 results['validation'] = pipeline_obj.validate(config.get('context', {}))
 
             # Run extended validation if needed
             if need_extended_validation:
                 if not quiet:
-                    print(f"Running extended validation for {pipeline_name}...")
+                    logger.info(f"Running extended validation for {pipeline_name}...")
                 results['validation_extended'] = pipeline_obj.validate_extended(config.get('context', {}))
 
             # Save results after each stage completes
@@ -542,10 +551,10 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
                     json.dump(existing_data, f, indent=2, default=str)
 
                 if not quiet:
-                    print(f"✓ Results saved: {json_path}")
+                    logger.info(f"✓ Results saved: {json_path}")
 
             except Exception as e:
-                print(f"Warning: Could not save results: {e}")
+                logger.warning(f"Could not save results: {e}")
 
             # Save extended validation to separate file if it was run
             if 'validation_extended' in results:
@@ -568,13 +577,13 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
                         json.dump(extended_data, f, indent=2, default=str)
 
                     if not quiet:
-                        print(f"✓ Extended validation saved: {extended_json_path}")
+                        logger.info(f"✓ Extended validation saved: {extended_json_path}")
 
                 except Exception as e:
-                    print(f"ERROR: Could not save extended validation results: {e}")
+                    logger.error(f"Could not save extended validation results: {e}")
 
         except Exception as e:
-            print(f"✗ Error in {pipeline_name} pipeline: {e}")
+            logger.error(f"✗ Error in {pipeline_name} pipeline: {e}")
             results['error'] = str(e)
             import traceback
             results['traceback'] = traceback.format_exc()
@@ -633,9 +642,9 @@ def generate_reports(all_results: Dict[str, Any], output_dir: str,
         quiet: Suppress output
     """
     if not quiet:
-        print(f"\n{'='*60}")
-        print("GENERATING REPORTS AND FIGURES")
-        print(f"{'='*60}")
+        logger.info(f"\n{'='*60}")
+        logger.info("GENERATING REPORTS AND FIGURES")
+        logger.info(f"{'='*60}")
 
     reporter = HLambdaDMReporter(output_dir)
     visualizer = HLambdaDMVisualizer(output_dir)
@@ -646,16 +655,16 @@ def generate_reports(all_results: Dict[str, Any], output_dir: str,
         # Generate comprehensive report
         if generate_report:
             if not quiet:
-                print("Generating comprehensive analysis report...")
+                logger.info("Generating comprehensive analysis report...")
             report_path = reporter.generate_comprehensive_report(all_results)
             generated_files.append(report_path)
             if not quiet:
-                print(f"✓ Report generated: {report_path}")
+                logger.info(f"✓ Report generated: {report_path}")
 
         # Generate comprehensive figure
         if generate_figures:
             if not quiet:
-                print("Generating comprehensive analysis figures...")
+                logger.info("Generating comprehensive analysis figures...")
             figure_path = visualizer.create_comprehensive_figure(all_results)
             generated_files.append(figure_path)
 
@@ -664,35 +673,35 @@ def generate_reports(all_results: Dict[str, Any], output_dir: str,
             generated_files.append(validation_figure)
 
             if not quiet:
-                print(f"✓ Figures generated: {figure_path}")
-                print(f"✓ Validation figure: {validation_figure}")
+                logger.info(f"✓ Figures generated: {figure_path}")
+                logger.info(f"✓ Validation figure: {validation_figure}")
 
         # Generate individual pipeline reports
         if generate_report:
             for pipeline_name, results in all_results.items():
                 if not quiet:
-                    print(f"Generating {pipeline_name} pipeline report...")
+                    logger.info(f"Generating {pipeline_name} pipeline report...")
                 pipeline_report = reporter.generate_pipeline_report(pipeline_name, results)
                 generated_files.append(pipeline_report)
 
                 if not quiet:
-                    print(f"✓ {pipeline_name.upper()} report: {pipeline_report}")
+                    logger.info(f"✓ {pipeline_name.upper()} report: {pipeline_report}")
 
         # Generate individual pipeline figures
         if generate_figures:
             for pipeline_name, results in all_results.items():
                 if not quiet:
-                    print(f"Generating {pipeline_name} pipeline figures...")
+                    logger.info(f"Generating {pipeline_name} pipeline figures...")
                 pipeline_figure = visualizer.create_pipeline_figure(pipeline_name, results)
                 generated_files.append(pipeline_figure)
 
                 if not quiet:
-                    print(f"✓ {pipeline_name.upper()} figures: {pipeline_figure}")
+                    logger.info(f"✓ {pipeline_name.upper()} figures: {pipeline_figure}")
 
     except Exception as e:
-        print(f"✗ Error generating reports: {e}")
+        logger.error(f"✗ Error generating reports: {e}")
         import traceback
-        print(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
     return generated_files
 
@@ -735,7 +744,7 @@ def save_execution_summary(all_results: Dict[str, Any], config: Dict[str, Any],
     with open(summary_path, 'w') as f:
         json.dump(summary, f, indent=2, default=str)
 
-    print(f"\n✓ Execution summary saved: {summary_path}")
+    logger.info(f"\n✓ Execution summary saved: {summary_path}")
 
 
 def main():
@@ -751,8 +760,8 @@ def main():
     config = determine_pipeline_config(args)
 
     if not config['pipelines_to_run']:
-        print("No pipelines selected. Use --help for usage information.")
-        print("Example: python main.py --gamma validate")
+        logger.warning("No pipelines selected. Use --help for usage information.")
+        logger.info("Example: python main.py --gamma validate")
         return 1
 
     # Initialize output directory
@@ -761,14 +770,14 @@ def main():
 
     # Print header
     if not args.quiet:
-        print(f"{'='*70}")
-        print("H-ΛCDM ANALYSIS FRAMEWORK")
-        print(f"Version {HLCDM_PARAMS.version}")
-        print(HLCDM_PARAMS.paper)
-        print(f"Output directory: {args.output_dir}")
-        print(f"{'='*70}")
-        print(f"Pipelines to run: {', '.join(config['pipelines_to_run'])}")
-        print(f"{'='*70}\n")
+        logger.info(f"{'='*70}")
+        logger.info("H-ΛCDM ANALYSIS FRAMEWORK")
+        logger.info(f"Version {HLCDM_PARAMS.version}")
+        logger.info(HLCDM_PARAMS.paper)
+        logger.info(f"Output directory: {args.output_dir}")
+        logger.info(f"{'='*70}")
+        logger.info(f"Pipelines to run: {', '.join(config['pipelines_to_run'])}")
+        logger.info(f"{'='*70}\n")
 
     # Initialize pipelines
     pipelines = initialize_pipelines(str(output_dir))
@@ -795,7 +804,7 @@ def main():
             args.quiet
         )
     elif not args.quiet:
-        print("Skipping report and figure generation (--skip-reporting)")
+        logger.info("Skipping report and figure generation (--skip-reporting)")
 
     # Calculate execution time
     execution_time = time.time() - start_time
@@ -806,19 +815,19 @@ def main():
 
     # Print completion summary
     if not args.quiet:
-        print(f"\n{'='*70}")
-        print("ANALYSIS COMPLETE")
-        print(f"{'='*70}")
-        print(f"Total execution time: {execution_time:.1f} seconds")
-        print(f"Pipelines completed: {len(config['pipelines_to_run'])}")
-        print(f"Results saved to: {args.output_dir}")
+        logger.info(f"\n{'='*70}")
+        logger.info("ANALYSIS COMPLETE")
+        logger.info(f"{'='*70}")
+        logger.info(f"Total execution time: {execution_time:.1f} seconds")
+        logger.info(f"Pipelines completed: {len(config['pipelines_to_run'])}")
+        logger.info(f"Results saved to: {args.output_dir}")
         if generated_files:
-            print(f"Generated files: {len(generated_files)}")
+            logger.info(f"Generated files: {len(generated_files)}")
             for file_path in generated_files[:5]:  # Show first 5
-                print(f"  - {file_path}")
+                logger.info(f"  - {file_path}")
             if len(generated_files) > 5:
-                print(f"  ... and {len(generated_files) - 5} more")
-        print(f"{'='*70}")
+                logger.info(f"  ... and {len(generated_files) - 5} more")
+        logger.info(f"{'='*70}")
 
     # Return success/failure status
     success = all('error' not in results for results in all_results.values())
