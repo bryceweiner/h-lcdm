@@ -34,7 +34,11 @@ class BlindAnalysisProtocol:
         """
         self.protocol_file = Path("ml_pipeline") / protocol_file
         self.results_dir = Path("ml_pipeline") / results_dir
-        self.results_dir.mkdir(exist_ok=True)
+        
+        # Ensure directories exist
+        self.results_dir.mkdir(parents=True, exist_ok=True)
+        if not self.protocol_file.parent.exists():
+            self.protocol_file.parent.mkdir(parents=True, exist_ok=True)
 
         self.protocol_registered = False
         self.protocol_hash = None

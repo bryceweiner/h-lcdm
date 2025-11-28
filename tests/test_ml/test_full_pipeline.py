@@ -8,6 +8,7 @@ End-to-end integration tests for the complete ML pipeline.
 import pytest
 import numpy as np
 import pandas as pd
+import torch
 from unittest.mock import Mock, patch
 
 from pipeline.ml.ml_pipeline import MLPipeline
@@ -84,7 +85,7 @@ class TestFullPipelineIntegration:
 
         # Mock all the heavy computation methods
         with patch.object(pipeline, '_load_all_cosmological_data', return_value={'cmb': {}, 'bao': {}}), \
-             patch.object(pipeline, '_prepare_ssl_training_data', return_value=[{'cmb': torch.randn(4, 500)}]), \
+             patch.object(pipeline, '_prepare_ssl_training_data', return_value=[{'cmb': torch.randn(4, 500).to(pipeline.device), 'bao': torch.randn(4, 10).to(pipeline.device)}]), \
              patch.object(pipeline, '_extract_features_with_ssl', return_value=np.random.normal(0, 1, (100, 512))), \
              patch.object(pipeline, 'ssl_learner', create=True) as mock_ssl, \
              patch.object(pipeline, 'domain_adapter', create=True) as mock_domain, \
@@ -92,7 +93,7 @@ class TestFullPipelineIntegration:
 
             # Mock SSL learner
             mock_ssl.train_step.return_value = {'loss': 0.5}
-            mock_ssl.encode.return_value = {'cmb': torch.randn(4, 512)}
+            mock_ssl.encode.return_value = {'cmb': torch.randn(4, 512).to(pipeline.device), 'bao': torch.randn(4, 512).to(pipeline.device)}
 
             # Mock domain adapter
             mock_domain.adapt_domains.return_value = {'total_adaptation': 0.1}
@@ -130,9 +131,19 @@ class TestFullPipelineIntegration:
         pipeline = MLPipeline()
 
         # Test cosmological data loading (mocked)
-        with patch.object(pipeline.data_loader, 'load_cmb_data', return_value={'test': 'data'}):
+        with patch.object(pipeline.data_loader, 'load_cmb_data', return_value={'test': 'data'}), \
+             patch.object(pipeline.data_loader, 'load_bao_data', return_value={'test': 'data'}), \
+             patch.object(pipeline.data_loader, 'load_void_catalog', return_value=pd.DataFrame({'test': [1]})), \
+             patch.object(pipeline.data_loader, 'load_sdss_galaxy_catalog', return_value=pd.DataFrame({'test': [1]})), \
+             patch.object(pipeline.data_loader, 'load_frb_data', return_value=pd.DataFrame({'test': [1]})), \
+             patch.object(pipeline.data_loader, 'load_lyman_alpha_data', return_value=pd.DataFrame({'test': [1]})), \
+             patch.object(pipeline.data_loader, 'load_jwst_data', return_value=pd.DataFrame({'test': [1]})):
+            
             data = pipeline._load_all_cosmological_data()
             assert 'cmb' in data
+            assert 'bao' in data
+            assert 'void' in data
+            assert 'galaxy' in data
 
     def test_feature_extraction(self):
         """Test feature extraction pipeline."""

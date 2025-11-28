@@ -126,9 +126,54 @@ class DataLoader:
         logger.info(f"DataLoader: {message}")
         self._write_to_log(message, "INFO")
 
+    def load_frb_data(self) -> pd.DataFrame:
+        """Alias for download_frb_catalog."""
+        return self.download_frb_catalog()
+
+    def load_lyman_alpha_data(self, **kwargs) -> pd.DataFrame:
+        """Alias for download_lyman_alpha_forest."""
+        return self.download_lyman_alpha_forest(**kwargs)
+
+    def load_jwst_data(self, **kwargs) -> pd.DataFrame:
+        """Alias for download_jwst_galaxies."""
+        return self.download_jwst_galaxies(**kwargs)
+
     # ========================================================================
     # CMB DATA LOADING
     # ========================================================================
+
+    def load_cmb_data(self) -> Dict[str, Any]:
+        """
+        Load primary CMB data for analysis.
+        
+        Returns:
+            dict: Dictionary containing 'ell', 'C_ell', 'C_ell_err'
+        """
+        # Try to load ACT DR6 first
+        try:
+            ell, C_ell, C_ell_err = self.load_act_dr6()
+            return {
+                'ell': ell,
+                'C_ell': C_ell,
+                'C_ell_err': C_ell_err,
+                'source': 'ACT DR6'
+            }
+        except Exception:
+            # Fallback to Planck 2018
+            try:
+                result = self.load_planck_2018()
+                if result:
+                    ell, C_ell, C_ell_err = result
+                    return {
+                        'ell': ell,
+                        'C_ell': C_ell,
+                        'C_ell_err': C_ell_err,
+                        'source': 'Planck 2018'
+                    }
+            except Exception:
+                pass
+                
+        raise DataUnavailableError("No CMB data available")
 
     def load_act_dr6(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -412,6 +457,39 @@ class DataLoader:
     # ========================================================================
     # VOID CATALOG DOWNLOADING (Complete implementation from old codebase)
     # ========================================================================
+
+    def load_void_catalog(self) -> pd.DataFrame:
+        """
+        Load primary void catalog for analysis.
+        
+        Returns:
+            pd.DataFrame: Combined void catalog
+        """
+        # Try to load VAST SDSS DR7 catalogs first
+        try:
+            catalogs = self.download_vast_sdss_dr7_catalogs()
+            if catalogs:
+                # Combine all VAST catalogs
+                combined = pd.concat(catalogs.values(), ignore_index=True)
+                return combined
+        except Exception:
+            pass
+            
+        # Fallback to VoidFinder catalog
+        try:
+            df = self.load_voidfinder_catalog('sdss_dr16')
+            if df is not None:
+                return df
+        except Exception:
+            pass
+
+        # Fallback to Clampitt & Jain
+        try:
+            return self.download_clampitt_jain_catalog()
+        except Exception:
+            pass
+            
+        raise DataUnavailableError("No void catalog available")
 
     def download_vast_sdss_dr7_catalogs(self) -> Dict[str, pd.DataFrame]:
         """

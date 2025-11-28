@@ -1,0 +1,13 @@
+{
+  "protocol_hash": "aa1e5c9046d232ec8d8bfdfec179b88289e3e1bc15e8730212166a4c80df2304",
+  "execution_timestamp": "2025-11-28T09:01:57.970227",
+  "analysis_results": {
+    "detected_patterns": [
+      1,
+      2,
+      3
+    ]
+  },
+  "blind_status": "RESULTS_GENERATED",
+  "interpretation_status": "BLINDED"
+}

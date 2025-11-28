@@ -83,6 +83,9 @@ class VoidPipeline(AnalysisPipeline):
             else:
                 self.device = torch.device('cpu')
 
+        # Mode tracking (lcdm or hlcdm)
+        self.mode = 'lcdm'
+
         self.update_metadata('description', 'Cosmic void clustering coefficient analysis: comparison with thermodynamic ratio (η_natural) and processing cost determination')
         self.update_metadata('available_surveys', list(self.available_surveys.keys()))
         if TORCH_AVAILABLE and self.device:
@@ -98,8 +101,27 @@ class VoidPipeline(AnalysisPipeline):
         Returns:
             dict: Analysis results
         """
+        # Determine mode (lcdm or hlcdm)
+        mode = context.get('mode', 'lcdm') if context else 'lcdm'
+        self.mode = mode
+        
+        if mode == 'hlcdm':
+            return self._run_hlcdm_analysis(context)
+        else:
+            return self._run_lcdm_analysis(context)
+    
+    def _run_lcdm_analysis(self, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Execute LCDM mode analysis (traditional survey-based void catalogs).
+
+        Parameters:
+            context (dict, optional): Analysis parameters
+
+        Returns:
+            dict: Analysis results
+        """
         try:
-            self.log_progress("Starting comprehensive void analysis...")
+            self.log_progress("Starting comprehensive void analysis (LCDM mode)...")
 
             # Parse context parameters
             # Default to stable public surveys (exclude DR16 and VIDE public until verified/downloaded)
@@ -208,7 +230,127 @@ class VoidPipeline(AnalysisPipeline):
                 'exception_type': type(e).__name__,
                 'traceback': traceback.format_exc()
             }
+    
+    def _run_hlcdm_analysis(self, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Execute H-LCDM mode analysis (H-ZOBOV generated void catalogs).
 
+        Parameters:
+            context (dict, optional): Analysis parameters
+
+        Returns:
+            dict: Analysis results
+        """
+        try:
+            self.log_progress("Starting comprehensive void analysis (H-LCDM mode)...")
+            self.log_progress("Processing H-ZOBOV void catalogs...")
+
+            perform_clustering = context.get('clustering', True) if context else True
+            blinding_enabled = context.get('blinding_enabled', True) if context else True
+
+            # Apply blinding if enabled
+            if blinding_enabled:
+                self.blinding_info = self.apply_blinding({
+                    'clustering_coefficient_threshold': 0.443,  # Thermodynamic ratio
+                    'processing_cost_threshold': 0.338  # Causal diamond structure cost
+                })
+                self.log_progress("Clustering coefficient analysis blinded for unbiased development")
+            else:
+                self.blinding_info = None
+
+            # Process H-ZOBOV catalogs
+            try:
+                void_data = self.data_processor.process_hlcdm_catalogs(force_reprocess=context.get('force_reprocess', False) if context else False)
+            except Exception as e:
+                error_msg = f"Failed to process H-ZOBOV catalogs: {type(e).__name__}: {str(e)}"
+                self.log_progress(f"✗ {error_msg}")
+                import traceback
+                self.log_progress(f"Traceback: {traceback.format_exc()}")
+                return {'error': error_msg, 'exception_type': type(e).__name__, 'traceback': traceback.format_exc()}
+
+            if not void_data or (isinstance(void_data, dict) and len(void_data) == 0):
+                self.log_progress("✗ No H-ZOBOV void data available")
+                return {'error': 'Failed to process H-ZOBOV catalogs'}
+
+            # Analyze covariance matrices for void statistics
+            try:
+                covariance_analysis = self._analyze_void_covariance_matrices(void_data)
+            except Exception as e:
+                error_msg = f"Failed to analyze covariance matrices: {type(e).__name__}: {str(e)}"
+                self.log_progress(f"✗ {error_msg}")
+                import traceback
+                self.log_progress(f"Traceback: {traceback.format_exc()}")
+                covariance_analysis = {'error': error_msg}
+
+            # Perform clustering analysis
+            if perform_clustering:
+                try:
+                    self.log_progress("Performing void network clustering analysis...")
+                    clustering_results = self._perform_clustering_analysis(void_data)
+                except Exception as e:
+                    error_msg = f"Failed to perform clustering analysis: {type(e).__name__}: {str(e)}"
+                    self.log_progress(f"✗ {error_msg}")
+                    import traceback
+                    self.log_progress(f"Traceback: {traceback.format_exc()}")
+                    clustering_results = {'error': error_msg}
+            else:
+                clustering_results = {'note': 'Clustering analysis disabled'}
+
+            # Create systematic error budget
+            systematic_budget = self._create_void_systematic_budget()
+
+            # Generate comprehensive results
+            results = {
+                'void_data': void_data,
+                'clustering_analysis': clustering_results,
+                'covariance_analysis': covariance_analysis,
+                'systematic_budget': systematic_budget.get_budget_breakdown(),
+                'blinding_info': self.blinding_info,
+                'data_source': 'H-ZOBOV catalogs',
+                'mode': 'hlcdm',
+                'source_catalogs': void_data.get('source_catalogs', []),
+                'analysis_summary': self._generate_void_summary(void_data, clustering_results)
+            }
+
+            self.log_progress("✓ Comprehensive void analysis complete (H-LCDM mode)")
+
+            # Save results
+            self.save_results(results)
+
+            return results
+        except Exception as e:
+            error_msg = f"Fatal error in void pipeline (H-LCDM mode): {type(e).__name__}: {str(e)}"
+            self.log_progress(f"✗ {error_msg}")
+            import traceback
+            self.log_progress(f"Traceback: {traceback.format_exc()}")
+            return {
+                'error': error_msg,
+                'exception_type': type(e).__name__,
+                'traceback': traceback.format_exc()
+            }
+
+    def save_results(self, results: Dict[str, Any], filename: Optional[str] = None) -> Path:
+        """
+        Save analysis results to JSON file with mode-aware naming.
+        
+        Overrides base class method to add HLCDM_ prefix for H-LCDM mode outputs.
+        
+        Parameters:
+            results (dict): Results to save
+            filename (str, optional): Custom filename
+            
+        Returns:
+            Path: Path to saved file
+        """
+        if filename is None:
+            base_filename = f"{self.name}_results.json"
+            if self.mode == 'hlcdm':
+                filename = f"HLCDM_{base_filename}"
+            else:
+                filename = base_filename
+        
+        return super().save_results(results, filename)
+    
     def _perform_clustering_analysis(self, void_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Perform void network clustering analysis.
@@ -507,8 +649,27 @@ class VoidPipeline(AnalysisPipeline):
             'total_voids_analyzed': void_data.get('total_voids', 0),
             'surveys_processed': void_data.get('surveys_processed', []),
             'clustering_summary': self._summarize_clustering(clustering_results),
-            'overall_conclusion': self._generate_void_conclusion(clustering_results)
+            'overall_conclusion': self._generate_void_conclusion(clustering_results),
+            'data_source': void_data.get('data_source', 'traditional_surveys'),
+            'mode': self.mode
         }
+        
+        # Add H-LCDM specific metadata
+        if self.mode == 'hlcdm':
+            summary['source_catalogs'] = void_data.get('source_catalogs', [])
+            # Include Lambda(z) statistics if available
+            catalog = void_data.get('catalog')
+            if catalog is not None and isinstance(catalog, pd.DataFrame):
+                if 'lambda_z' in catalog.columns:
+                    lambda_vals = catalog['lambda_z'].dropna().values
+                    if len(lambda_vals) > 0:
+                        summary['lambda_statistics'] = {
+                            'mean': float(np.mean(lambda_vals)),
+                            'median': float(np.median(lambda_vals)),
+                            'std': float(np.std(lambda_vals)),
+                            'min': float(np.min(lambda_vals)),
+                            'max': float(np.max(lambda_vals))
+                        }
 
         return summary
 
@@ -805,11 +966,11 @@ class VoidPipeline(AnalysisPipeline):
             self.results = self.load_results() or self.run()
 
         # Minimum iterations for numeric stability
-        # Bootstrap: 1000 for ~3% precision on CI
+        # Bootstrap: 10000 for improved stability and precision on CI
         # Null hypothesis: 1000 to resolve p-values down to 0.001 (3σ)
         # Jackknife: 100 subsamples for bias estimation
         
-        n_bootstrap = context.get('n_bootstrap', 1000) if context else 1000
+        n_bootstrap = context.get('n_bootstrap', 10000) if context else 10000
         n_randomization = context.get('n_randomization', 1000) if context else 1000
         n_null = context.get('n_null', 1000) if context else 1000
         random_seed = context.get('random_seed', 42) if context else 42
@@ -2304,7 +2465,22 @@ class VoidPipeline(AnalysisPipeline):
             void_data = self.results.get('void_data', {})
             catalog = void_data.get('catalog')
 
-            if catalog is None or 'survey' not in catalog.columns:
+            # Validate catalog type
+            if catalog is None:
+                return {
+                    'passed': True,  # Not applicable
+                    'test': 'cross_validation',
+                    'note': 'Cross-validation not applicable (no catalog available)'
+                }
+            
+            if not isinstance(catalog, pd.DataFrame):
+                return {
+                    'passed': False,
+                    'test': 'cross_validation',
+                    'error': f'Catalog must be a DataFrame, got {type(catalog).__name__}'
+                }
+
+            if 'survey' not in catalog.columns:
                 return {
                     'passed': True,  # Not applicable
                     'test': 'cross_validation',

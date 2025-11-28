@@ -132,8 +132,8 @@ def parse_arguments():
         '--voidfinder-catalog',
         type=str,
         default='sdss_dr16',
-        choices=['sdss_dr16'],
-        help='Galaxy catalog to use for void finding (default: sdss_dr16)'
+        choices=['sdss_dr16', 'sdss_dr7'],
+        help='Galaxy catalog to use for void finding (default: sdss_dr16). Available: sdss_dr16, sdss_dr7'
     )
 
     parser.add_argument(
@@ -182,6 +182,63 @@ def parse_arguments():
         type=float,
         default=None,
         help='Process in redshift bins of this size (e.g., 0.05 for bins of 0.05 redshift width). None = no binning (default: None)'
+    )
+
+    parser.add_argument(
+        '--voidfinder-algorithm',
+        type=str,
+        choices=['vast', 'zobov'],
+        default='vast',
+        help='Void finding algorithm: vast (sphere-growing) or zobov (Voronoi watershed) (default: vast)'
+    )
+
+    parser.add_argument(
+        '--zobov-output-name',
+        type=str,
+        default=None,
+        help='MANDATORY for H-ZOBOV: Base name for output files (JSON, catalog, log, report). Format: name-zmin_val-zmax_val-params'
+    )
+
+    parser.add_argument(
+        '--zobov-batch-size',
+        type=int,
+        default=50000,
+        help='Batch size for MPS-accelerated operations in H-ZOBOV (default: 50000)'
+    )
+
+    parser.add_argument(
+        '--zobov-use-hlcdm-lambda',
+        action='store_true',
+        default=True,
+        help='Use H-ΛCDM Lambda(z) for void significance (default: True)'
+    )
+
+    parser.add_argument(
+        '--zobov-no-hlcdm-lambda',
+        action='store_false',
+        dest='zobov_use_hlcdm_lambda',
+        help='Disable H-ΛCDM Lambda(z) and use constant Lambda'
+    )
+
+    parser.add_argument(
+        '--zobov-significance-ratio',
+        type=float,
+        default=None,
+        help='Density ratio threshold for zone merging in H-ZOBOV (optional, algorithm is parameter-free)'
+    )
+
+    parser.add_argument(
+        '--zobov-min-void-volume',
+        type=float,
+        default=None,
+        help='Minimum void volume filter in Mpc³ for H-ZOBOV (optional)'
+    )
+
+    parser.add_argument(
+        '--zobov-z-bin-size',
+        type=float,
+        default=0.05,
+        help='Redshift bin size for H-ZOBOV processing (default: 0.05). Redshift binning is default for H-ZOBOV to ensure consistent Λ(z) within bins. Set to None to disable.'
     )
 
     parser.add_argument(
@@ -294,6 +351,14 @@ def parse_arguments():
         default=['sdss_dr7_douglass', 'sdss_dr7_clampitt', 'desi'],
         choices=['sdss_dr7_douglass', 'sdss_dr7_clampitt', 'desi', 'vide_public'],
         help='Void surveys to analyze. vide_public requires manual download from cosmicvoids.net'
+    )
+
+    parser.add_argument(
+        '--void-mode',
+        type=str,
+        choices=['lcdm', 'hlcdm'],
+        default='lcdm',
+        help='Void analysis mode: lcdm (traditional surveys) or hlcdm (H-ZOBOV catalogs)'
     )
 
     parser.add_argument(
@@ -455,10 +520,15 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
                 })
             elif pipeline_name == 'void':
                 pipeline_config[pipeline_name]['context'].update({
-                    'surveys': args.void_surveys
+                    'surveys': args.void_surveys,
+                    'mode': args.void_mode
                 })
             elif pipeline_name == 'voidfinder':
+                # Use algorithm-specific bin size parameter
+                z_bin_size = args.zobov_z_bin_size if args.voidfinder_algorithm == 'zobov' else args.z_bin_size
+                
                 pipeline_config[pipeline_name]['context'].update({
+                    'algorithm': args.voidfinder_algorithm,
                     'catalog': args.voidfinder_catalog,
                     'z_min': args.z_min,
                     'z_max': args.z_max,
@@ -468,8 +538,19 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
                     'save_after': args.save_after,
                     'use_start_checkpoint': args.use_start_checkpoint,
                     'grid_size': args.grid_size,
-                    'z_bin_size': args.z_bin_size
+                    'z_bin_size': z_bin_size,
+                    # H-ZOBOV specific parameters
+                    'output_name': args.zobov_output_name,
+                    'batch_size': args.zobov_batch_size,
+                    'use_hlcdm_lambda': args.zobov_use_hlcdm_lambda,
+                    'significance_ratio': args.zobov_significance_ratio,
+                    'min_void_volume': args.zobov_min_void_volume,
                 })
+                
+                # Validate H-ZOBOV requirements
+                if args.voidfinder_algorithm == 'zobov':
+                    if args.zobov_output_name is None:
+                        raise ValueError("--zobov-output-name is MANDATORY when --voidfinder-algorithm zobov")
             elif pipeline_name == 'cmb':
                 pipeline_config[pipeline_name]['context'].update({
                     'datasets': args.cmb_datasets
@@ -533,9 +614,21 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
 
     results = {}
 
+    # Determine filename based on pipeline mode (for void pipeline)
+    context = config.get('context', {})
+    mode = context.get('mode', 'lcdm') if context else 'lcdm'
+    
+    # For void pipeline in H-LCDM mode, use HLCDM_ prefix
+    if pipeline_name == 'void' and mode == 'hlcdm':
+        base_filename = f"HLCDM_{pipeline_name}_results.json"
+        extended_filename = f"HLCDM_{pipeline_name}_results_extended.json"
+    else:
+        base_filename = f"{pipeline_name}_results.json"
+        extended_filename = f"{pipeline_name}_results_extended.json"
+    
     # Data persistence paths
-    json_path = Path("results") / "json" / f"{pipeline_name}_results.json"
-    extended_json_path = Path("results") / "json" / f"{pipeline_name}_results_extended.json"
+    json_path = Path("results") / "json" / base_filename
+    extended_json_path = Path("results") / "json" / extended_filename
     
     # Check what data products already exist
     main_results_exist = False
@@ -617,8 +710,13 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
             try:
                 existing_data = {}
                 if json_path.exists():
-                    with open(json_path, 'r') as f:
-                        existing_data = json.load(f)
+                    try:
+                        with open(json_path, 'r') as f:
+                            existing_data = json.load(f)
+                    except json.JSONDecodeError as json_err:
+                        # If JSON file is malformed, log warning and start fresh
+                        logger.warning(f"Existing JSON file {json_path} is malformed (error: {json_err}), starting fresh")
+                        existing_data = {}
 
                 if 'results' not in existing_data:
                     existing_data['results'] = {}
@@ -675,6 +773,7 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
 def _sanitize_for_json(obj):
     """
     Sanitize data for JSON serialization by converting inf/nan to None.
+    Also converts numpy types in keys and values to Python native types.
     
     Parameters:
         obj: Object to sanitize
@@ -683,11 +782,41 @@ def _sanitize_for_json(obj):
         Sanitized object safe for JSON serialization
     """
     import math
+    import numpy as np
     
     if isinstance(obj, dict):
-        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+        # Convert numpy keys to strings/ints, and sanitize values
+        sanitized_dict = {}
+        for k, v in obj.items():
+            # Convert numpy key types to Python native types
+            if isinstance(k, (np.integer, np.int8, np.int16, np.int32, np.int64)):
+                sanitized_key = int(k)
+            elif isinstance(k, (np.floating, np.float16, np.float32, np.float64)):
+                sanitized_key = float(k)
+            elif isinstance(k, (np.bool_, bool)):
+                sanitized_key = bool(k)
+            elif isinstance(k, str):
+                sanitized_key = k
+            else:
+                # Fallback: convert to string
+                sanitized_key = str(k)
+            sanitized_dict[sanitized_key] = _sanitize_for_json(v)
+        return sanitized_dict
     elif isinstance(obj, list):
         return [_sanitize_for_json(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(_sanitize_for_json(item) for item in obj)
+    elif isinstance(obj, (np.integer, np.int8, np.int16, np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float16, np.float32, np.float64)):
+        val = float(obj)
+        if math.isinf(val) or math.isnan(val):
+            return None
+        return val
+    elif isinstance(obj, np.ndarray):
+        return [_sanitize_for_json(item) for item in obj]
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
     elif isinstance(obj, float):
         if math.isinf(obj) or math.isnan(obj):
             return None

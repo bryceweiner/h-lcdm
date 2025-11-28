@@ -29,11 +29,13 @@ All stages maintain scientific rigor and prevent confirmation bias.
 """
 
 import numpy as np
+import time
 import pandas as pd
 from typing import Dict, Any, Optional, List, Callable
 from pathlib import Path
 import torch
 import logging
+from scipy import stats
 
 try:
     from tqdm import tqdm
@@ -57,6 +59,8 @@ from .validation.blind_protocol import BlindAnalysisProtocol
 from data.loader import DataLoader, DataUnavailableError
 from data.mock_generator import MockDatasetGenerator
 from hlcdm.e8.e8_heterotic_core import E8HeteroticSystem
+from hlcdm.cosmology import HLCDMCosmology
+from hlcdm.parameters import HLCDM_PARAMS
 
 
 class MLPipeline(AnalysisPipeline):
@@ -645,7 +649,18 @@ class MLPipeline(AnalysisPipeline):
             batch = {}
             for modality, dim in encoder_dims.items():
                 # Create random tensors (would be real data in practice)
-                batch[modality] = torch.randn(32, dim)  # batch_size=32
+                # Ensure tensors are on the correct device
+                if modality == 'jwst':
+                    # JWST encoder expects 2D input (images)
+                    # Assuming dim is flattened size, reshape to square
+                    side = int(np.sqrt(dim))
+                    if side * side == dim:
+                        batch[modality] = torch.randn(32, side, side).to(self.device)
+                    else:
+                        # Fallback if not square
+                        batch[modality] = torch.randn(32, dim).to(self.device)
+                else:
+                    batch[modality] = torch.randn(32, dim).to(self.device)
 
             batches.append(batch)
 
@@ -704,14 +719,32 @@ class MLPipeline(AnalysisPipeline):
 
         return synthesis
 
-        if 'all' in tests_to_run:
-            tests_to_run = [t for t in self.available_tests.keys() if t != 'all']
+    def run_scientific_tests(self, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Run specific ML pattern recognition tests (E8, Network, etc.).
 
+        Parameters:
+            context: Execution context
+
+        Returns:
+            dict: Test results
+        """
+        tests_to_run = context.get('tests', ['all']) if context else ['all']
+        
+        # Define scientific tests
+        scientific_tests = ['e8_pattern', 'network_analysis', 'chirality', 'gamma_qtep']
+        
+        if 'all' in tests_to_run:
+            tests_to_run = scientific_tests
+        
         self.log_progress(f"Running tests: {', '.join(tests_to_run)}")
 
         # Run selected tests
         test_results = {}
         for test_name in tests_to_run:
+            if test_name not in scientific_tests:
+                continue
+                
             self.log_progress(f"Running {test_name} analysis...")
             try:
                 result = self._run_test(test_name, context)
@@ -722,7 +755,7 @@ class MLPipeline(AnalysisPipeline):
                 test_results[test_name] = {'error': str(e)}
 
         # Synthesize results across tests
-        synthesis_results = self._synthesize_ml_results(test_results)
+        synthesis_results = self._synthesize_scientific_test_results(test_results)
 
         # Create systematic error budget
         systematic_budget = self._create_ml_systematic_budget()
@@ -732,7 +765,7 @@ class MLPipeline(AnalysisPipeline):
             'test_results': test_results,
             'synthesis': synthesis_results,
             'systematic_budget': systematic_budget.get_budget_breakdown(),
-            'blinding_info': self.blinding_info,
+            'blinding_info': getattr(self, 'blinding_info', {}),
             'tests_run': tests_to_run,
             'overall_assessment': self._generate_overall_assessment(synthesis_results)
         }
@@ -740,7 +773,7 @@ class MLPipeline(AnalysisPipeline):
         self.log_progress("✓ ML pattern recognition analysis complete")
 
         # Save results
-        self.save_results(results)
+        self.save_results(results, filename=f"ml_scientific_tests_{int(time.time())}.json")
 
         return results
 
@@ -795,8 +828,8 @@ class MLPipeline(AnalysisPipeline):
             raise DataUnavailableError(f"E8 construction failed: {e}")
 
         # Use standard E8 angles
-            e8_angles = np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2, 
-                                  2*np.pi/3, 3*np.pi/4, 5*np.pi/6])
+        e8_angles = np.array([np.pi/6, np.pi/4, np.pi/3, np.pi/2, 
+                              2*np.pi/3, 3*np.pi/4, 5*np.pi/6])
 
         # Load observational data for pattern matching
         # Use CMB data as primary source for E8 pattern detection
@@ -1256,8 +1289,8 @@ class MLPipeline(AnalysisPipeline):
             'significant': significant
         }
 
-    def _synthesize_ml_results(self, test_results: Dict[str, Any]) -> Dict[str, Any]:
-        """Synthesize results across all ML tests."""
+    def _synthesize_scientific_test_results(self, test_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Synthesize results across all ML scientific tests."""
         if test_results is None:
             test_results = {}
         

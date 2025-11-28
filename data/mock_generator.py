@@ -415,6 +415,29 @@ class MockDatasetGenerator:
             return self.generate_mock_lyman_alpha(int(1000 * multiplier))
         elif modality == 'jwst':
             return self.generate_mock_jwst_catalog(int(100 * multiplier))
+        elif modality == 'combined':
+            # Generate all modalities
+            combined = {}
+            combined['cmb'] = self.generate_mock_cmb_maps(int(1000 * multiplier))['C_ell']
+            combined['bao'] = np.array([m['value'] for m in self.generate_mock_bao_measurements(int(3 * multiplier))['measurements']])
+            
+            # For dataframes, we can't easily put them in a simple structure expected by feature extractor
+            # unless we assume the extractor handles dicts of arrays/dfs.
+            # But NullHypothesisTester._extract_features_from_dataset expects simple array or dict with 'features'.
+            # If 'combined', we probably want to generate features directly or return a structure 
+            # that NullHypothesisTester can handle.
+            
+            # For now, return a dictionary that acts as a container for multi-modal data
+            # which NullHypothesisTester's extract_features might struggle with unless updated.
+            # But looking at _extract_features_from_dataset in NullHypothesisTester, it checks for 'modalities' key.
+            return {
+                'modalities': {
+                    'cmb': self.generate_mock_cmb_maps(int(1000 * multiplier)),
+                    'bao': self.generate_mock_bao_measurements(int(3 * multiplier)),
+                    'void': self.generate_mock_void_catalog(int(10000 * multiplier)),
+                    'galaxy': self.generate_mock_galaxy_catalog(int(50000 * multiplier))
+                }
+            }
         else:
             raise ValueError(f"Unknown modality: {modality}")
 
