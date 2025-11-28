@@ -825,6 +825,10 @@ class AnalysisPipeline(ABC):
             dict or None: Loaded results
         """
         if filename is None:
+            # For void pipeline in HLCDM mode, check for HLCDM_ prefix
+            if self.name == 'void' and hasattr(self, 'mode') and self.mode == 'hlcdm':
+                filename = f"HLCDM_{self.name}_results.json"
+        else:
             filename = f"{self.name}_results.json"
 
         # Try new location first, then fall back to old location for compatibility

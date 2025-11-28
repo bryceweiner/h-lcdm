@@ -258,25 +258,17 @@ class VoidFinderPipeline(AnalysisPipeline):
                 self.processed_data_dir
             )
             
-            # Try loading from cache first
+            # Try loading from cache first (parameter-specific cache)
             if not force_redownload:
-                cached = catalog_provider.load(use_cache=True)
+                # Pass parameters to load() for parameter-specific cache lookup
+                cached = catalog_provider.load(use_cache=True, z_min=z_min, z_max=z_max, mag_limit=mag_limit)
                 if cached is not None:
-                    # Apply redshift and magnitude cuts
-                    mask = (cached['z'] >= z_min) & (cached['z'] <= z_max)
-                    if 'magnitude' in cached.columns:
-                        mask &= (cached['magnitude'] <= mag_limit)
-                    elif 'r_mag' in cached.columns:
-                        mask &= (cached['r_mag'] <= mag_limit)
-                    
-                    filtered = cached[mask].copy()
-                    
-                    # If cache has data in this range, return it
-                    if len(filtered) > 0:
-                        return filtered
-                    else:
-                        self.log_progress(f"Cache exists but contains no galaxies in range z={z_min}-{z_max}. Downloading...")
-                        # Cache exists but doesn't cover this range -> fall through to download
+                    # Cache file already filtered to exact parameters, return as-is
+                    self.log_progress(f"✓ Loaded {len(cached):,} galaxies from parameter-specific cache")
+                    return cached
+                else:
+                    self.log_progress(f"No cache found for parameters z={z_min}-{z_max}, mag<{mag_limit}. Downloading...")
+                    # Fall through to download
             
             # Download with checkpointing
             return catalog_provider.download(

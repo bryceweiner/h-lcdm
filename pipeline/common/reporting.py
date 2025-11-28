@@ -2506,22 +2506,52 @@ The current analysis does not provide strong evidence for H-ΛCDM predictions. T
             eta_sigma = eta_data.get('sigma', np.inf) if eta_data else np.inf
             matches_eta = clustering_analysis.get('matches_thermodynamic_efficiency', False) if clustering_analysis else False
             
-            conclusion += f"### Did We Find What We Were Looking For?\n\n"
+            conclusion += f"### Statistical Analysis Results\n\n"
             
-            # Check clustering coefficient match with thermodynamic ratio (η_natural)
-            if matches_eta and eta_sigma < 0.5:
-                conclusion += f"**YES** - Observed clustering coefficient C_obs matches thermodynamic ratio (η_natural) η_natural within {eta_sigma:.1f}σ. "
-                conclusion += f"This confirms that the clustering coefficient represents the processing cost required to precipitate "
-                conclusion += f"baryonic matter from pure information.\n\n"
-            elif matches_eta and eta_sigma < 1.0:
-                conclusion += f"**YES** - Observed clustering coefficient is consistent with thermodynamic ratio (η_natural) ({eta_sigma:.1f}σ). "
-                conclusion += f"The clustering coefficient likely represents the processing cost to precipitate baryonic matter.\n\n"
-            elif eta_sigma < 2.0:
-                conclusion += f"**PARTIAL** - Observed clustering coefficient shows marginal consistency with thermodynamic ratio (η_natural) ({eta_sigma:.1f}σ). "
-                conclusion += f"Further analysis needed to confirm interpretation.\n\n"
+            # Extract objective statistical results
+            observed_cc = clustering_analysis.get('observed_clustering_coefficient', 0.0) if clustering_analysis else 0.0
+            observed_std = clustering_analysis.get('observed_clustering_std', 0.03) if clustering_analysis else 0.03
+            model_comparison = clustering_analysis.get('model_comparison', {}) if clustering_analysis else {}
+            
+            # Get χ² values
+            baryonic_chi2 = model_comparison.get('baryonic_costs', {}).get('chi2_observed_vs_hlcdm', 0.0)
+            hlcdm_combined_chi2 = model_comparison.get('overall_scores', {}).get('hlcdm_combined', 0.0)
+            lcdm_combined_chi2 = model_comparison.get('overall_scores', {}).get('lcmd_connectivity_only', 0.0)
+            
+            # Calculate p-values
+            try:
+                from scipy import stats
+                p_value_eta = 1.0 - stats.chi2.cdf(baryonic_chi2, df=1) if baryonic_chi2 > 0 else None
+                p_value_hlcdm = 1.0 - stats.chi2.cdf(hlcdm_combined_chi2, df=2) if hlcdm_combined_chi2 > 0 else None
+                p_value_lcdm = 1.0 - stats.chi2.cdf(lcdm_combined_chi2, df=1) if lcdm_combined_chi2 > 0 else None
+            except:
+                p_value_eta = None
+                p_value_hlcdm = None
+                p_value_lcdm = None
+            
+            # Objective statistical reporting - no judgments about evidence sufficiency
+            conclusion += f"**Observed Clustering Coefficient:** C_obs = {observed_cc:.4f} ± {observed_std:.4f}\n\n"
+            conclusion += f"**Comparison with H-ΛCDM Thermodynamic Ratio (η_natural = 0.4430):**\n"
+            conclusion += f"- Difference: {observed_cc - 0.4430:.4f}\n"
+            conclusion += f"- Statistical significance: {eta_sigma:.2f}σ\n"
+            conclusion += f"- χ² = {baryonic_chi2:.3f}"
+            if p_value_eta is not None:
+                conclusion += f", p = {p_value_eta:.4f}\n\n"
             else:
-                conclusion += f"**NO** - Observed clustering coefficient shows tension with thermodynamic ratio (η_natural) ({eta_sigma:.1f}σ). "
-                conclusion += f"The interpretation may require revision.\n\n"
+                conclusion += "\n\n"
+            
+            conclusion += f"**Model Comparison (Combined χ²):**\n"
+            conclusion += f"- H-ΛCDM: χ² = {hlcdm_combined_chi2:.3f}"
+            if p_value_hlcdm is not None:
+                conclusion += f", p = {p_value_hlcdm:.4f}\n"
+            else:
+                conclusion += "\n"
+            conclusion += f"- ΛCDM: χ² = {lcdm_combined_chi2:.3f}"
+            if p_value_lcdm is not None:
+                conclusion += f", p = {p_value_lcdm:.4f}\n"
+            else:
+                conclusion += "\n"
+            conclusion += f"- Δχ² = {abs(hlcdm_combined_chi2 - lcdm_combined_chi2):.3f}\n\n"
             
             # Processing costs
             if processing_costs:

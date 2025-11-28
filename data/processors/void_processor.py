@@ -550,14 +550,52 @@ class VoidDataProcessor(BaseDataProcessor):
         
         # Validate input type
         if not isinstance(catalog, pd.DataFrame):
-            return {'error': f'Catalog must be a DataFrame, got {type(catalog).__name__}'}
+            return {
+                'error': f'Catalog must be a DataFrame, got {type(catalog).__name__}',
+                'clustering_coefficient': 0.0,
+                'clustering_std': 0.03
+            }
+        
+        # Check if catalog is empty
+        if catalog.empty or len(catalog) == 0:
+            return {
+                'error': 'Void catalog is empty',
+                'clustering_coefficient': 0.0,
+                'clustering_std': 0.03
+            }
+        
+        # Check if we have enough voids for network construction (need at least 2)
+        if len(catalog) < 2:
+            return {
+                'error': f'Insufficient voids for network construction (need at least 2, got {len(catalog)})',
+                'clustering_coefficient': 0.0,
+                'clustering_std': 0.03
+            }
         
         # Log available columns for debugging
         logger.debug(f"  Catalog columns: {list(catalog.columns)}")
         
         # Use modular network construction pipeline
         # This provides a single source of truth for network analysis
-        return build_void_network(catalog, linking_method='robust')
+        try:
+            return build_void_network(catalog, linking_method='robust')
+        except ValueError as e:
+            # Handle invalid linking length or other network construction errors
+            error_msg = str(e)
+            logger.error(f"Failed to construct void network: {error_msg}")
+            return {
+                'error': f'Network construction failed: {error_msg}',
+                'clustering_coefficient': 0.0,
+                'clustering_std': 0.03,
+                'catalog_size': len(catalog)
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error in network construction: {type(e).__name__}: {e}")
+            return {
+                'error': f'Network construction error: {type(e).__name__}: {str(e)}',
+                'clustering_coefficient': 0.0,
+                'clustering_std': 0.03
+            }
 
     def process(self, survey_names: List[str]) -> Dict[str, Any]:
         """

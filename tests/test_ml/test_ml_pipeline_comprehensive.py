@@ -526,3 +526,68 @@ class TestMLPipelineMethods:
             assert 'test_results' in result
             assert 'synthesis' in result
 
+    def test_run_with_specific_stages(self, pipeline):
+        """Test running pipeline with specific stages."""
+        pipeline.data_loader.load_cmb_data = Mock(return_value={'ell': np.arange(100)})
+        pipeline.data_loader.load_bao_data = Mock(return_value={'measurements': []})
+        pipeline.data_loader.load_void_catalog = Mock(return_value=pd.DataFrame({'test': [1]}))
+        pipeline.data_loader.load_sdss_galaxy_catalog = Mock(return_value=pd.DataFrame({'test': [1]}))
+        pipeline.data_loader.load_frb_data = Mock(return_value=pd.DataFrame({'test': [1]}))
+        pipeline.data_loader.load_lyman_alpha_data = Mock(return_value=pd.DataFrame({'test': [1]}))
+        pipeline.data_loader.load_jwst_data = Mock(return_value=pd.DataFrame({'test': [1]}))
+        
+        with patch('pipeline.ml.ml_pipeline.ContrastiveLearner') as mock_learner_class:
+            mock_learner = Mock()
+            mock_learner.train = Mock(return_value={'loss': 0.5})
+            mock_learner.encode = Mock(return_value={'cmb': torch.randn(100, 512)})
+            mock_learner_class.return_value = mock_learner
+            
+            # Test with specific stages
+            result = pipeline.run({'stages': ['ssl']})
+            assert 'error' in result or 'pipeline_completed' in result
+
+    def test_run_with_error_handling(self, pipeline):
+        """Test pipeline error handling."""
+        pipeline.data_loader.load_cmb_data = Mock(side_effect=Exception("Test error"))
+        
+        result = pipeline.run()
+        assert 'error' in result
+
+    def test_run_interpretability_with_shap_error(self, pipeline):
+        """Test interpretability stage with SHAP errors."""
+        pipeline.stage_completed['pattern_detection'] = True
+        pipeline.ensemble_detector = Mock()
+        pipeline.ensemble_detector.predict = Mock(return_value={
+            'ensemble_scores': np.random.rand(100)
+        })
+        pipeline.ssl_learner = Mock()
+        pipeline.ssl_learner.encode = Mock(return_value={
+            'cmb': torch.randn(100, 512)
+        })
+        
+        # Mock SHAP to raise error
+        with patch('pipeline.ml.ml_pipeline.SHAPExplainer') as mock_shap_class:
+            mock_shap = Mock()
+            mock_shap.explain_instance = Mock(side_effect=Exception("SHAP error"))
+            mock_shap.get_global_feature_importance = Mock(side_effect=Exception("SHAP error"))
+            mock_shap_class.return_value = mock_shap
+            
+            result = pipeline.run_interpretability(show_progress=False)
+            assert 'interpretability_completed' in result
+            assert any('error' in exp for exp in result.get('shap_explanations', []))
+
+    def test_run_validation_progress_bar(self, pipeline):
+        """Test validation stage with progress bar."""
+        pipeline.stage_completed['pattern_detection'] = True
+        pipeline.ssl_learner = Mock()
+        pipeline.ssl_learner.encode = Mock(return_value={
+            'cmb': torch.randn(100, 512)
+        })
+        
+        with patch('pipeline.ml.ml_pipeline.tqdm') as mock_tqdm:
+            mock_pbar = Mock()
+            mock_tqdm.return_value = mock_pbar
+            
+            result = pipeline.run_validation(show_progress=True)
+            assert 'validation_completed' in result
+

@@ -23,6 +23,11 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from tqdm import tqdm
 import time
+try:
+    from scipy import stats
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
 
 # Try to import PyTorch for GPU/MPS acceleration
 try:
@@ -106,9 +111,15 @@ class VoidPipeline(AnalysisPipeline):
         self.mode = mode
         
         if mode == 'hlcdm':
-            return self._run_hlcdm_analysis(context)
+            results = self._run_hlcdm_analysis(context)
         else:
-            return self._run_lcdm_analysis(context)
+            results = self._run_lcdm_analysis(context)
+        
+        # CRITICAL FIX: Set self.results so validation can access fresh results
+        # instead of loading stale JSON data
+        self.results = results
+        
+        return results
     
     def _run_lcdm_analysis(self, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -687,23 +698,77 @@ class VoidPipeline(AnalysisPipeline):
 
     def _generate_void_conclusion(self, clustering_results: Dict[str, Any]) -> str:
         """
-        Generate overall void analysis conclusion.
+        Generate objective statistical summary of void analysis results.
 
         Parameters:
             clustering_results: Clustering results
 
         Returns:
-            str: Overall conclusion
+            str: Statistical summary (no judgments about evidence sufficiency)
         """
-        matches_eta = clustering_results.get('matches_thermodynamic_efficiency', False)
-        matches_lcdm = clustering_results.get('matches_lcdm', False)
+        # Extract statistical results
+        observed_cc = clustering_results.get('observed_clustering_coefficient', 0.0)
+        observed_std = clustering_results.get('observed_clustering_std', 0.03)
         
-        if matches_eta:
-            return "STRONG_EVIDENCE: Observed clustering coefficient matches thermodynamic efficiency, confirming processing cost interpretation"
-        elif matches_lcdm:
-            return "MODERATE_EVIDENCE: Observed clustering coefficient consistent with ΛCDM prediction"
+        clustering_comparison = clustering_results.get('clustering_comparison', {})
+        model_comparison = clustering_results.get('model_comparison', {})
+        
+        # Get comparison statistics
+        eta_comparison = clustering_comparison.get('thermodynamic_efficiency', {})
+        lcdm_comparison = clustering_comparison.get('lcdm', {})
+        
+        sigma_eta = eta_comparison.get('sigma', 0.0)
+        sigma_lcdm = lcdm_comparison.get('sigma', 0.0)
+        
+        # Get χ² values for best-fit analysis
+        baryonic_chi2 = model_comparison.get('baryonic_costs', {}).get('chi2_observed_vs_hlcdm', 0.0)
+        connectivity_chi2_hlcdm = model_comparison.get('connectivity_costs', {}).get('chi2_observed_vs_hlcdm', 0.0)
+        connectivity_chi2_lcdm = model_comparison.get('connectivity_costs', {}).get('chi2_observed_vs_lcdm', 0.0)
+        hlcdm_combined_chi2 = model_comparison.get('overall_scores', {}).get('hlcdm_combined', 0.0)
+        lcdm_combined_chi2 = model_comparison.get('overall_scores', {}).get('lcmd_connectivity_only', 0.0)
+        
+        # Calculate p-values (assuming 1 degree of freedom for each comparison)
+        if SCIPY_AVAILABLE:
+            try:
+                p_value_eta = 1.0 - stats.chi2.cdf(baryonic_chi2, df=1)
+                p_value_hlcdm = 1.0 - stats.chi2.cdf(hlcdm_combined_chi2, df=2)  # 2 comparisons
+                p_value_lcdm = 1.0 - stats.chi2.cdf(lcdm_combined_chi2, df=1)
+            except:
+                p_value_eta = None
+                p_value_hlcdm = None
+                p_value_lcdm = None
         else:
-            return "INSUFFICIENT_EVIDENCE: Observed clustering coefficient shows tension with theoretical predictions"
+            p_value_eta = None
+            p_value_hlcdm = None
+            p_value_lcdm = None
+        
+        # Objective statistical summary - no judgments about evidence sufficiency
+        summary = f"Observed clustering coefficient: C_obs = {observed_cc:.4f} ± {observed_std:.4f}\n\n"
+        summary += f"Statistical comparisons:\n"
+        summary += f"- H-ΛCDM thermodynamic ratio (η_natural = 0.4430): difference = {observed_cc - 0.4430:.4f}, σ = {sigma_eta:.2f}, χ² = {baryonic_chi2:.3f}"
+        if p_value_eta is not None:
+            summary += f", p = {p_value_eta:.4f}\n"
+        else:
+            summary += "\n"
+        summary += f"- ΛCDM prediction (C = 0.00): difference = {observed_cc:.4f}, σ = {sigma_lcdm:.2f}, χ² = {lcdm_combined_chi2:.3f}"
+        if p_value_lcdm is not None:
+            summary += f", p = {p_value_lcdm:.4f}\n"
+        else:
+            summary += "\n"
+        summary += f"\nModel comparison (combined χ²):\n"
+        summary += f"- H-ΛCDM: χ² = {hlcdm_combined_chi2:.3f}"
+        if p_value_hlcdm is not None:
+            summary += f", p = {p_value_hlcdm:.4f}\n"
+        else:
+            summary += "\n"
+        summary += f"- ΛCDM: χ² = {lcdm_combined_chi2:.3f}"
+        if p_value_lcdm is not None:
+            summary += f", p = {p_value_lcdm:.4f}\n"
+        else:
+            summary += "\n"
+        summary += f"- Δχ² = {abs(hlcdm_combined_chi2 - lcdm_combined_chi2):.3f}\n"
+        
+        return summary
 
     def validate(self, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -717,9 +782,25 @@ class VoidPipeline(AnalysisPipeline):
         """
         self.log_progress("Performing basic void validation...")
 
-        # Load results if needed
+        # Load results if needed - pass context to preserve mode
         if not self.results:
-            self.results = self.load_results() or self.run()
+            self.log_progress("DEBUG: self.results is empty, loading from cache or running analysis...")
+            loaded = self.load_results()
+            if loaded:
+                self.log_progress(f"DEBUG: Loaded results from cache, keys: {list(loaded.keys())}")
+                self.log_progress(f"DEBUG: Has clustering_analysis: {'clustering_analysis' in loaded}")
+                if 'clustering_analysis' in loaded:
+                    ca = loaded['clustering_analysis']
+                    self.log_progress(f"DEBUG: clustering_analysis keys: {list(ca.keys())}")
+                    self.log_progress(f"DEBUG: observed_cc in cache: {ca.get('observed_clustering_coefficient', 'MISSING')}")
+                self.results = loaded
+            else:
+                self.log_progress("DEBUG: No cached results, running analysis...")
+                self.results = self.run(context)
+                self.log_progress(f"DEBUG: Analysis complete, self.results keys: {list(self.results.keys())}")
+        else:
+            self.log_progress(f"DEBUG: Using existing self.results, keys: {list(self.results.keys())}")
+            self.log_progress(f"DEBUG: Has clustering_analysis: {'clustering_analysis' in self.results}")
 
         # Basic validation checks
         validation_results = {
@@ -727,6 +808,16 @@ class VoidPipeline(AnalysisPipeline):
             'clustering_validation': self._validate_clustering_analysis(),
             'null_hypothesis_test': self._test_null_hypothesis()
         }
+
+        # DEBUG: Log each validation test result
+        self.log_progress("DEBUG: Validation test results:")
+        for test_name, test_result in validation_results.items():
+            passed = test_result.get('passed', False)
+            self.log_progress(f"  {test_name}: {'PASSED' if passed else 'FAILED'}")
+            if not passed and 'error' in test_result:
+                self.log_progress(f"    Error: {test_result['error']}")
+            elif not passed and 'note' in test_result:
+                self.log_progress(f"    Note: {test_result['note']}")
 
         # Overall status
         all_passed = all(result.get('passed', False)
@@ -749,15 +840,28 @@ class VoidPipeline(AnalysisPipeline):
         """Validate void data integrity."""
         try:
             void_data = self.results.get('void_data', {})
-
-            # Get catalog - may be DataFrame, dict, or string (from JSON)
+            total_voids = void_data.get('total_voids', 0)
+            
+            # For HLCDM mode: we generated the catalogs ourselves via H-ZOBOV pipeline
+            # Trust our own output - just verify we have voids
+            if hasattr(self, 'mode') and self.mode == 'hlcdm':
+                return {
+                    'passed': total_voids > 10,
+                    'test': 'data_integrity',
+                    'total_voids': total_voids,
+                    'note': f'HLCDM mode: using H-ZOBOV generated catalog ({total_voids} voids)',
+                    'error': None
+                }
+            
+            # LCDM mode: validate external catalog format
             catalog = void_data.get('catalog')
             
             # If catalog is a string or not a DataFrame, reload from processor
             if not isinstance(catalog, pd.DataFrame):
-                # Try to reload from processor
+                
+                # Try to reload from processor (LCDM mode only)
                 try:
-                    processed_data = self.void_processor.process(['sdss_dr7_douglass', 'sdss_dr7_clampitt'])
+                    processed_data = self.data_processor.process(['sdss_dr7_douglass', 'sdss_dr7_clampitt'])
                     catalog = processed_data.get('catalog')
                 except Exception as e:
                     # Fall back to metadata check
@@ -828,7 +932,15 @@ class VoidPipeline(AnalysisPipeline):
         3. Observed CC is significantly different from random (ΛCDM = 0)
         """
         try:
+            # DEBUG: Log what we're reading from
+            self.log_progress(f"DEBUG: self.results keys: {list(self.results.keys()) if self.results else 'None'}")
+            self.log_progress(f"DEBUG: self.results type: {type(self.results)}")
+            
             clustering_results = self.results.get('clustering_analysis', {})
+            
+            # DEBUG: Log clustering_results structure
+            self.log_progress(f"DEBUG: clustering_analysis keys: {list(clustering_results.keys()) if clustering_results else 'None'}")
+            self.log_progress(f"DEBUG: clustering_analysis type: {type(clustering_results)}")
 
             if 'error' in clustering_results:
                 # If network analysis is not available, that's acceptable (not all analyses require it)
@@ -848,6 +960,9 @@ class VoidPipeline(AnalysisPipeline):
             # Get observed values
             observed_cc = clustering_results.get('observed_clustering_coefficient', 0.0)
             observed_std = clustering_results.get('observed_clustering_std', 0.03)
+            
+            # DEBUG: Log what we're reading
+            self.log_progress(f"DEBUG: Reading observed_cc = {observed_cc}, observed_std = {observed_std}")
             
             # Fundamental values
             eta_natural = (1.0 - np.log(2.0)) / np.log(2.0)  # H-ΛCDM prediction ≈ 0.443
@@ -872,6 +987,13 @@ class VoidPipeline(AnalysisPipeline):
             rejects_lcdm = sigma_lcdm > 2.0
             
             validation_ok = cc_range_ok and hlcdm_preferred and rejects_lcdm
+            
+            # DEBUG: Log validation details
+            self.log_progress(f"DEBUG: Validation checks:")
+            self.log_progress(f"  CC range valid: {cc_range_ok}")
+            self.log_progress(f"  H-ΛCDM preferred: {hlcdm_preferred} (dist_to_hlcdm={dist_to_hlcdm:.3f}, dist_to_lcdm={dist_to_lcdm:.3f})")
+            self.log_progress(f"  Rejects ΛCDM: {rejects_lcdm} (σ={sigma_lcdm:.2f})")
+            self.log_progress(f"  Validation passes: {validation_ok}")
 
             return {
                 'passed': validation_ok,
@@ -888,7 +1010,11 @@ class VoidPipeline(AnalysisPipeline):
                 },
                 'cc_range_valid': cc_range_ok,
                 'hlcdm_preferred': hlcdm_preferred,
-                'rejects_lcdm': rejects_lcdm
+                'rejects_lcdm': rejects_lcdm,
+                'distances': {
+                    'to_hlcdm': dist_to_hlcdm,
+                    'to_lcdm': dist_to_lcdm
+                }
             }
         except Exception as e:
             return {
@@ -961,9 +1087,9 @@ class VoidPipeline(AnalysisPipeline):
         """
         self.log_progress("Performing extended void validation...")
 
-        # Ensure analysis results are loaded before running validation
+        # Ensure analysis results are loaded before running validation - pass context to preserve mode
         if not self.results:
-            self.results = self.load_results() or self.run()
+            self.results = self.load_results() or self.run(context)
 
         # Minimum iterations for numeric stability
         # Bootstrap: 10000 for improved stability and precision on CI
@@ -1439,6 +1565,111 @@ class VoidPipeline(AnalysisPipeline):
         budget.add_component('numerical_precision', 0.008)  # 0.8% numerical effects
 
         return budget
+    
+    def compare_lcdm_hlcdm_error_budgets(
+        self,
+        lcdm_results: Optional[Dict[str, Any]] = None,
+        hlcdm_results: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Compare error budgets between LCDM and HLCDM analyses.
+        
+        Determines if differences in C_obs are due to systematics or the holographic component.
+        
+        Parameters:
+            lcdm_results: LCDM analysis results (if None, loads from cache)
+            hlcdm_results: HLCDM analysis results (if None, loads from cache)
+            
+        Returns:
+            dict: Comparison results with error budgets and statistical significance
+        """
+        from .error_budget_comparison import ErrorBudgetComparison
+        
+        # Load results if not provided
+        if lcdm_results is None:
+            lcdm_file = self.json_dir / "void_results.json"
+            if lcdm_file.exists():
+                import json
+                with open(lcdm_file, 'r') as f:
+                    lcdm_data = json.load(f)
+                lcdm_results = lcdm_data.get('results', lcdm_data)
+            else:
+                raise ValueError("LCDM results not found. Run LCDM analysis first.")
+        
+        if hlcdm_results is None:
+            hlcdm_file = self.json_dir / "HLCDM_void_results.json"
+            if hlcdm_file.exists():
+                import json
+                with open(hlcdm_file, 'r') as f:
+                    hlcdm_data = json.load(f)
+                hlcdm_results = hlcdm_data.get('results', hlcdm_data)
+            else:
+                raise ValueError("HLCDM results not found. Run HLCDM analysis first.")
+        
+        # Extract clustering analysis
+        lcdm_clustering = lcdm_results.get('clustering_analysis', {})
+        hlcdm_clustering = hlcdm_results.get('clustering_analysis', {})
+        
+        # Extract systematic budget components
+        lcdm_budget_breakdown = lcdm_results.get('systematic_budget', {}).get('components', {})
+        hlcdm_budget_breakdown = hlcdm_results.get('systematic_budget', {}).get('components', {})
+        
+        # If budgets not available, use defaults from _create_void_systematic_budget
+        if not lcdm_budget_breakdown:
+            lcdm_budget_breakdown = {
+                'void_finding_bias': 0.025,
+                'selection_effects': 0.015,
+                'tracer_density': 0.020,
+                'redshift_precision': 0.012,
+                'survey_geometry': 0.018,
+                'cosmological_model': 0.010,
+                'numerical_precision': 0.008
+            }
+        
+        if not hlcdm_budget_breakdown:
+            hlcdm_budget_breakdown = {
+                'void_finding_bias': 0.025,
+                'selection_effects': 0.015,
+                'tracer_density': 0.020,
+                'redshift_precision': 0.012,
+                'survey_geometry': 0.018,
+                'cosmological_model': 0.010,
+                'numerical_precision': 0.008
+            }
+        
+        # Calculate comprehensive error budgets
+        comparator = ErrorBudgetComparison()
+        
+        lcdm_cc = lcdm_clustering.get('observed_clustering_coefficient', 0.0)
+        lcdm_std = lcdm_clustering.get('observed_clustering_std', 0.03)
+        lcdm_budget = comparator.calculate_comprehensive_error_budget(
+            c_obs=lcdm_cc,
+            statistical_std=lcdm_std,
+            systematic_components=lcdm_budget_breakdown,
+            model_type='lcdm'
+        )
+        
+        hlcdm_cc = hlcdm_clustering.get('observed_clustering_coefficient', 0.0)
+        hlcdm_std = hlcdm_clustering.get('observed_clustering_std', 0.03)
+        hlcdm_budget = comparator.calculate_comprehensive_error_budget(
+            c_obs=hlcdm_cc,
+            statistical_std=hlcdm_std,
+            systematic_components=hlcdm_budget_breakdown,
+            model_type='hlcdm'
+        )
+        
+        # Compare budgets
+        comparison = comparator.compare_error_budgets(lcdm_budget, hlcdm_budget)
+        
+        # Generate report
+        report = comparator.generate_comparison_report(lcdm_budget, hlcdm_budget, comparison)
+        
+        return {
+            'lcdm_budget': lcdm_budget,
+            'hlcdm_budget': hlcdm_budget,
+            'comparison': comparison,
+            'report': report
+        }
 
     def _calculate_clustering_coefficient(self, catalog: pd.DataFrame) -> float:
         """

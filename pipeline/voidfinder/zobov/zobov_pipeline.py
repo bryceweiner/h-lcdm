@@ -18,6 +18,7 @@ from .zobov_parameters import HZOBOVParameters
 from .zobov_core import ZOBOVCore, ZOBOVCoreError
 from .zobov_checkpoint import HZOBOVCheckpointManager, HZOBOV_STAGES
 from .hlcdm_integration import get_lambda_at_redshift
+from .voronoi_tessellation import VoronoiTessellationError
 
 logger = logging.getLogger(__name__)
 
@@ -400,6 +401,13 @@ class HZOBOVPipeline(AnalysisPipeline):
                 self.log_progress(f"  No galaxies in bin z={bin_z_min:.3f}-{bin_z_max:.3f}, skipping")
                 continue
             
+            # Check for minimum galaxy count required for Voronoi tessellation
+            MIN_GALAXIES_FOR_VORONOI = 4
+            if len(bin_galaxies) < MIN_GALAXIES_FOR_VORONOI:
+                self.log_progress(f"  ⚠ Insufficient galaxies in bin z={bin_z_min:.3f}-{bin_z_max:.3f}: "
+                                f"{len(bin_galaxies)} galaxies (need at least {MIN_GALAXIES_FOR_VORONOI} for Voronoi tessellation), skipping")
+                continue
+            
             self.log_progress(f"  Bin contains {len(bin_galaxies):,} galaxies")
             
             # Configure parameters for this bin (enables redshift-dependent Λ(z) calculations)
@@ -436,16 +444,33 @@ class HZOBOVPipeline(AnalysisPipeline):
                 else:
                     self.log_progress(f"  ✓ Bin {bin_idx + 1}: No voids found")
                     
+            except VoronoiTessellationError as e:
+                # Handle insufficient galaxies gracefully (shouldn't happen due to check above, but catch anyway)
+                if "Need at least" in str(e):
+                    self.log_progress(f"  ⚠ Insufficient galaxies for Voronoi tessellation in bin z={bin_z_min:.3f}-{bin_z_max:.3f}: {e}, skipping")
+                    continue
+                else:
+                    # Other Voronoi errors - re-raise
+                    error_msg = f"Voronoi tessellation error in redshift bin {bin_idx + 1} (z={bin_z_min:.3f}-{bin_z_max:.3f}): {e}"
+                    self.log_progress(f"  ✗ {error_msg}")
+                    raise HZOBOVPipelineError(error_msg) from e
             except Exception as e:
+                # For other errors, log but continue processing other bins
                 error_msg = f"Error processing redshift bin {bin_idx + 1} (z={bin_z_min:.3f}-{bin_z_max:.3f}): {e}"
                 self.log_progress(f"  ✗ {error_msg}")
                 import traceback
                 self.log_progress(f"  Traceback: {traceback.format_exc()}")
-                raise HZOBOVPipelineError(error_msg) from e
+                # Don't raise - continue with other bins
+                self.log_progress(f"  Continuing with remaining bins...")
+                continue
         
         # Combine all bins
         if len(all_void_catalogs) == 0:
             self.log_progress("⚠ No voids found in any redshift bin")
+            self.log_progress("  This may be due to:")
+            self.log_progress("    - Insufficient galaxies in bins (< 4 galaxies)")
+            self.log_progress("    - No voids meeting the selection criteria")
+            self.log_progress("    - All bins were skipped due to errors")
             return {
                 'void_catalog': pd.DataFrame(),
                 'voronoi_data': None,

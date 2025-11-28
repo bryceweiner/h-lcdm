@@ -215,6 +215,12 @@ def build_void_network(
     
     if was_converted:
         logger.info(f"  Converted spherical coordinates to Cartesian")
+        # Ensure catalog has x, y, z columns for linking length calculation
+        if not all(col in catalog.columns for col in ['x', 'y', 'z']):
+            catalog = catalog.copy()
+            catalog['x'] = positions[:, 0]
+            catalog['y'] = positions[:, 1]
+            catalog['z'] = positions[:, 2]
     else:
         logger.info(f"  Using existing Cartesian coordinates (x, y, z)")
     
@@ -224,14 +230,29 @@ def build_void_network(
             catalog, method=linking_method
         )
         
+        # Check for invalid linking length
+        if np.isnan(linking_length) or np.isinf(linking_length) or linking_length <= 0:
+            logger.error(f"Invalid linking length calculated: {linking_length}")
+            logger.error(f"  Mean separation: {linking_meta.get('mean_separation', 'N/A')}")
+            logger.error(f"  Density linking length: {linking_meta.get('density_linking_length', 'N/A')}")
+            logger.error(f"  Radius linking length: {linking_meta.get('radius_linking_length', 'N/A')}")
+            logger.error(f"  Method: {linking_meta.get('final_method', 'unknown')}")
+            raise ValueError(f"Cannot construct network with invalid linking length: {linking_length}")
+        
         logger.info(f"  Calculated linking length: {linking_length:.2f} Mpc")
         logger.info(f"  Linking method used: {linking_meta.get('final_method', 'unknown')}")
         if linking_meta.get('override_reason'):
             logger.warning(f"  Linking length override reason: {linking_meta.get('override_reason')}")
         if linking_meta.get('mean_separation'):
-            logger.info(f"  Mean separation scale: {linking_meta['mean_separation']:.2f} Mpc")
+            mean_sep = linking_meta['mean_separation']
+            if np.isnan(mean_sep) or np.isinf(mean_sep):
+                logger.warning(f"  Mean separation scale: {mean_sep} (invalid)")
+            else:
+                logger.info(f"  Mean separation scale: {mean_sep:.2f} Mpc")
     else:
         linking_meta = None
+        if np.isnan(linking_length) or np.isinf(linking_length) or linking_length <= 0:
+            raise ValueError(f"Invalid provided linking length: {linking_length}")
         logger.info(f"  Using provided linking length: {linking_length:.2f} Mpc")
     
     # Construct network graph

@@ -133,6 +133,21 @@ class TestLIMEExplainer:
             # Or it might raise, which is also acceptable
             assert True
 
+    def test_explain_instance_with_feature_names(self):
+        """Test explanation with feature names."""
+        def predict_func(X):
+            return np.sum(X, axis=1, keepdims=True)
+        
+        feature_names = [f'feature_{i}' for i in range(20)]
+        explainer = LIMEExplainer(predict_func, feature_names=feature_names, n_samples=30)
+        
+        instance = np.random.randn(20)
+        explanation = explainer.explain_instance(instance, n_features=5)
+        
+        assert 'top_features' in explanation
+        if explanation['top_features']:
+            assert 'feature_name' in explanation['top_features'][0] or 'feature_index' in explanation['top_features'][0]
+
 
 class TestSHAPExplainer:
     """Test SHAPExplainer functionality."""
@@ -266,7 +281,7 @@ class TestSHAPExplainer:
         def predict_func(X):
             return np.sum(X, axis=1, keepdims=True)
         
-        explainer = SHAPExplainer(predict_func, background_dataset=background)
+        explainer = SHAPExplainer(predict_func, background_dataset=background, max_evals=2000)
         
         instance = np.random.randn(10)
         explanation = explainer.explain_instance(instance)
@@ -274,4 +289,36 @@ class TestSHAPExplainer:
         # Check that shap_values is a list
         assert isinstance(explanation['shap_values'], list)
         assert len(explanation['shap_values']) == 10
+
+    def test_explain_dataset(self, mock_shap):
+        """Test dataset explanation."""
+        background = np.random.randn(30, 10)
+        
+        def predict_func(X):
+            return np.sum(X, axis=1, keepdims=True)
+        
+        explainer = SHAPExplainer(predict_func, background_dataset=background, max_evals=2000)
+        
+        dataset = np.random.randn(50, 10)
+        explanations = explainer.explain_dataset(dataset, max_samples=20)
+        
+        assert 'explanations' in explanations
+        assert 'global_feature_importance' in explanations
+        assert len(explanations['explanations']) <= 20
+
+    def test_get_global_feature_importance(self, mock_shap):
+        """Test global feature importance."""
+        background = np.random.randn(30, 10)
+        
+        def predict_func(X):
+            return np.sum(X, axis=1, keepdims=True)
+        
+        explainer = SHAPExplainer(predict_func, background_dataset=background, max_evals=2000)
+        
+        test_data = np.random.randn(50, 10)
+        importance = explainer.get_global_feature_importance(test_data)
+        
+        assert 'feature_importance' in importance
+        assert len(importance['feature_importance']) == 10
+        assert 'top_features' in importance
 
