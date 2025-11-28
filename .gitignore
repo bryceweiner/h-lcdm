@@ -5,6 +5,7 @@ __pycache__/
 results/
 downloaded_data/
 processed_data/
+ml_pipeline/
 
 # C extensions
 *.so
