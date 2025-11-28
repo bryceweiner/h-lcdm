@@ -307,3 +307,77 @@ class TestEnsembleAggregator:
         result2 = aggregator.learn_optimal_weights(validation_scores, None)
         assert 'optimal_weights' in result2
 
+    def test_learn_optimal_weights_edge_cases(self):
+        """Test weight learning edge cases."""
+        aggregator = EnsembleAggregator(['m1', 'm2'])
+        
+        # Test with all zeros ground truth
+        validation_scores = {
+            'm1': np.random.rand(50),
+            'm2': np.random.rand(50)
+        }
+        ground_truth = np.zeros(50, dtype=int)
+        
+        result = aggregator.learn_optimal_weights(validation_scores, ground_truth)
+        assert 'optimal_weights' in result
+
+    def test_evaluate_ensemble_performance(self):
+        """Test ensemble performance evaluation."""
+        aggregator = EnsembleAggregator(['m1', 'm2'])
+        
+        test_scores = {
+            'm1': np.random.rand(100),
+            'm2': np.random.rand(100)
+        }
+        
+        ground_truth = np.random.randint(0, 2, 100)
+        
+        performance = aggregator.evaluate_ensemble_performance(test_scores, ground_truth)
+        
+        assert 'ensemble_statistics' in performance
+        assert 'individual_performance' in performance
+        assert 'n_detected_anomalies' in performance
+
+    def test_evaluate_ensemble_performance_no_ground_truth(self):
+        """Test ensemble performance without ground truth."""
+        aggregator = EnsembleAggregator(['m1', 'm2'])
+        
+        test_scores = {
+            'm1': np.random.rand(100),
+            'm2': np.random.rand(100)
+        }
+        
+        performance = aggregator.evaluate_ensemble_performance(test_scores, None)
+        
+        assert 'ensemble_statistics' in performance
+        assert 'individual_performance' in performance
+
+    def test_get_ensemble_statistics(self):
+        """Test ensemble statistics computation."""
+        aggregator = EnsembleAggregator(['m1'])
+        
+        scores = np.random.rand(100)
+        stats = aggregator._compute_ensemble_statistics(scores)
+        
+        assert 'mean_score' in stats
+        assert 'std_score' in stats
+        assert 'median_score' in stats
+        assert 'skewness' in stats
+        assert 'kurtosis' in stats
+
+    def test_compute_method_correlations(self):
+        """Test method correlation computation."""
+        aggregator = EnsembleAggregator(['m1', 'm2', 'm3'])
+        
+        score_matrix = np.array([
+            np.random.rand(50),
+            np.random.rand(50),
+            np.random.rand(50)
+        ])
+        
+        correlations = aggregator._compute_method_correlations(score_matrix)
+        
+        assert 'm1_m2' in correlations
+        assert 'm1_m3' in correlations
+        assert 'm2_m3' in correlations
+

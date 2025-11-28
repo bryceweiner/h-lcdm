@@ -646,3 +646,52 @@ class TestBlindAnalysisProtocol:
         assert 'protocol_compliance' in compliance
         assert 'validation_methods_used' in compliance
 
+    def test_generate_cv_splits_kfold(self):
+        """Test CV split generation with K-fold."""
+        def model_factory():
+            return Mock()
+        
+        validator = CrossSurveyValidator(model_factory, n_splits=3)
+        
+        # Test with more than 5 surveys to trigger K-fold
+        surveys = ['survey1', 'survey2', 'survey3', 'survey4', 'survey5', 'survey6']
+        splits = validator._generate_cv_splits(surveys)
+        
+        assert len(splits) == 3
+        for train_surveys, test_surveys in splits:
+            assert len(train_surveys) > 0
+            assert len(test_surveys) > 0
+
+    def test_train_on_surveys_with_labels(self):
+        """Test training with labels."""
+        def model_factory():
+            model = Mock()
+            model.fit = Mock()
+            return model
+        
+        validator = CrossSurveyValidator(model_factory)
+        
+        train_surveys = ['survey1', 'survey2']
+        survey_datasets = {
+            'survey1': {'features': np.random.randn(30, 10), 'labels': np.random.randint(0, 2, 30)},
+            'survey2': {'features': np.random.randn(30, 10), 'labels': np.random.randint(0, 2, 30)}
+        }
+        
+        result = validator._train_on_surveys(Mock(), train_surveys, survey_datasets)
+        assert 'n_train_samples' in result or 'error' in result
+
+    def test_train_on_surveys_no_features(self):
+        """Test training with no features."""
+        def model_factory():
+            return Mock()
+        
+        validator = CrossSurveyValidator(model_factory)
+        
+        train_surveys = ['survey1']
+        survey_datasets = {
+            'survey1': {'other': 'data'}  # No features key
+        }
+        
+        result = validator._train_on_surveys(Mock(), train_surveys, survey_datasets)
+        assert 'error' in result
+

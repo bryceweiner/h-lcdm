@@ -618,8 +618,34 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
     context = config.get('context', {})
     mode = context.get('mode', 'lcdm') if context else 'lcdm'
     
+    # For voidfinder with H-ZOBOV algorithm, use parameter-specific filename
+    if pipeline_name == 'voidfinder' and context.get('algorithm') == 'zobov':
+        # H-ZOBOV generates filenames based on output_name and parameters
+        output_name = context.get('output_name')
+        if output_name:
+            # Construct filename using same logic as H-ZOBOV pipeline
+            from pipeline.voidfinder.zobov.zobov_parameters import HZOBOVParameters
+            try:
+                # Create temporary parameters object to generate filename
+                zobov_params = HZOBOVParameters(
+                    output_name=output_name,
+                    z_min=context.get('z_min', 0.0),
+                    z_max=context.get('z_max', 1.0),
+                    significance_ratio=context.get('significance_ratio'),
+                    min_void_volume=context.get('min_void_volume'),
+                    z_bin_size=context.get('z_bin_size')
+                )
+                base_filename = f"{zobov_params.get_output_filename_base(include_params=True)}.json"
+            except Exception as e:
+                # Fallback to generic name if parameter construction fails
+                logger.warning(f"Could not construct H-ZOBOV filename, using generic: {e}")
+                base_filename = f"{pipeline_name}_results.json"
+        else:
+            # No output_name specified, use generic
+            base_filename = f"{pipeline_name}_results.json"
+        extended_filename = None  # H-ZOBOV doesn't use extended validation
     # For void pipeline in H-LCDM mode, use HLCDM_ prefix
-    if pipeline_name == 'void' and mode == 'hlcdm':
+    elif pipeline_name == 'void' and mode == 'hlcdm':
         base_filename = f"HLCDM_{pipeline_name}_results.json"
         extended_filename = f"HLCDM_{pipeline_name}_results_extended.json"
     else:
@@ -628,7 +654,10 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
     
     # Data persistence paths
     json_path = Path("results") / "json" / base_filename
-    extended_json_path = Path("results") / "json" / extended_filename
+    if extended_filename:
+        extended_json_path = Path("results") / "json" / extended_filename
+    else:
+        extended_json_path = None
     
     # Check what data products already exist
     main_results_exist = False
@@ -640,7 +669,37 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
         try:
             with open(json_path, 'r') as f:
                 saved_data = json.load(f)
-            saved_results = saved_data.get('results', {})
+            
+            # For H-ZOBOV, check if results exist (different structure)
+            if pipeline_name == 'voidfinder' and context.get('algorithm') == 'zobov':
+                # H-ZOBOV saves results directly, not nested under 'results'
+                results_data = saved_data.get('results', saved_data)
+                
+                # Check if results contain an error - if so, don't skip execution
+                has_error = False
+                if isinstance(results_data, dict):
+                    has_error = results_data.get('error') is not None
+                elif isinstance(saved_data, dict):
+                    has_error = saved_data.get('error') is not None
+                
+                if has_error:
+                    if not quiet:
+                        logger.info(f"⚠ Found existing H-ZOBOV results file but it contains an error - will re-run")
+                    main_results_exist = False
+                # Check if we have valid results (n_voids present and no error)
+                elif saved_data.get('n_voids') is not None:
+                    main_results_exist = True
+                    results = saved_data
+                    if not quiet:
+                        logger.info(f"✓ Found existing H-ZOBOV results: {json_path.name}")
+                elif isinstance(results_data, dict) and results_data.get('n_voids') is not None:
+                    main_results_exist = True
+                    results = results_data
+                    if not quiet:
+                        logger.info(f"✓ Found existing H-ZOBOV results: {json_path.name}")
+            else:
+                # Standard pipeline structure
+                saved_results = saved_data.get('results', {})
             if saved_results.get('main') or saved_results.get('clustering_analysis'):
                 main_results_exist = True
                 results = saved_results
@@ -654,8 +713,8 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
             if not quiet:
                 logger.warning(f"⚠ Could not load {json_path}: {e}")
     
-    # Check for extended validation results
-    if extended_json_path.exists() and extended_json_path.stat().st_size > 0:
+    # Check for extended validation results (skip for H-ZOBOV which doesn't use extended validation)
+    if extended_json_path is not None and extended_json_path.exists() and extended_json_path.stat().st_size > 0:
         try:
             with open(extended_json_path, 'r') as f:
                 extended_data = json.load(f)

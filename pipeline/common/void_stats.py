@@ -96,11 +96,21 @@ def calculate_mean_separation(
     if volume is None:
         volume = calculate_effective_volume(positions)
         
-    if volume <= 0:
+    if volume is None or np.isnan(volume) or np.isinf(volume) or volume <= 0:
+        logger.warning(f"Invalid volume ({volume}) for mean separation calculation, returning 0.0")
         return 0.0
         
     number_density = n_objects / volume
-    return number_density ** (-1/3)
+    if number_density <= 0:
+        logger.warning(f"Invalid number density ({number_density}) for mean separation calculation, returning 0.0")
+        return 0.0
+    
+    mean_sep = number_density ** (-1/3)
+    if np.isnan(mean_sep) or np.isinf(mean_sep):
+        logger.warning(f"Mean separation calculation produced {mean_sep}, returning 0.0")
+        return 0.0
+    
+    return mean_sep
 
 def calculate_robust_linking_length(
     catalog: Union[pd.DataFrame, np.ndarray],
@@ -161,7 +171,7 @@ def calculate_robust_linking_length(
 
     # 1. Calculate Density Scale (Baseline)
     mean_sep = calculate_mean_separation(positions)
-    density_linking_length = mean_sep * density_factor
+    density_linking_length = mean_sep * density_factor if mean_sep > 0 else 0.0
     
     metadata['mean_separation'] = mean_sep
     metadata['density_linking_length'] = density_linking_length
@@ -195,8 +205,17 @@ def calculate_robust_linking_length(
         # it suggests a unit mismatch (e.g. Mpc vs Mpc/h vs pixel units) or bad definition.
         # In that case, trust the positions (density) over the radii.
         
-        if radius_linking_length is not None:
-            ratio = radius_linking_length / density_linking_length if density_linking_length > 0 else 0
+        # Handle case where density linking length is invalid (0.0 or NaN)
+        if density_linking_length <= 0 or np.isnan(density_linking_length) or np.isinf(density_linking_length):
+            if radius_linking_length is not None and radius_linking_length > 0:
+                logger.warning(f"Density linking length is invalid ({density_linking_length}), using radius-based linking length ({radius_linking_length:.2f})")
+                final_length = radius_linking_length
+                selected_method = 'radius_fallback'
+            else:
+                raise ValueError(f"Cannot calculate linking length: density scale is invalid ({density_linking_length}) and no valid radius scale available")
+        
+        elif radius_linking_length is not None:
+            ratio = radius_linking_length / density_linking_length
             
             # Check for inflated radii (likely the current user issue)
             if ratio > 5.0:  # Relaxed from 10x to 5x to catch the 135 Mpc issue sooner
