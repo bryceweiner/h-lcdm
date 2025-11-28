@@ -65,6 +65,23 @@ class TestMLPipeline:
         assert 'galaxy' in dims
         assert dims['cmb'] == 500  # Default dimension
 
+    def test_run_scientific_tests(self, mock_data_loader):
+        """Test running scientific tests."""
+        pipeline = MLPipeline()
+        
+        # Mock the specific test methods to avoid complex data dependency
+        pipeline._run_e8_pattern_analysis = Mock(return_value={'e8_signature_detected': True})
+        pipeline._run_network_analysis = Mock(return_value={'theoretical_comparison': {'consistent': True}})
+        pipeline._run_chirality_analysis = Mock(return_value={'chirality_detected': False})
+        pipeline._run_gamma_qtep_analysis = Mock(return_value={'pattern_detected': True})
+        
+        results = pipeline.run_scientific_tests()
+        
+        assert 'test_results' in results
+        assert 'synthesis' in results
+        assert results['synthesis']['strength_category'] == 'STRONG'
+        assert len(results['test_results']) == 4
+
 
 class TestEnsembleDetector:
     """Test ensemble anomaly detection."""

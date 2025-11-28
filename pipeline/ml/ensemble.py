@@ -116,8 +116,8 @@ class EnsembleAggregator:
 
         # Convert scores to ranks for each method (higher score = higher rank)
         for i in range(n_methods):
-            # Rank with higher scores getting higher ranks
-            ranks = stats.rankdata(-score_matrix[i])  # Negative for descending
+            # Rank with higher scores getting higher ranks (1 = lowest score, N = highest score)
+            ranks = stats.rankdata(score_matrix[i])
             rank_matrix[i] = ranks
 
         # Aggregate ranks (Borda count)
@@ -243,7 +243,7 @@ class EnsembleAggregator:
         Returns:
             dict: Performance metrics
         """
-        ensemble_result = self.aggregate_scores(test_scores)
+        ensemble_result = self.aggregate_scores(test_scores, return_details=True)
 
         performance = {
             'ensemble_statistics': ensemble_result['ensemble_statistics'],

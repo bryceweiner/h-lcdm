@@ -83,8 +83,21 @@ class HLambdaDMReporter:
         if pipeline_name == 'hlcdm':
             return self._generate_hlcdm_individual_reports(results, metadata)
 
+        # Check if this is H-LCDM mode void pipeline
+        # Check results for H-LCDM indicators
+        main_results = results.get('main', results)
+        data_source = main_results.get('data_source', '')
+        mode = main_results.get('mode', '')
+        
+        # Determine if H-LCDM mode (void pipeline with H-ZOBOV data)
+        is_hlcdm_mode = (pipeline_name == 'void' and 
+                         (data_source == 'H-ZOBOV' or mode == 'hlcdm'))
+        
         # All other pipelines generate a single main report
-        report_path = self.reports_dir / f"{pipeline_name}_analysis_report.md"
+        if is_hlcdm_mode:
+            report_path = self.reports_dir / f"HLCDM_{pipeline_name}_analysis_report.md"
+        else:
+            report_path = self.reports_dir / f"{pipeline_name}_analysis_report.md"
 
         with open(report_path, 'w') as f:
             f.write(self._generate_pipeline_header(pipeline_name, metadata))
@@ -445,14 +458,55 @@ The H-ΛCDM framework makes specific, parameter-free predictions across multiple
     def _format_void_results(self, results: Dict[str, Any]) -> str:
         """Format void analysis results."""
         formatted = ""
+        
+        # Check for mode and data source
+        main_results = results.get('main', results)
+        data_source = main_results.get('data_source', '')
+        mode = main_results.get('mode', '')
+        is_hlcdm = (data_source == 'H-ZOBOV' or mode == 'hlcdm')
 
         if 'analysis_summary' in results:
             summary = results['analysis_summary']
+            
+            # Indicate data source
+            if is_hlcdm:
+                formatted += f"- **Data Source:** H-ZOBOV void catalogs (H-LCDM mode)\n"
+                source_catalogs = main_results.get('source_catalogs', [])
+                if source_catalogs:
+                    formatted += f"- **Source Catalog Files:** {', '.join(source_catalogs[:5])}"
+                    if len(source_catalogs) > 5:
+                        formatted += f" (and {len(source_catalogs) - 5} more)"
+                    formatted += "\n"
+                
+                # Include Lambda(z) statistics if available
+                lambda_stats = summary.get('lambda_statistics')
+                if lambda_stats:
+                    formatted += f"- **Lambda(z) Statistics:**\n"
+                    formatted += f"  - Mean: {lambda_stats.get('mean', 'N/A'):.2e} m⁻²\n"
+                    formatted += f"  - Range: {lambda_stats.get('min', 'N/A'):.2e} - {lambda_stats.get('max', 'N/A'):.2e} m⁻²\n"
+            else:
+                formatted += f"- **Data Source:** Traditional survey-based void catalogs (LCDM mode)\n"
+                surveys = summary.get('surveys_processed', [])
+                if surveys:
+                    formatted += f"- **Surveys:** {', '.join(surveys)}\n"
+            
             formatted += f"- **Voids analyzed:** {summary.get('total_voids_analyzed', 0)}\n"
 
             clustering = summary.get('clustering_summary', {})
-            formatted += f"- **Clustering coefficient:** {clustering.get('observed_cc', 'N/A'):.3f}\n"
-            formatted += f"- **Theoretical value:** {clustering.get('theoretical_cc', 'N/A'):.3f}\n"
+            observed_cc = clustering.get('observed_cc', 'N/A')
+            theoretical_cc = clustering.get('theoretical_cc', 'N/A')
+            
+            # Format clustering coefficient values (handle both numeric and string values)
+            if isinstance(observed_cc, (int, float)) and not np.isnan(observed_cc):
+                formatted += f"- **Clustering coefficient:** {observed_cc:.3f}\n"
+            else:
+                formatted += f"- **Clustering coefficient:** {observed_cc}\n"
+            
+            if isinstance(theoretical_cc, (int, float)) and not np.isnan(theoretical_cc):
+                formatted += f"- **Theoretical value:** {theoretical_cc:.3f}\n"
+            else:
+                formatted += f"- **Theoretical value:** {theoretical_cc}\n"
+            
             formatted += f"- **Consistency:** {clustering.get('statistical_consistency', False)}\n"
 
             formatted += f"- **Overall conclusion:** {summary.get('overall_conclusion', 'N/A')}\n"

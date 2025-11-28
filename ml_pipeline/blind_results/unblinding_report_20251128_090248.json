@@ -1,0 +1,56 @@
+{
+  "unblinding_timestamp": "2025-11-28T09:02:48.568930",
+  "protocol_hash": "6736461f1eaad0996448a941a905ea815fc6f43fde9cdcc512ec9794028dec0f",
+  "protocol_summary": {
+    "research_question": "Test",
+    "registration_timestamp": "2025-11-28T09:02:48.567644",
+    "methodology_summary": {}
+  },
+  "h_lcdm_predictions": {
+    "e8_geometry": {
+      "detection_criteria": {}
+    },
+    "enhanced_sound_horizon": {
+      "detection_criteria": {}
+    }
+  },
+  "blind_analysis_results": {
+    "detected_patterns": [
+      1,
+      2,
+      3
+    ]
+  },
+  "interpretation": {},
+  "comparison_analysis": {
+    "comparison_timestamp": "2025-11-28T09:02:48.568943",
+    "predictions_tested": [
+      "e8_geometry",
+      "enhanced_sound_horizon"
+    ],
+    "confirmed_predictions": [],
+    "unconfirmed_predictions": [
+      {
+        "prediction": "e8_geometry",
+        "reason": "No matching patterns detected"
+      },
+      {
+        "prediction": "enhanced_sound_horizon",
+        "reason": "No matching patterns detected"
+      }
+    ],
+    "unexpected_findings": [],
+    "overall_consistency": {
+      "consistency_score": 0.0,
+      "assessment": "low_consistency",
+      "confirmed_predictions": 0,
+      "total_predictions": 2
+    }
+  },
+  "validation_assessment": {
+    "protocol_compliance": true,
+    "validation_methods_used": [],
+    "compliance_issues": []
+  },
+  "unblinding_status": "COMPLETE"
+}

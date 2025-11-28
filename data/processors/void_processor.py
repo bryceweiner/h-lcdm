@@ -220,6 +220,134 @@ class VoidDataProcessor(BaseDataProcessor):
 
         return processed_data
 
+    def process_hlcdm_catalogs(self, force_reprocess: bool = False) -> Dict[str, Any]:
+        """
+        Process H-ZOBOV void catalogs from processed_data/.
+        
+        Discovers all *hzobov*catalog.pkl files, combines them,
+        deduplicates, and returns processed data compatible with void pipeline.
+        
+        Parameters:
+            force_reprocess: Force reprocessing even if cached
+            
+        Returns:
+            dict: Processed void data with catalog and network analysis
+        """
+        logger.info("Processing H-ZOBOV void catalogs...")
+        
+        # Discover H-ZOBOV catalogs
+        catalog_files = list(self.processed_data_dir.glob('*hzobov*catalog.pkl'))
+        
+        if not catalog_files:
+            logger.warning("No H-ZOBOV catalogs found in processed_data/")
+            return {}
+        
+        logger.info(f"Found {len(catalog_files)} H-ZOBOV catalog file(s):")
+        for f in catalog_files:
+            logger.info(f"  - {f.name}")
+        
+        # Check for cached deduplicated catalog
+        deduplicated_cache_path = self.processed_data_dir / "voids_hlcdm_deduplicated.pkl"
+        
+        if deduplicated_cache_path.exists() and not force_reprocess:
+            logger.info("Loading deduplicated H-ZOBOV catalog from cache...")
+            try:
+                combined = pd.read_pickle(deduplicated_cache_path)
+                logger.info(f"✓ Loaded {len(combined):,} deduplicated voids from cache")
+            except Exception as e:
+                logger.warning(f"⚠ Cache load failed ({e}), re-running duplicate removal...")
+                # Continue to load and process catalogs
+                combined = None
+        else:
+            combined = None
+        
+        # Load and combine all catalogs if not cached
+        if combined is None:
+            logger.info("Loading and combining H-ZOBOV catalogs...")
+            all_catalogs = []
+            source_catalog_files = []
+            
+            for catalog_file in catalog_files:
+                try:
+                    catalog = pd.read_pickle(catalog_file)
+                    if len(catalog) > 0:
+                        # Add source file information
+                        catalog['source_file'] = catalog_file.name
+                        all_catalogs.append(catalog)
+                        source_catalog_files.append(catalog_file.name)
+                        logger.info(f"  ✓ {catalog_file.name}: {len(catalog):,} voids")
+                    else:
+                        logger.warning(f"  ⚠ {catalog_file.name}: Empty catalog")
+                except Exception as e:
+                    logger.error(f"  ✗ Failed to load {catalog_file.name}: {e}")
+                    continue
+            
+            if not all_catalogs:
+                logger.error("No valid H-ZOBOV catalogs found")
+                return {}
+            
+            # Combine all catalogs
+            combined = pd.concat(all_catalogs, ignore_index=True)
+            logger.info(f"Combined catalog: {len(combined):,} voids before deduplication")
+            
+            # Remove duplicates using existing spatial deduplication logic
+            combined = self._remove_spatial_duplicates(
+                combined, 
+                min_separation=5.0,
+                cache_path=str(deduplicated_cache_path)
+            )
+            
+            logger.info(f"After deduplication: {len(combined):,} voids")
+        
+        # Ensure required columns exist (H-ZOBOV catalogs should have x, y, z)
+        if 'survey' not in combined.columns:
+            combined['survey'] = 'hzobov'
+        
+        # Apply quality cuts
+        combined = self._apply_quality_cuts(combined)
+        
+        # Apply HLCDM-specific size filter (135 Mpc threshold for ~30k voids)
+        if 'radius_mpc' in combined.columns:
+            original_size = len(combined)
+            hlcdm_size_filter = combined['radius_mpc'] >= 135.0
+            combined = combined[hlcdm_size_filter].copy()
+            n_filtered = hlcdm_size_filter.sum()
+            logger.info(f"  HLCDM size filter (radius >= 135 Mpc): {n_filtered}/{original_size} voids passed")
+        
+        # Add derived quantities
+        combined = self._add_derived_quantities(combined)
+        
+        # Calculate orientations (if not already present)
+        combined = self._measure_orientations(combined)
+        
+        # Verify columns are still present before network construction
+        logger.info(f"  Catalog shape before network construction: {combined.shape}")
+        logger.info(f"  Available columns: {list(combined.columns)}")
+        if all(col in combined.columns for col in ['x', 'y', 'z']):
+            logger.info(f"  ✓ Cartesian coordinates (x, y, z) present")
+        else:
+            logger.warning(f"  ⚠ Cartesian coordinates (x, y, z) missing after processing")
+        
+        # Construct void network and calculate clustering coefficient
+        network_analysis = self._construct_void_network(combined)
+        
+        # Get source catalog files list
+        source_catalogs = combined['source_file'].unique().tolist() if 'source_file' in combined.columns else [f.name for f in catalog_files]
+        
+        processed_data = {
+            'catalog': combined,
+            'surveys_processed': ['hzobov'],
+            'total_voids': len(combined),
+            'survey_breakdown': {'hzobov': len(combined)},
+            'network_analysis': network_analysis,
+            'source_catalogs': source_catalogs,
+            'data_source': 'H-ZOBOV'
+        }
+        
+        logger.info(f"✓ H-ZOBOV catalog processing complete: {len(combined):,} voids")
+        
+        return processed_data
+
     def _process_sdss_voids(self) -> List[Dict]:
         """
         Process SDSS DR7 void catalogs.
@@ -407,8 +535,10 @@ class VoidDataProcessor(BaseDataProcessor):
         Construct void network using graph-theoretic methods.
         
         Edges are defined based on spatial proximity, connecting voids separated
-        by less than a characteristic linking length derived from the mean inter-void
-        separation (3 × mean effective radius).
+        by less than a characteristic linking length.
+        
+        This method now uses modular functions from pipeline.common.void_network
+        for reproducibility and consistency.
         
         Parameters:
             catalog: Void catalog DataFrame with spatial coordinates
@@ -416,145 +546,18 @@ class VoidDataProcessor(BaseDataProcessor):
         Returns:
             dict: Network analysis results including clustering coefficient
         """
-        if catalog is None or len(catalog) == 0:
-            return {'error': 'Empty catalog'}
+        from pipeline.common.void_network import build_void_network
         
-        # Check for required columns (handle both naming conventions)
-        ra_col = 'ra' if 'ra' in catalog.columns else ('ra_deg' if 'ra_deg' in catalog.columns else None)
-        dec_col = 'dec' if 'dec' in catalog.columns else ('dec_deg' if 'dec_deg' in catalog.columns else None)
-
-        if ra_col is None or dec_col is None or 'redshift' not in catalog.columns:
-            missing_cols = []
-            if ra_col is None:
-                missing_cols.extend(['ra', 'ra_deg'])
-            if dec_col is None:
-                missing_cols.extend(['dec', 'dec_deg'])
-            if 'redshift' not in catalog.columns:
-                missing_cols.append('redshift')
-            return {'error': f'Missing required columns: {missing_cols}'}
+        # Validate input type
+        if not isinstance(catalog, pd.DataFrame):
+            return {'error': f'Catalog must be a DataFrame, got {type(catalog).__name__}'}
         
-        # Convert to comoving coordinates (simplified: use redshift as proxy)
-        # In full implementation, would use cosmology to convert to Mpc/h
-        n_voids = len(catalog)
+        # Log available columns for debugging
+        logger.debug(f"  Catalog columns: {list(catalog.columns)}")
         
-        # Calculate mean effective radius for linking length
-        # Check columns in order of preference (most complete first)
-        if 'radius_mpc' in catalog.columns and catalog['radius_mpc'].notna().sum() > 0:
-            mean_reff = catalog['radius_mpc'].mean()
-        elif 'radius_eff' in catalog.columns and catalog['radius_eff'].notna().sum() > 0:
-            mean_reff = catalog['radius_eff'].mean()
-        elif 'reff' in catalog.columns and catalog['reff'].notna().sum() > 0:
-            mean_reff = catalog['reff'].mean()
-        elif 'radius' in catalog.columns and catalog['radius'].notna().sum() > 0:
-            mean_reff = catalog['radius'].mean()
-        else:
-            # Default: assume typical void radius ~20 Mpc/h
-            mean_reff = 20.0
-        
-        # Linking length: 3 × mean effective radius (per clustering_discovery.tex)
-        # This is the standard methodology for void network construction
-        linking_length = 3.0 * mean_reff
-        
-        # Convert angular coordinates to comoving Cartesian coordinates
-        # Use cosmology for proper coordinate transformation
-        try:
-            from astropy import units as u
-            from astropy.coordinates import SkyCoord
-            from astropy.cosmology import Planck18 as cosmo
-
-            # Convert to SkyCoord and then to Cartesian
-            coords = SkyCoord(
-                ra=catalog[ra_col].values * u.deg,
-                dec=catalog[dec_col].values * u.deg,
-                distance=cosmo.comoving_distance(catalog['redshift'].values)
-            )
-
-            # Get Cartesian coordinates in Mpc
-            cart_coords = coords.cartesian
-            positions = np.column_stack([
-                cart_coords.x.value,
-                cart_coords.y.value,
-                cart_coords.z.value
-            ])
-
-        except ImportError:
-            # Fallback: simplified approximation (not physically accurate)
-            warnings.warn("astropy not available, using simplified coordinate transformation")
-            ra_rad = np.radians(catalog[ra_col].values)
-            dec_rad = np.radians(catalog[dec_col].values)
-            # Approximate comoving distance (rough approximation)
-            r_comov = catalog['redshift'].values * 3000.0  # Mpc/h approximation
-
-            positions = np.column_stack([
-                r_comov * np.cos(dec_rad) * np.cos(ra_rad),
-                r_comov * np.cos(dec_rad) * np.sin(ra_rad),
-                r_comov * np.sin(dec_rad)
-            ])
-        
-        # Calculate pairwise distances
-        distances = cdist(positions, positions, metric='euclidean')
-        
-        # Construct network graph
-        G = nx.Graph()
-        G.add_nodes_from(range(n_voids))
-        
-        # Add edges for voids within linking length
-        edges_added = 0
-        for i in range(n_voids):
-            for j in range(i + 1, n_voids):
-                if distances[i, j] <= linking_length:
-                    G.add_edge(i, j)
-                    edges_added += 1
-        
-        # Calculate clustering coefficient: C(G) = (1/N) Σ [2E_i / (k_i(k_i-1))]
-        clustering_coefficients = []
-        for node in G.nodes():
-            neighbors = list(G.neighbors(node))
-            k_i = len(neighbors)
-            
-            if k_i < 2:
-                # Node has fewer than 2 neighbors, local clustering is undefined
-                clustering_coefficients.append(0.0)
-            else:
-                # Count edges between neighbors
-                E_i = 0
-                for u in neighbors:
-                    for v in neighbors:
-                        if u < v and G.has_edge(u, v):
-                            E_i += 1
-                
-                # Local clustering coefficient
-                local_cc = (2.0 * E_i) / (k_i * (k_i - 1))
-                clustering_coefficients.append(local_cc)
-        
-        # Global clustering coefficient (mean of local coefficients)
-        if len(clustering_coefficients) > 0:
-            global_clustering = np.mean(clustering_coefficients)
-        else:
-            global_clustering = 0.0
-        
-        # Network statistics
-        n_edges = G.number_of_edges()
-        n_nodes = G.number_of_nodes()
-        mean_degree = 2.0 * n_edges / n_nodes if n_nodes > 0 else 0.0
-        
-        # Handle NaN values for JSON compatibility
-        def safe_float(value):
-            """Convert to float, replacing NaN with None for JSON compatibility."""
-            result = float(value)
-            return result if not np.isnan(result) else None
-        
-        return {
-            'clustering_coefficient': safe_float(global_clustering),
-            'clustering_std': safe_float(np.std(clustering_coefficients)) if len(clustering_coefficients) > 1 else 0.0,
-            'n_nodes': n_nodes,
-            'n_edges': n_edges,
-            'mean_degree': safe_float(mean_degree),
-            'linking_length': safe_float(linking_length),
-            'mean_reff': safe_float(mean_reff),
-            'local_clustering_coefficients': clustering_coefficients,
-            'graph': G  # Store graph for further analysis
-        }
+        # Use modular network construction pipeline
+        # This provides a single source of truth for network analysis
+        return build_void_network(catalog, linking_method='robust')
 
     def process(self, survey_names: List[str]) -> Dict[str, Any]:
         """
