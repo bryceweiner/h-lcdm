@@ -45,6 +45,7 @@ from pipeline.void import VoidPipeline
 from pipeline.voidfinder import VoidFinderPipeline
 from pipeline.hlcdm import HLCDMPipeline
 from pipeline.ml import MLPipeline
+from pipeline.tmdc import TMDCPipeline
 from pipeline.common.reporting import HLambdaDMReporter
 from pipeline.common.visualization import HLambdaDMVisualizer
 
@@ -296,6 +297,23 @@ def parse_arguments():
         help='Generate unblinding report comparing to H-ΛCDM predictions'
     )
 
+    parser.add_argument(
+        '--ml-dataset',
+        type=str,
+        choices=['cmb', 'galaxy', 'all'],
+        default='all',
+        help='Dataset to use for ML pipeline: cmb (CMB data only), galaxy (galaxy catalogs), all (all available data). Default: all'
+    )
+
+    parser.add_argument(
+        '--tmdc',
+        nargs='*',
+        metavar='VALIDATION',
+        help='Run TMDC quantum architecture optimization. '
+             'Optional arguments: validate, extended. '
+             'Example: --tmdc validate'
+    )
+
     # Analysis parameters
     parser.add_argument(
         '--z-min',
@@ -415,7 +433,7 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
 
     # Handle --all flag
     if args.all:
-        pipelines_to_run = ['gamma', 'bao', 'cmb', 'void', 'hlcdm']
+        pipelines_to_run = ['gamma', 'bao', 'cmb', 'void', 'hlcdm', 'tmdc']
         default_validation = ['validate'] if args.validation_level == 'extended' else []
         if args.validation_level == 'extended':
             default_validation.append('extended')
@@ -430,7 +448,8 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
         'void': args.void,
         'voidfinder': args.voidfinder,
         'hlcdm': args.hlcdm,
-        'ml': args.ml
+        'ml': args.ml,
+        'tmdc': args.tmdc
     }
 
     # Handle ML subcommands
@@ -508,7 +527,8 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
                     stages = ['all']
 
                 pipeline_config[pipeline_name]['context'].update({
-                    'stages': stages
+                    'stages': stages,
+                    'dataset': args.ml_dataset
                 })
 
             elif pipeline_name == 'cmb':
@@ -585,7 +605,8 @@ def initialize_pipelines(output_dir: str) -> Dict[str, Any]:
         'void': VoidPipeline(output_dir),
         'voidfinder': VoidFinderPipeline(output_dir),
         'hlcdm': HLCDMPipeline(output_dir),
-        'ml': MLPipeline(output_dir)
+        'ml': MLPipeline(output_dir),
+        'tmdc': TMDCPipeline(output_dir)
     }
 
     return pipelines

@@ -12,8 +12,9 @@ from .galaxy_encoder import GalaxyEncoder
 from .frb_encoder import FRBEncoder
 from .lyman_alpha_encoder import LymanAlphaEncoder
 from .jwst_encoder import JWSTEncoder
+from .gw_encoder import GWEncoder
 
 __all__ = [
     'CMBEncoder', 'BAOEncoder', 'VoidEncoder', 'GalaxyEncoder',
-    'FRBEncoder', 'LymanAlphaEncoder', 'JWSTEncoder'
+    'FRBEncoder', 'LymanAlphaEncoder', 'JWSTEncoder', 'GWEncoder'
 ]

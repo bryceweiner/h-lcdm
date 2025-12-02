@@ -13,6 +13,9 @@ from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_sco
 import logging
 import warnings
 
+# Suppress sklearn deprecation warnings for internal API changes
+warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn.utils.deprecation')
+
 
 class StabilityValidator:
     """

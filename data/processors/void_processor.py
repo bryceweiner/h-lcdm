@@ -547,7 +547,7 @@ class VoidDataProcessor(BaseDataProcessor):
             dict: Network analysis results including clustering coefficient
         """
         from pipeline.common.void_network import build_void_network
-        
+
         # Validate input type
         if not isinstance(catalog, pd.DataFrame):
             return {
@@ -591,11 +591,11 @@ class VoidDataProcessor(BaseDataProcessor):
             }
         except Exception as e:
             logger.error(f"Unexpected error in network construction: {type(e).__name__}: {e}")
-            return {
+        return {
                 'error': f'Network construction error: {type(e).__name__}: {str(e)}',
                 'clustering_coefficient': 0.0,
                 'clustering_std': 0.03
-            }
+        }
 
     def process(self, survey_names: List[str]) -> Dict[str, Any]:
         """
@@ -760,21 +760,55 @@ class VoidDataProcessor(BaseDataProcessor):
         return catalog
 
     def _ensure_required_columns(self, catalog: pd.DataFrame) -> pd.DataFrame:
-        """Ensure all required columns exist."""
-        required_columns = [
-            'void_id', 'ra_deg', 'dec_deg', 'redshift', 'radius_mpc',
-            'density_contrast', 'aspect_ratio', 'orientation_deg',
-            'survey', 'aspect_ratio_method'
-        ]
-
-        for col in required_columns:
+        """
+        Ensure all required columns exist.
+        
+        FAILS HARD if critical columns are missing or contain NaN values.
+        """
+        # Critical columns needed for coordinate conversion - cannot be missing or NaN
+        critical_columns = ['ra_deg', 'dec_deg', 'redshift']
+        
+        # Check for critical columns - FAIL HARD if missing
+        missing_critical = [col for col in critical_columns if col not in catalog.columns]
+        if missing_critical:
+            raise ValueError(f"CRITICAL ERROR: Missing required columns: {missing_critical}. Cannot proceed without these columns.")
+        
+        # Check for NaN values in critical columns - FAIL HARD if found
+        for col in critical_columns:
+            if catalog[col].isna().any():
+                n_nan = catalog[col].isna().sum()
+                nan_indices = catalog[catalog[col].isna()].index.tolist()[:10]  # Show first 10
+                raise ValueError(
+                    f"CRITICAL ERROR: Found {n_nan} NaN values in required column '{col}'. "
+                    f"First NaN indices: {nan_indices}. "
+                    f"This indicates corrupted data. Fix the data source before proceeding."
+                )
+        
+        # Check for inf values in critical columns - FAIL HARD if found
+        for col in critical_columns:
+            if np.isinf(catalog[col]).any():
+                n_inf = np.isinf(catalog[col]).sum()
+                inf_indices = catalog[np.isinf(catalog[col])].index.tolist()[:10]
+                raise ValueError(
+                    f"CRITICAL ERROR: Found {n_inf} inf values in required column '{col}'. "
+                    f"First inf indices: {inf_indices}. "
+                    f"This indicates corrupted data. Fix the data source before proceeding."
+                )
+        
+        # Optional columns - fill with defaults
+        optional_columns = {
+            'void_id': lambda: range(len(catalog)),
+            'aspect_ratio_method': lambda: 'default',
+            'radius_mpc': lambda: np.nan,  # Can be calculated later
+            'density_contrast': lambda: np.nan,  # Can be calculated later
+            'aspect_ratio': lambda: np.nan,  # Can be calculated later
+            'orientation_deg': lambda: np.nan,  # Can be calculated later
+            'survey': lambda: 'unknown'  # Default survey name
+        }
+        
+        for col, default_func in optional_columns.items():
             if col not in catalog.columns:
-                if col == 'void_id':
-                    catalog[col] = range(len(catalog))
-                elif col == 'aspect_ratio_method':
-                    catalog[col] = 'default'
-                else:
-                    catalog[col] = np.nan
+                catalog[col] = default_func()
 
         return catalog
 
@@ -817,30 +851,102 @@ class VoidDataProcessor(BaseDataProcessor):
                 x = float(row['x'])
                 y = float(row['y'])
                 z = float(row['z'])
+                # FAIL HARD if any coordinate is NaN/inf
+                if not (np.isfinite(x) and np.isfinite(y) and np.isfinite(z)):
+                    raise ValueError(
+                        f"CRITICAL ERROR: Invalid coordinates at row {idx}: x={x}, y={y}, z={z}. "
+                        f"NaN/inf values indicate corrupted data. Fix the data source."
+                    )
                 positions.append([x, y, z])
                 continue
 
             # 2. Spherical coordinates (ra, dec, redshift)
             if all(col in catalog.columns for col in ['ra_deg', 'dec_deg', 'redshift']):
-                ra = float(row['ra_deg']) * u.deg
-                dec = float(row['dec_deg']) * u.deg
-                redshift = float(row['redshift'])
+                ra_val = row['ra_deg']
+                dec_val = row['dec_deg']
+                redshift = row['redshift']
+                
+                # FAIL HARD if any coordinate is NaN/inf
+                if not (np.isfinite(ra_val) and np.isfinite(dec_val) and np.isfinite(redshift)):
+                    raise ValueError(
+                        f"CRITICAL ERROR: Invalid coordinates at row {idx}: ra={ra_val}, dec={dec_val}, z={redshift}. "
+                        f"NaN/inf values indicate corrupted data. Fix the data source."
+                    )
+                
+                # FAIL HARD on invalid redshifts
+                if redshift < 0 or redshift > 10:
+                    raise ValueError(
+                        f"CRITICAL ERROR: Invalid redshift at row {idx}: z={redshift}. "
+                        f"Redshift must be 0 <= z <= 10. Fix the data source."
+                    )
+                
+                ra = float(ra_val) * u.deg
+                dec = float(dec_val) * u.deg
 
-                coord = SkyCoord(ra=ra, dec=dec, distance=cosmo_model.comoving_distance(redshift))
-                cart = coord.cartesian
-                positions.append([cart.x.value, cart.y.value, cart.z.value])
-                continue
+                try:
+                    coord = SkyCoord(ra=ra, dec=dec, distance=cosmo_model.comoving_distance(redshift))
+                    cart = coord.cartesian
+                    x_val, y_val, z_val = cart.x.value, cart.y.value, cart.z.value
+                    
+                    # FAIL HARD if conversion produced invalid values
+                    if not (np.isfinite(x_val) and np.isfinite(y_val) and np.isfinite(z_val)):
+                        raise ValueError(
+                            f"CRITICAL ERROR: Coordinate conversion produced invalid values at row {idx}: "
+                            f"x={x_val}, y={y_val}, z={z_val}. This indicates a problem with the cosmology calculation."
+                        )
+                    positions.append([x_val, y_val, z_val])
+                except Exception as e:
+                    raise ValueError(
+                        f"CRITICAL ERROR: Coordinate conversion failed at row {idx}: {e}. "
+                        f"Fix the data source or coordinate conversion logic."
+                    ) from e
 
             # 3. Comoving distance + angular coordinates
             if all(col in catalog.columns for col in ['ra_deg', 'dec_deg', 'r_los_mpc']):
-                ra = float(row['ra_deg']) * u.deg
-                dec = float(row['dec_deg']) * u.deg
-                r_comov = float(row['r_los_mpc']) * u.Mpc
+                ra_val = row['ra_deg']
+                dec_val = row['dec_deg']
+                r_comov_val = row['r_los_mpc']
+                
+                # FAIL HARD if any coordinate is NaN/inf
+                if not (np.isfinite(ra_val) and np.isfinite(dec_val) and np.isfinite(r_comov_val)):
+                    raise ValueError(
+                        f"CRITICAL ERROR: Invalid coordinates at row {idx}: ra={ra_val}, dec={dec_val}, r={r_comov_val}. "
+                        f"NaN/inf values indicate corrupted data. Fix the data source."
+                    )
+                
+                if r_comov_val <= 0:
+                    raise ValueError(
+                        f"CRITICAL ERROR: Invalid comoving distance at row {idx}: r={r_comov_val}. "
+                        f"Distance must be > 0. Fix the data source."
+                    )
+                
+                ra = float(ra_val) * u.deg
+                dec = float(dec_val) * u.deg
+                r_comov = float(r_comov_val) * u.Mpc
 
-                coord = SkyCoord(ra=ra, dec=dec, distance=r_comov)
-                cart = coord.cartesian
-                positions.append([cart.x.value, cart.y.value, cart.z.value])
-                continue
+                try:
+                    coord = SkyCoord(ra=ra, dec=dec, distance=r_comov)
+                    cart = coord.cartesian
+                    x_val, y_val, z_val = cart.x.value, cart.y.value, cart.z.value
+                    
+                    # FAIL HARD if conversion produced invalid values
+                    if not (np.isfinite(x_val) and np.isfinite(y_val) and np.isfinite(z_val)):
+                        raise ValueError(
+                            f"CRITICAL ERROR: Coordinate conversion produced invalid values at row {idx}: "
+                            f"x={x_val}, y={y_val}, z={z_val}. This indicates a problem with the coordinate conversion."
+                        )
+                    positions.append([x_val, y_val, z_val])
+                except Exception as e:
+                    raise ValueError(
+                        f"CRITICAL ERROR: Coordinate conversion failed at row {idx}: {e}. "
+                        f"Fix the data source or coordinate conversion logic."
+                    ) from e
+
+        if len(positions) == 0:
+            raise ValueError(
+                "CRITICAL ERROR: No valid positions could be extracted from catalog. "
+                "This indicates the catalog format is incorrect or all data is invalid."
+            )
 
         return np.array(positions)
 

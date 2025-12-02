@@ -385,12 +385,12 @@ class TestMLPipelineMethods:
         
         with patch('pipeline.ml.ml_pipeline.ContrastiveLearner') as mock_learner_class:
             mock_learner = Mock()
-            mock_learner.train = Mock(return_value={'loss': 0.5})
+            mock_learner.train_step = Mock(return_value={'loss': 0.5})  # Fix: return dict, not Mock
             mock_learner_class.return_value = mock_learner
             
             result = pipeline.run_ssl_training(show_progress=False)
             
-            assert 'ssl_training_completed' in result
+            assert 'training_completed' in result
             assert pipeline.stage_completed['ssl_training']
 
     def test_run_domain_adaptation(self, pipeline):
@@ -446,10 +446,31 @@ class TestMLPipelineMethods:
             'cmb': torch.randn(100, 512)
         })
         
-        result = pipeline.run_interpretability(show_progress=False)
-        
-        assert 'interpretability_completed' in result
-        assert pipeline.stage_completed['interpretability']
+        # Mock LIME explainer
+        with patch('pipeline.ml.ml_pipeline.LIMEExplainer') as mock_lime_class:
+            mock_lime = Mock()
+            mock_lime.explain_instance = Mock(return_value={
+                'predicted_score': 0.8,
+                'top_features': [{'feature_index': 0, 'importance': 0.5}]
+            })
+            mock_lime_class.return_value = mock_lime
+            
+            # Mock SHAP explainer
+            with patch('pipeline.ml.ml_pipeline.SHAPExplainer') as mock_shap_class:
+                mock_shap = Mock()
+                mock_shap.explain_instance = Mock(return_value={
+                    'shap_values': [0.1] * 512,
+                    'base_value': 0.5
+                })
+                mock_shap.get_global_feature_importance = Mock(return_value={
+                    'feature_importance': [0.1] * 512
+                })
+                mock_shap_class.return_value = mock_shap
+                
+                result = pipeline.run_interpretability(show_progress=False)
+                
+                assert 'interpretability_completed' in result
+                assert pipeline.stage_completed['interpretability']
 
     def test_run_validation(self, pipeline):
         """Test validation stage."""
@@ -565,16 +586,25 @@ class TestMLPipelineMethods:
             'cmb': torch.randn(100, 512)
         })
         
-        # Mock SHAP to raise error
-        with patch('pipeline.ml.ml_pipeline.SHAPExplainer') as mock_shap_class:
-            mock_shap = Mock()
-            mock_shap.explain_instance = Mock(side_effect=Exception("SHAP error"))
-            mock_shap.get_global_feature_importance = Mock(side_effect=Exception("SHAP error"))
-            mock_shap_class.return_value = mock_shap
+        # Mock LIME explainer
+        with patch('pipeline.ml.ml_pipeline.LIMEExplainer') as mock_lime_class:
+            mock_lime = Mock()
+            mock_lime.explain_instance = Mock(return_value={
+                'predicted_score': 0.8,
+                'top_features': []
+            })
+            mock_lime_class.return_value = mock_lime
             
-            result = pipeline.run_interpretability(show_progress=False)
-            assert 'interpretability_completed' in result
-            assert any('error' in exp for exp in result.get('shap_explanations', []))
+            # Mock SHAP to raise error
+            with patch('pipeline.ml.ml_pipeline.SHAPExplainer') as mock_shap_class:
+                mock_shap = Mock()
+                mock_shap.explain_instance = Mock(side_effect=Exception("SHAP error"))
+                mock_shap.get_global_feature_importance = Mock(side_effect=Exception("SHAP error"))
+                mock_shap_class.return_value = mock_shap
+                
+                result = pipeline.run_interpretability(show_progress=False)
+                assert 'interpretability_completed' in result
+                assert any('error' in str(exp) for exp in result.get('shap_explanations', []))
 
     def test_run_validation_progress_bar(self, pipeline):
         """Test validation stage with progress bar."""

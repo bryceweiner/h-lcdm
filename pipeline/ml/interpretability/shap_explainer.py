@@ -29,21 +29,21 @@ class SHAPExplainer:
 
     def __init__(self, model_predict_function: Callable,
                  background_dataset: Optional[np.ndarray] = None,
-                 max_evals: int = 1000):
+                 max_evals: Optional[int] = None):
         """
         Initialize SHAP explainer.
 
         Parameters:
             model_predict_function: Function that takes features and returns predictions
             background_dataset: Background dataset for SHAP (representative samples)
-            max_evals: Maximum evaluations for SHAP computation
+            max_evals: Maximum evaluations for SHAP computation (None = auto-detect from data)
         """
         if not SHAP_AVAILABLE:
             raise ImportError("SHAP not available. Install with: pip install shap")
 
         self.model_predict_function = model_predict_function
         self.background_dataset = background_dataset
-        self.max_evals = max_evals
+        self.max_evals = max_evals  # Will be set adaptively based on feature count
 
         # SHAP explainer (initialized when needed)
         self.explainer = None
@@ -65,13 +65,23 @@ class SHAPExplainer:
         if background is None:
             raise ValueError("Background dataset required for SHAP explanations")
 
-        # Initialize explainer if needed
+        # Determine max_evals adaptively: Permutation explainer requires at least 2*n_features + 1
+        n_features = len(instance)
+        if self.max_evals is None:
+            # Auto-detect: use 2 * n_features + 100 for safety margin
+            max_evals = max(2000, 2 * n_features + 100)
+        else:
+            # Ensure minimum requirement is met
+            min_required = 2 * n_features + 1
+            max_evals = max(self.max_evals, min_required)
+
+        # Initialize explainer if needed (recreate if max_evals changed significantly)
         if self.explainer is None:
             self.explainer = shap.Explainer(self.model_predict_function, background)
 
-        # Compute SHAP values
+        # Compute SHAP values with adaptive max_evals
         shap_values = self.explainer(instance.reshape(1, -1),
-                                   max_evals=self.max_evals)
+                                   max_evals=max_evals)
 
         # Extract results
         feature_importances = shap_values.values[0]

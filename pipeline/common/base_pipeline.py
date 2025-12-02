@@ -831,6 +831,9 @@ class AnalysisPipeline(ABC):
         else:
             filename = f"{self.name}_results.json"
 
+        if filename is None:
+            filename = f"{self.name}_results.json"
+
         # Try new location first, then fall back to old location for compatibility
         filepath = self.json_dir / filename
         if not filepath.exists():

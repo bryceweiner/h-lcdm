@@ -16,6 +16,12 @@ from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 import logging
 
+# Import modality-specific encoders
+from pipeline.ml.encoders import (
+    CMBEncoder, BAOEncoder, VoidEncoder, GalaxyEncoder,
+    FRBEncoder, LymanAlphaEncoder, JWSTEncoder, GWEncoder
+)
+
 
 class ContrastiveLearner:
     """
@@ -46,6 +52,9 @@ class ContrastiveLearner:
             learning_rate: Learning rate for optimization
             device: Device to run on ('cpu', 'cuda', 'auto')
         """
+        # Initialize logger FIRST
+        self.logger = logging.getLogger(__name__)
+        
         self.encoder_dims = encoder_dims
         self.latent_dim = latent_dim
         self.temperature = temperature
@@ -88,23 +97,33 @@ class ContrastiveLearner:
         # Momentum update parameter
         self.momentum = 0.996
 
-        self.logger = logging.getLogger(__name__)
-
     def _build_encoders(self) -> Dict[str, nn.Module]:
         """Build modality-specific encoders."""
         encoders = {}
 
-        # CMB encoder (harmonic space)
-        if 'cmb' in self.encoder_dims:
-            encoders['cmb'] = CMBEncoder(self.encoder_dims['cmb'], self.latent_dim)
+        # CMB encoder (harmonic space) - handle both 'cmb' and CMB sub-modalities
+        cmb_modalities = [mod for mod in self.encoder_dims.keys() if mod.startswith('cmb')]
+        if cmb_modalities:
+            # Use the first CMB modality's dimension (they should all be the same)
+            cmb_dim = self.encoder_dims[cmb_modalities[0]]
+            for mod in cmb_modalities:
+                encoders[mod] = CMBEncoder(cmb_dim, self.latent_dim)
 
-        # BAO encoder (distance measurements)
-        if 'bao' in self.encoder_dims:
-            encoders['bao'] = BAOEncoder(self.encoder_dims['bao'], self.latent_dim)
+        # BAO encoder (distance measurements) - handle both 'bao' and BAO sub-modalities
+        bao_modalities = [mod for mod in self.encoder_dims.keys() if mod.startswith('bao')]
+        if bao_modalities:
+            # Use the first BAO modality's dimension (they should all be the same)
+            bao_dim = self.encoder_dims[bao_modalities[0]]
+            for mod in bao_modalities:
+                encoders[mod] = BAOEncoder(bao_dim, self.latent_dim)
 
-        # Void encoder (catalog features)
-        if 'void' in self.encoder_dims:
-            encoders['void'] = VoidEncoder(self.encoder_dims['void'], self.latent_dim)
+        # Void encoder (catalog features) - handle both 'void' and void sub-modalities
+        void_modalities = [mod for mod in self.encoder_dims.keys() if mod.startswith('void')]
+        if void_modalities:
+            # Use the first void modality's dimension (they should all be the same)
+            void_dim = self.encoder_dims[void_modalities[0]]
+            for mod in void_modalities:
+                encoders[mod] = VoidEncoder(void_dim, self.latent_dim)
 
         # Galaxy encoder (photometric + morphological)
         if 'galaxy' in self.encoder_dims:
@@ -122,6 +141,14 @@ class ContrastiveLearner:
         if 'jwst' in self.encoder_dims:
             encoders['jwst'] = JWSTEncoder(self.encoder_dims['jwst'], self.latent_dim)
 
+        # GW encoder (gravitational wave events) - handle both 'gw' and GW sub-modalities
+        gw_modalities = [mod for mod in self.encoder_dims.keys() if mod.startswith('gw')]
+        if gw_modalities:
+            # Use the first GW modality's dimension (they should all be the same)
+            gw_dim = self.encoder_dims[gw_modalities[0]]
+            for mod in gw_modalities:
+                encoders[mod] = GWEncoder(gw_dim, self.latent_dim)
+
         return encoders
 
     def _build_momentum_encoders(self) -> Dict[str, nn.Module]:
@@ -133,11 +160,32 @@ class ContrastiveLearner:
 
     def _copy_encoder(self, encoder: nn.Module) -> nn.Module:
         """Create a copy of encoder for momentum updates."""
-        new_encoder = type(encoder)(encoder.input_dim, encoder.latent_dim)
-        new_encoder.load_state_dict(encoder.state_dict())
-        for param in new_encoder.parameters():
-            param.requires_grad = False
-        return new_encoder
+        # Use type(encoder) to instantiate the correct class when possible.
+        # Fall back to deepcopy if that fails for any reason.
+        try:
+            if isinstance(encoder, CMBEncoder):
+                # CMBEncoder signature: (input_dim, latent_dim, n_filters, kernel_size, ...)
+                # Use existing input_dim / latent_dim and default values for the rest.
+                new_encoder = type(encoder)(encoder.input_dim, encoder.latent_dim)
+            else:
+                # Generic case: assume (input_dim, latent_dim) constructor or compatible signature.
+                if hasattr(encoder, "input_dim") and hasattr(encoder, "latent_dim"):
+                    new_encoder = type(encoder)(encoder.input_dim, encoder.latent_dim)  # type: ignore[arg-type]
+                else:
+                    raise AttributeError("Encoder missing input_dim/latent_dim attributes")
+
+            new_encoder.load_state_dict(encoder.state_dict())
+            for param in new_encoder.parameters():
+                param.requires_grad = False
+            return new_encoder
+        except Exception as e:
+            self.logger.error(f"Failed to copy encoder {type(encoder)}: {e}")
+            # Fallback to deepcopy if manual instantiation fails
+            import copy
+            new_encoder = copy.deepcopy(encoder)
+            for param in new_encoder.parameters():
+                param.requires_grad = False
+            return new_encoder
 
     def _build_projector(self) -> nn.Module:
         """Build projection head for contrastive learning."""
@@ -203,8 +251,11 @@ class ContrastiveLearner:
         Returns:
             torch.Tensor: Contrastive loss
         """
-        total_loss = 0
+        total_loss = torch.tensor(0.0, device=self.device)
         n_modalities = len(encodings)
+
+        if n_modalities < 2:
+            return total_loss
 
         # Compute loss for each modality pair
         modalities = list(encodings.keys())
@@ -327,153 +378,3 @@ class ContrastiveLearner:
 
         # Load optimizer
         self.optimizer.load_state_dict(checkpoint['optimizer'])
-
-
-# Base encoder class
-class BaseEncoder(nn.Module):
-    """Base class for modality-specific encoders."""
-
-    def __init__(self, input_dim: int, latent_dim: int):
-        super().__init__()
-        self.input_dim = input_dim
-        self.latent_dim = latent_dim
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass - to be implemented by subclasses."""
-        raise NotImplementedError
-
-
-# Modality-specific encoders
-class CMBEncoder(BaseEncoder):
-    """Encoder for CMB power spectra."""
-
-    def __init__(self, input_dim: int, latent_dim: int):
-        super().__init__(input_dim, latent_dim)
-        self.encoder = nn.Sequential(
-            nn.Conv1d(1, 32, kernel_size=5, stride=2, padding=2),
-            nn.ReLU(),
-            nn.Conv1d(32, 64, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool1d(1),
-            nn.Flatten(),
-            nn.Linear(64, latent_dim)
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: (batch, seq_len) -> (batch, 1, seq_len)
-        x = x.unsqueeze(1)
-        return self.encoder(x)
-
-
-class BAOEncoder(BaseEncoder):
-    """Encoder for BAO measurements."""
-
-    def __init__(self, input_dim: int, latent_dim: int):
-        super().__init__(input_dim, latent_dim)
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 256),
-            nn.ReLU(),
-            nn.Linear(256, latent_dim)
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.encoder(x)
-
-
-class VoidEncoder(BaseEncoder):
-    """Encoder for void catalogs."""
-
-    def __init__(self, input_dim: int, latent_dim: int):
-        super().__init__(input_dim, latent_dim)
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 256),
-            nn.ReLU(),
-            nn.Linear(256, latent_dim)
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.encoder(x)
-
-
-class GalaxyEncoder(BaseEncoder):
-    """Encoder for galaxy catalogs."""
-
-    def __init__(self, input_dim: int, latent_dim: int):
-        super().__init__(input_dim, latent_dim)
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 512),
-            nn.ReLU(),
-            nn.Linear(512, latent_dim)
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.encoder(x)
-
-
-class FRBEncoder(BaseEncoder):
-    """Encoder for FRB timing data."""
-
-    def __init__(self, input_dim: int, latent_dim: int):
-        super().__init__(input_dim, latent_dim)
-        self.encoder = nn.Sequential(
-            nn.Conv1d(1, 32, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool1d(1),
-            nn.Flatten(),
-            nn.Linear(32, 128),
-            nn.ReLU(),
-            nn.Linear(128, latent_dim)
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: (batch, seq_len) -> (batch, 1, seq_len)
-        x = x.unsqueeze(1)
-        return self.encoder(x)
-
-
-class LymanAlphaEncoder(BaseEncoder):
-    """Encoder for Lyman-alpha spectra."""
-
-    def __init__(self, input_dim: int, latent_dim: int):
-        super().__init__(input_dim, latent_dim)
-        self.encoder = nn.Sequential(
-            nn.Conv1d(1, 64, kernel_size=5, stride=2, padding=2),
-            nn.ReLU(),
-            nn.Conv1d(64, 128, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool1d(1),
-            nn.Flatten(),
-            nn.Linear(128, latent_dim)
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: (batch, seq_len) -> (batch, 1, seq_len)
-        x = x.unsqueeze(1)
-        return self.encoder(x)
-
-
-class JWSTEncoder(BaseEncoder):
-    """Encoder for JWST galaxy imaging."""
-
-    def __init__(self, input_dim: int, latent_dim: int):
-        super().__init__(input_dim, latent_dim)
-        self.encoder = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(32, 128),
-            nn.ReLU(),
-            nn.Linear(128, latent_dim)
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: (batch, height, width) -> (batch, 1, height, width)
-        x = x.unsqueeze(1)
-        return self.encoder(x)

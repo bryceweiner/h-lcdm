@@ -14,6 +14,9 @@ from sklearn.metrics import roc_auc_score
 import logging
 import warnings
 
+# Suppress sklearn deprecation warnings for internal API changes
+warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn.utils.deprecation')
+
 try:
     from statsmodels.stats.multitest import multipletests
     STATSMODELS_AVAILABLE = True

@@ -15,22 +15,9 @@ from typing import Dict, Any, Optional
 class GalaxyEncoder(nn.Module):
     """
     Encoder for galaxy catalog features.
-
-    Combines:
-    - Photometric features (magnitudes, colors)
-    - Morphological features (concentration, size)
-    - Clustering features (environment)
-    - Spectroscopic features (redshift, line strengths)
     """
 
     def __init__(self, input_dim: int, latent_dim: int = 512):
-        """
-        Initialize galaxy encoder.
-
-        Parameters:
-            input_dim: Number of input features
-            latent_dim: Output latent dimension
-        """
         super().__init__()
         self.input_dim = input_dim
         self.latent_dim = latent_dim
@@ -42,6 +29,13 @@ class GalaxyEncoder(nn.Module):
             'spectroscopic': slice(15, 25),   # redshift, line ratios
             'clustering': slice(25, None)     # environment features
         }
+
+        # Normalization layers for each feature group
+        self.norm_photo = nn.BatchNorm1d(10)
+        self.norm_morph = nn.BatchNorm1d(5)
+        self.norm_spec = nn.BatchNorm1d(10)
+        # Clustering dim is variable
+        self.norm_cluster = None # Created dynamically or handled by LayerNorm
 
         # Separate encoders for different feature types
         self.photometric_encoder = nn.Sequential(
@@ -89,15 +83,6 @@ class GalaxyEncoder(nn.Module):
         self.feature_mask = nn.Parameter(torch.ones(input_dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Encode galaxy features.
-
-        Parameters:
-            x: Galaxy feature tensor (batch, n_features)
-
-        Returns:
-            torch.Tensor: Encoded representation
-        """
         batch_size = x.shape[0]
 
         # Handle missing features with masking
@@ -110,28 +95,35 @@ class GalaxyEncoder(nn.Module):
         # Photometric features
         if x.shape[1] >= 10:
             photo_features = x_masked[:, self.feature_types['photometric']]
+            # Normalize if batch size > 1
+            if batch_size > 1:
+                photo_features = self.norm_photo(photo_features)
             photo_encoded = self.photometric_encoder(photo_features)
             encodings.append(photo_encoded)
 
         # Morphological features
         if x.shape[1] >= 15:
             morph_features = x_masked[:, self.feature_types['morphological']]
+            if batch_size > 1:
+                morph_features = self.norm_morph(morph_features)
             morph_encoded = self.morphological_encoder(morph_features)
-            # Project to same dimension
             morph_encoded = F.pad(morph_encoded, (0, 128 - morph_encoded.shape[1]))
             encodings.append(morph_encoded)
 
         # Spectroscopic features
         if x.shape[1] >= 25:
             spec_features = x_masked[:, self.feature_types['spectroscopic']]
+            if batch_size > 1:
+                spec_features = self.norm_spec(spec_features)
             spec_encoded = self.spectroscopic_encoder(spec_features)
             encodings.append(spec_encoded)
 
         # Clustering features
         if x.shape[1] > 25:
             clust_features = x_masked[:, self.feature_types['clustering']]
+            # Dynamic BatchNorm for variable dim
+            # Or just rely on following layers
             clust_encoded = self.clustering_encoder(clust_features)
-            # Project to same dimension
             clust_encoded = F.pad(clust_encoded, (0, 128 - clust_encoded.shape[1]))
             encodings.append(clust_encoded)
 
@@ -148,16 +140,10 @@ class GalaxyEncoder(nn.Module):
         )
 
         # Flatten and project
-        flattened = attended.view(batch_size, -1)
+        flattened = attended.reshape(batch_size, -1)
         latent = self.final_projection(flattened)
 
         return latent
 
     def get_feature_importance(self) -> torch.Tensor:
-        """
-        Get learned feature importance weights.
-
-        Returns:
-            torch.Tensor: Feature importance scores
-        """
         return torch.sigmoid(self.feature_mask)
