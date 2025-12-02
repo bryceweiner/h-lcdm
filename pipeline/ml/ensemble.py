@@ -10,6 +10,10 @@ import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 from scipy import stats
 from sklearn.metrics import roc_auc_score
+import warnings
+
+# Suppress sklearn deprecation warnings for internal API changes
+warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn.utils.deprecation')
 
 
 class EnsembleAggregator:
@@ -193,10 +197,12 @@ class EnsembleAggregator:
         Returns:
             dict: Weight learning results
         """
+        # Build score matrix
+        score_matrix = np.array([validation_scores[method] for method in self.methods])
+        
         if ground_truth is None:
             # Use ensemble agreement as proxy for ground truth
             # Methods that agree are likely detecting real anomalies
-            score_matrix = np.array([validation_scores[method] for method in self.methods])
             ground_truth = (np.mean(score_matrix > self.consensus_threshold, axis=0) > 0.5).astype(int)
 
         # Optimize weights to maximize AUC or accuracy

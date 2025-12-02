@@ -298,6 +298,25 @@ class HLCDMCosmology:
         """
         H_z = HLCDM_PARAMS.get_hubble_at_redshift(z)
         return HLCDMCosmology.gamma_fundamental(H_z)
+    
+    @staticmethod
+    def gamma_refined_at_redshift(z: float) -> Tuple[float, float]:
+        """
+        Calculate refined gamma at given redshift with logarithmic corrections.
+
+        Uses the refined formula γ = H(z)/[ln(πc⁵/GℏH²) - (3/2)ln(ln(πc⁵/GℏH²)/ln(2))]
+        where H(z) is the Hubble parameter at redshift z.
+
+        Parameters:
+            z (float): Redshift
+
+        Returns:
+            tuple: (gamma_refined, correction_factor)
+                - gamma_refined: Refined gamma at redshift z
+                - correction_factor: Ratio of refined to baseline gamma
+        """
+        H_z = HLCDM_PARAMS.get_hubble_at_redshift(z)
+        return HLCDMCosmology.gamma_refined(H_z)
 
     @staticmethod
     def lambda_evolution(z: float) -> Dict[str, float]:

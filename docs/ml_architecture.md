@@ -13,7 +13,14 @@ This document describes the complete 5-stage machine learning architecture imple
 - **Cross-Survey Validation**: Patterns must be consistent across different surveys
 
 ### Technical Design
-- **Multi-Modal**: Joint analysis of CMB, BAO, voids, galaxies, FRB, Lyman-α, JWST data
+- **Multi-Modal**: Joint analysis of:
+  - **CMB datasets**: ACT DR6, Planck 2018, SPT-3G (E-mode polarization)
+  - **BAO**: BOSS DR12, DESI, eBOSS measurements
+  - **Voids**: SDSS DR7/D16, DESIVAST, Clampitt & Jain catalogs
+  - **Galaxies**: SDSS DR7/DR16 photometric and spectroscopic catalogs
+  - **FRB**: Fast Radio Burst timing and dispersion data
+  - **Lyman-α**: Lyman-alpha forest absorption spectra
+  - **JWST**: James Webb Space Telescope galaxy imaging
 - **Self-Supervised**: No labeled data required - learns from data structure
 - **Domain Invariant**: Features work across different surveys and systematics
 - **Interpretable**: LIME and SHAP explanations for all detections
@@ -22,18 +29,29 @@ This document describes the complete 5-stage machine learning architecture imple
 
 ### Contrastive Learning Framework
 - **SimCLR-based** contrastive learning on multi-modal cosmological data
-- **Modality-specific encoders** for each data type (CMB, BAO, voids, etc.)
+- **Modality-specific encoders** for each data type:
+  - **CMB encoders**: ACT DR6, Planck 2018, SPT-3G (treated as separate modalities for cross-survey contrastive learning)
+  - **BAO encoder**: Distance measurements across redshift bins
+  - **Void encoder**: Catalog features (size, shape, density contrast)
+  - **Galaxy encoder**: Photometric and morphological features
+  - **FRB encoder**: Timing sequences and dispersion measures
+  - **Lyman-α encoder**: Absorption spectrum features
+  - **JWST encoder**: Galaxy imaging features
 - **Multimodal fusion** with cross-attention mechanisms
 - **Momentum encoders** for stable training
 
 ### Data Augmentation Strategies
-- **CMB**: Rotations, harmonic space transformations, masking variations
-- **BAO**: Redshift binning variations, covariance perturbations
-- **Voids**: Scaling, ellipticity perturbations, position jittering
-- **Galaxies**: Photometric noise, morphology variations, redshift uncertainties
-- **FRB**: Timing noise, dispersion measure variations
-- **Lyman-α**: Flux noise, continuum fitting variations
-- **JWST**: Photometric uncertainties, selection function variations
+- **CMB (ACT DR6, Planck 2018, SPT-3G)**:
+  - Harmonic space transformations (multipole binning variations)
+  - Power spectrum masking (simulating sky coverage variations)
+  - Noise level perturbations (matching survey-specific uncertainties)
+  - Cross-survey augmentation (learning invariant features across experiments)
+- **BAO**: Redshift binning variations, covariance perturbations, distance measurement noise
+- **Voids**: Scaling, ellipticity perturbations, position jittering, density contrast variations
+- **Galaxies**: Photometric noise, morphology variations, redshift uncertainties, magnitude errors
+- **FRB**: Timing noise, dispersion measure variations, scattering effects
+- **Lyman-α**: Flux noise, continuum fitting variations, redshift uncertainties
+- **JWST**: Photometric uncertainties, selection function variations, PSF modeling errors
 
 ### Encoder Architecture
 ```python
@@ -47,13 +65,19 @@ AdaptiveAvgPool1d(1) -> Linear(128, 512)
 
 ### Survey-Invariant Training
 - **Maximum Mean Discrepancy (MMD)** loss between survey distributions
+  - CMB: ACT DR6 ↔ Planck 2018 ↔ SPT-3G alignment
+  - BAO: BOSS ↔ DESI ↔ eBOSS alignment
+  - Voids: SDSS DR7 ↔ SDSS DR16 ↔ DESIVAST alignment
 - **Domain adversarial training** with gradient reversal layers
-- **Survey embeddings** to learn survey-specific features
+- **Survey embeddings** to learn survey-specific features while maintaining cosmological signal invariance
 
 ### Cross-Survey Validation
 - **Leave-one-survey-out** cross-validation
+  - CMB: Train on ACT DR6 + Planck 2018, test on SPT-3G (and permutations)
+  - BAO: Cross-validation across BOSS, DESI, eBOSS datasets
+  - Voids: Cross-validation across SDSS releases and DESIVAST
 - **Distribution alignment metrics** (KL divergence, Wasserstein distance)
-- **Systematics quantification** across surveys
+- **Systematics quantification** across surveys to distinguish cosmological signals from instrumental artifacts
 
 ## Stage 3: Ensemble Pattern Detection
 
@@ -107,8 +131,12 @@ AdaptiveAvgPool1d(1) -> Linear(128, 512)
 
 ### Cross-Survey Validation
 - **Survey consistency**: Patterns robust across different datasets
+  - CMB: Consistent features across ACT DR6, Planck 2018, SPT-3G
+  - BAO: Consistent distance measurements across BOSS, DESI, eBOSS
+  - Voids: Consistent void properties across SDSS releases and DESIVAST
 - **Systematics control**: Distinguish cosmological signals from artifacts
 - **Generalizability**: Features work on unseen survey data
+- **Cross-modality validation**: Patterns appear consistently across CMB, BAO, voids, and other probes
 
 ## Implementation Details
 
@@ -131,6 +159,11 @@ python main.py --ml  # Runs all stages
 
 ### CLI Interface
 ```bash
+# Dataset selection
+python main.py --ml --ml-dataset cmb      # CMB only (ACT DR6, Planck 2018, SPT-3G)
+python main.py --ml --ml-dataset galaxy  # Galaxy catalogs only
+python main.py --ml --ml-dataset all     # All available data (default)
+
 # Individual stages
 python main.py --ml-train      # Stages 1-2
 python main.py --ml-detect     # Stage 3
@@ -138,7 +171,7 @@ python main.py --ml-interpret  # Stage 4
 python main.py --ml-validate   # Stage 5
 
 # Full pipeline
-python main.py --ml           # All stages
+python main.py --ml           # All stages with all data
 ```
 
 ## Validation Metrics

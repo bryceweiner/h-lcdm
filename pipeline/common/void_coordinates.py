@@ -18,6 +18,8 @@ def extract_cartesian_coordinates(catalog: pd.DataFrame) -> Optional[np.ndarray]
     """
     Extract Cartesian coordinates from catalog if available.
     
+    FAILS HARD if NaN/inf values are found.
+    
     Parameters:
         catalog: DataFrame with potential x, y, z columns
         
@@ -25,13 +27,21 @@ def extract_cartesian_coordinates(catalog: pd.DataFrame) -> Optional[np.ndarray]
         Array of shape (N, 3) with x, y, z coordinates, or None if not available
     """
     if all(col in catalog.columns for col in ['x', 'y', 'z']):
-        # Verify columns are not all NaN
-        if not catalog[['x', 'y', 'z']].isna().all().all():
-            return np.column_stack([
-                catalog['x'].values,
-                catalog['y'].values,
-                catalog['z'].values
-            ])
+        # Extract coordinates
+        coords = catalog[['x', 'y', 'z']].values
+        
+        # FAIL HARD if any NaN/inf values found
+        if not np.isfinite(coords).all():
+            n_invalid = (~np.isfinite(coords).all(axis=1)).sum()
+            invalid_indices = catalog[~np.isfinite(coords).all(axis=1)].index.tolist()[:10]
+            raise ValueError(
+                f"CRITICAL ERROR: Found {n_invalid} rows with NaN/inf values in Cartesian coordinates (x, y, z). "
+                f"First invalid indices: {invalid_indices}. "
+                f"This indicates corrupted data. Fix the data source before proceeding."
+            )
+        
+        return coords
+    
     return None
 
 def convert_spherical_to_cartesian(
@@ -77,11 +87,25 @@ def convert_spherical_to_cartesian(
         
         # Get Cartesian coordinates in Mpc
         cart_coords = coords.cartesian
-        return np.column_stack([
+        
+        # Extract values - FAIL HARD if NaN/inf found
+        positions = np.column_stack([
             cart_coords.x.value,
             cart_coords.y.value,
             cart_coords.z.value
         ])
+        
+        # FAIL HARD if any NaN/inf values found
+        if not np.isfinite(positions).all():
+            n_invalid = (~np.isfinite(positions).all(axis=1)).sum()
+            invalid_inputs = catalog[~np.isfinite(positions).all(axis=1)][[ra_col, dec_col, 'redshift']].head(10)
+            raise ValueError(
+                f"CRITICAL ERROR: Coordinate conversion produced {n_invalid} rows with NaN/inf values. "
+                f"First invalid inputs:\n{invalid_inputs}\n"
+                f"This indicates corrupted input data (ra, dec, redshift). Fix the data source before proceeding."
+            )
+        
+        return positions
         
     except ImportError:
         # Fallback: simplified approximation (not physically accurate)

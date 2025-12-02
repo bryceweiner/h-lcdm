@@ -3,8 +3,9 @@ Tests for BAO pipeline functionality.
 
 Tests BAO analysis, blinding, systematic errors, and statistical validation.
 """
-import pytest
 import numpy as np
+from pathlib import Path
+import pytest
 
 from pipeline.bao.bao_pipeline import BAOPipeline
 
@@ -16,6 +17,11 @@ class TestBAOPipeline:
     def bao_pipeline(self, temp_output_dir):
         """Create BAO pipeline instance."""
         return BAOPipeline(str(temp_output_dir))
+
+    @pytest.fixture
+    def boss_run_result(self, bao_pipeline):
+        """Run BAO pipeline on boss_dr12 once for repeated checks."""
+        return bao_pipeline.run({'datasets': ['boss_dr12'], 'blinding_enabled': False})
 
     def test_pipeline_initialization(self, bao_pipeline):
         """Test pipeline initialization."""
@@ -150,6 +156,19 @@ class TestBAOPipeline:
         # Should have dataset information
         assert 'bao_data' in result
         assert isinstance(result['bao_data'], dict)
+        assert 'direct_distance_datasets' in result
+        assert isinstance(result['direct_distance_datasets'], list)
+        assert 'systematic_stress_tests' in result
+        assert 'redshift_binned_residuals' in result
+        assert 'alpha_model_comparison' in result
+        assert 'direct_distance_datasets' in result
+        assert isinstance(result['direct_distance_datasets'], list)
+        assert 'loo_cv' in result
+        assert 'jackknife' in result
+        assert 'alpha_sensitivity' in result
+        alpha_scan = result['alpha_sensitivity']
+        assert isinstance(alpha_scan.get('scan', []), list)
+        assert 'best_alpha' in alpha_scan
 
     def test_different_datasets(self, bao_pipeline):
         """Test pipeline with different dataset combinations."""
@@ -162,6 +181,78 @@ class TestBAOPipeline:
             context = {'datasets': datasets}
             result = bao_pipeline.run(context)
             assert result['datasets_tested'] == datasets
+
+    def test_systematic_stress_tests_structure(self, boss_run_result):
+        """Ensure systematic stress tests report scale-dependent metrics."""
+        stress = boss_run_result.get('systematic_stress_tests', [])
+        assert isinstance(stress, list)
+        assert len(stress) > 0
+        entry = stress[0]
+        assert 'scale_factor' in entry
+        assert 'consistent_rate' in entry
+        assert 'model_comparison_all' in entry
+        assert 'model_comparison_consistent' in entry
+
+    def test_cross_correlation_effective_numbers(self, boss_run_result):
+        """Check effective dataset counts derived from cross-correlations."""
+        analysis = boss_run_result['cross_correlation_analysis']
+        effective = analysis.get('effective_numbers', {})
+        assert 'all_datasets' in effective
+        assert 'n_eff' in effective['all_datasets']
+        assert 'direct_distance_datasets' in effective
+        assert 'names' in effective['direct_distance_datasets']
+
+    def test_alpha_model_comparison_output(self, boss_run_result):
+        """Alpha-based model comparison should expose metrics and measurements."""
+        alpha = boss_run_result['alpha_model_comparison']
+        assert 'comparison' in alpha
+        assert 'alpha_measurements' in alpha
+        assert 'best_model' in alpha
+
+    def test_alpha_sensitivity_scan(self, bao_pipeline):
+        """Ensure alpha sensitivity scan returns a structured scan table."""
+        bao_data = bao_pipeline._load_bao_datasets(['boss_dr12'])
+        scan = bao_pipeline._run_alpha_sensitivity_scan(bao_data, alphas=[-6.0, -5.7, -5.4])
+        assert 'scan' in scan
+        assert isinstance(scan['scan'], list) and len(scan['scan']) == 3
+        assert all('alpha' in entry and 'chi2_total' in entry for entry in scan['scan'])
+        assert scan['best_alpha'] in [-6.0, -5.7, -5.4]
+        assert scan.get('reference_alpha') == -5.7
+        fit = scan.get('fit')
+        assert isinstance(fit, dict)
+        assert 'valid' in fit
+        coeffs = fit.get('coeffs')
+        if fit.get('valid'):
+            assert isinstance(coeffs, dict)
+            assert 'a' in coeffs and 'b' in coeffs and 'c' in coeffs
+            confidence_interval = fit.get('confidence_interval')
+            assert isinstance(confidence_interval, list) and len(confidence_interval) == 2
+            assert fit.get('sigma_alpha') is not None
+    
+    def test_alpha_sensitivity_plot_generated(self, bao_pipeline):
+        """Verify that the alpha sensitivity plot is created during run."""
+        result = bao_pipeline.run()
+        plot_path = result.get('alpha_sensitivity_plot')
+        assert plot_path
+        assert Path(plot_path).exists()
+
+    def test_model_comparison_multi(self, bao_pipeline):
+        """Check that the multi-model comparison includes all requested models."""
+        result = bao_pipeline.run()
+        multi = result.get('model_comparison_multi', {})
+        assert 'models' in multi
+        models = multi['models']
+        model_names = {entry['model'] for entry in models if 'model' in entry}
+        expected = {
+            'h_lcdm',
+            'lcdm',
+            'bimetric',
+            'early_dark_energy',
+            'interacting_dark_energy',
+            'modified_recombination'
+        }
+        assert expected.issubset(model_names)
+        assert 'best_model' in multi
 
     def test_theoretical_predictions(self, bao_pipeline):
         """Test theoretical BAO predictions."""
@@ -249,6 +340,43 @@ class TestBAOPipeline:
             except:
                 # May fail for surveys without systematics defined
                 pass
+
+    def test_legacy_surveys_have_fiducial_compression_systematic(self, bao_pipeline):
+        """Legacy surveys embed the fiducial compression systematic."""
+        for survey in ['wigglez', 'sdss_dr7', '2dfgrs']:
+            systematics = bao_pipeline._get_survey_systematics(survey)
+            assert abs(systematics.get('fiducial_compression_systematic', 0.0) - 0.0183) < 1e-6
+
+    def test_fiducial_compression_enters_total_systematic(self, bao_pipeline):
+        """Check that the fiducial compression term shows up linearly in the total error."""
+        base_systematics = bao_pipeline._get_survey_systematics('wigglez')
+        with_term = bao_pipeline._estimate_systematic_error(0.5, 'wigglez', base_systematics.copy())
+        without_term = bao_pipeline._estimate_systematic_error(
+            0.5,
+            'wigglez',
+            {**base_systematics, 'fiducial_compression_systematic': 0.0}
+        )
+        assert abs((with_term - without_term) - 0.0183) < 1e-6
+
+    def test_legacy_flag_in_bao_data(self, bao_pipeline):
+        """Legacy surveys are flagged when the data loader runs."""
+        bao_data = bao_pipeline._load_bao_datasets(list(bao_pipeline.available_datasets.keys()))
+        for legacy in ['wigglez', 'sdss_dr7', '2dfgrs']:
+            dataset_info = bao_data.get(legacy, {})
+            assert dataset_info.get('is_legacy_compressed') is True
+        boss_info = bao_data.get('boss_dr12', {})
+        assert boss_info.get('is_legacy_compressed') in (None, False)
+
+    def test_prediction_results_include_legacy_metadata(self, bao_pipeline):
+        """Prediction outputs must expose legacy metadata for reporting."""
+        bao_data = bao_pipeline._load_bao_datasets(['wigglez', 'sdss_dr7', '2dfgrs'])
+        prediction_results = bao_pipeline._test_theoretical_predictions(bao_data, include_systematics=True)
+        for legacy in ['wigglez', 'sdss_dr7', '2dfgrs']:
+            tests = prediction_results[legacy]['individual_tests']
+            assert tests, "Expected at least one measurement for legacy survey"
+            first = tests[0]
+            assert first['is_legacy_compressed'] is True
+            assert abs(first['fiducial_compression_systematic'] - 0.0183) < 1e-6
 
     def test_lambda_uncertainty_calculation(self, bao_pipeline):
         """Test cosmological constant uncertainty estimation."""

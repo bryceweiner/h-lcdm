@@ -27,34 +27,93 @@ def calculate_effective_volume(
     Returns:
         float: Volume in same units cubed as input positions.
     """
+    # Validate input - FAIL HARD if invalid
+    if positions is None or len(positions) == 0:
+        raise ValueError("CRITICAL ERROR: Cannot calculate volume: positions array is None or empty")
+    
+    # FAIL HARD if any NaN/inf values found
+    if not np.isfinite(positions).all():
+        n_invalid = (~np.isfinite(positions).all(axis=1)).sum()
+        invalid_positions = positions[~np.isfinite(positions).all(axis=1)][:10]
+        raise ValueError(
+            f"CRITICAL ERROR: Found {n_invalid} positions with NaN/inf values in volume calculation. "
+            f"First invalid positions:\n{invalid_positions}\n"
+            f"This indicates corrupted coordinate data. Fix the data source before proceeding."
+        )
+    
     if len(positions) < 4:
-        return 0.0
+        raise ValueError(
+            f"CRITICAL ERROR: Cannot calculate volume: need at least 4 points, got {len(positions)}. "
+            f"This indicates insufficient data. Fix the data source before proceeding."
+        )
         
     if method == 'convex_hull':
         try:
             from scipy.spatial import ConvexHull
-            hull = ConvexHull(positions)
-            return hull.volume
         except ImportError:
-            logger.warning("scipy.spatial.ConvexHull not available, falling back to bounding_box")
-            return calculate_effective_volume(positions, method='bounding_box')
+            raise ImportError(
+                "CRITICAL ERROR: scipy.spatial.ConvexHull not available. "
+                "Install scipy or use method='bounding_box'."
+            )
+        
+        try:
+            hull = ConvexHull(positions)
+            volume = hull.volume
+            
+            # FAIL HARD if volume calculation produced invalid result
+            if np.isnan(volume) or np.isinf(volume) or volume <= 0:
+                raise ValueError(
+                    f"CRITICAL ERROR: ConvexHull returned invalid volume: {volume}. "
+                    f"This indicates degenerate or corrupted coordinate data. "
+                    f"Fix the data source before proceeding."
+                )
+            
+            return volume
         except Exception as e:
-            # ConvexHull can fail for coplanar points etc.
-            logger.debug(f"ConvexHull failed ({e}), falling back to bounding_box")
-            return calculate_effective_volume(positions, method='bounding_box')
+            # FAIL HARD on ConvexHull errors - they indicate data problems
+            raise ValueError(
+                f"CRITICAL ERROR: ConvexHull calculation failed: {e}. "
+                f"This indicates degenerate or corrupted coordinate data (e.g., coplanar points). "
+                f"Fix the data source before proceeding."
+            ) from e
             
     elif method == 'bounding_box':
         min_coords = np.min(positions, axis=0)
         max_coords = np.max(positions, axis=0)
+        
+        # FAIL HARD if coordinates are invalid
+        if not np.isfinite(min_coords).all() or not np.isfinite(max_coords).all():
+            raise ValueError(
+                f"CRITICAL ERROR: Invalid coordinates in bounding box calculation. "
+                f"min_coords: {min_coords}, max_coords: {max_coords}. "
+                f"This indicates corrupted coordinate data. Fix the data source before proceeding."
+            )
+        
         # Add small buffer to avoid zero volume for planar distributions
         ranges = max_coords - min_coords
+        
         # If any dimension is 0 (e.g. 2D data), assume unit thickness or use min non-zero range
         if np.any(ranges == 0):
             non_zero = ranges[ranges > 0]
-            thickness = np.min(non_zero) * 0.1 if len(non_zero) > 0 else 1.0
+            if len(non_zero) > 0:
+                thickness = np.min(non_zero) * 0.1
+            else:
+                # All dimensions are zero (single point or duplicate points)
+                # Use a small default volume based on typical void catalog scales
+                thickness = 1.0  # 1 Mpc default
             ranges[ranges == 0] = thickness
             
-        return np.prod(ranges)
+        volume = np.prod(ranges)
+        
+        # FAIL HARD if volume calculation produced invalid result
+        if np.isnan(volume) or np.isinf(volume) or volume <= 0:
+            raise ValueError(
+                f"CRITICAL ERROR: Bounding box calculation produced invalid volume: {volume}. "
+                f"This indicates corrupted coordinate data or calculation error. "
+                f"Fix the data source or volume calculation logic before proceeding."
+            )
+        
+        return volume
     
     else:
         raise ValueError(f"Unknown volume estimation method: {method}")
@@ -87,7 +146,21 @@ def calculate_mean_separation(
             # Let's try to extract if possible, otherwise raise
             raise ValueError("Catalog must have x, y, z columns for mean separation calculation")
     else:
-        positions = catalog
+        positions = np.asarray(catalog)
+    
+    # Validate input - FAIL HARD if invalid
+    if positions.ndim != 2 or positions.shape[1] != 3:
+        raise ValueError(f"CRITICAL ERROR: Positions must be array of shape (N, 3), got {positions.shape}")
+    
+    # FAIL HARD if any NaN/inf values found
+    if not np.isfinite(positions).all():
+        n_invalid = (~np.isfinite(positions).all(axis=1)).sum()
+        invalid_positions = positions[~np.isfinite(positions).all(axis=1)][:10]
+        raise ValueError(
+            f"CRITICAL ERROR: Found {n_invalid} positions with NaN/inf values in mean separation calculation. "
+            f"First invalid positions:\n{invalid_positions}\n"
+            f"This indicates corrupted coordinate data. Fix the data source before proceeding."
+        )
         
     n_objects = len(positions)
     if n_objects == 0:

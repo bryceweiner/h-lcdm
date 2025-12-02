@@ -15,7 +15,10 @@ class JWSTEncoder(nn.Module):
     def __init__(self, input_dim: int, latent_dim: int = 512):
         super().__init__()
         # Assume input is flattened image features
+        self.input_dim = input_dim
+        self.latent_dim = latent_dim
         self.encoder = nn.Sequential(
+            nn.BatchNorm1d(input_dim), # Input normalization
             nn.Linear(input_dim, 256),
             nn.ReLU(),
             nn.Linear(256, 512),

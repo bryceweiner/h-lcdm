@@ -14,6 +14,9 @@ from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
 import logging
 import warnings
 
+# Suppress sklearn deprecation warnings for internal API changes
+warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn.utils.deprecation')
+
 
 class CrossSurveyValidator:
     """

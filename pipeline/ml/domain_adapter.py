@@ -4,6 +4,7 @@ Domain Adaptation
 
 Survey-invariant training to ensure learned features work across
 different cosmological surveys and systematic effects.
+Implements rigorous statistical alignment methods.
 """
 
 import torch
@@ -11,13 +12,44 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Any, Optional, Tuple
 import numpy as np
-from sklearn.metrics.pairwise import rbf_kernel
+import warnings
+
+# Suppress sklearn deprecation warnings for internal API changes
+warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn.utils.deprecation')
+
+
+class MultiscaleGaussianKernel(nn.Module):
+    """
+    Multiscale Gaussian Kernel for MMD.
+    
+    Captures distribution differences at multiple scales, essential for
+    high-dimensional cosmological data where single-scale RBF fails.
+    """
+    def __init__(self, bandwidths: List[float]):
+        super().__init__()
+        self.bandwidths = bandwidths
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        # Compute squared Euclidean distance
+        xx = torch.matmul(x, x.t())
+        yy = torch.matmul(y, y.t())
+        xy = torch.matmul(x, y.t())
+        
+        # Distance matrix: ||x-y||^2 = ||x||^2 + ||y||^2 - 2<x,y>
+        dist = xx.unsqueeze(1) + yy.unsqueeze(0) - 2 * xy
+        
+        # Sum of Gaussians at different scales
+        val = 0
+        for bandwidth in self.bandwidths:
+            val += torch.exp(-0.5 * dist / (bandwidth**2))
+            
+        return val
 
 
 class DomainAdaptationTrainer:
     """
     Domain adaptation for survey-invariant feature learning.
-
+    
     Implements techniques to ensure learned representations are
     invariant to survey-specific systematics while preserving
     cosmological signal.
@@ -26,17 +58,32 @@ class DomainAdaptationTrainer:
     def __init__(self, base_model: nn.Module,
                  n_surveys: int = 10,
                  latent_dim: int = 512,
-                 adaptation_method: str = 'mmd'):
+                 adaptation_method: str = 'mmd',
+                 device: Optional[torch.device] = None):
         """
         Initialize domain adaptation trainer.
-
+        
         Parameters:
             base_model: Base SSL model to adapt
             n_surveys: Number of surveys to handle
             latent_dim: Dimension of latent space
             adaptation_method: 'mmd', 'adv', or 'both'
+            device: Device to run on (defaults to base_model device)
         """
         self.base_model = base_model
+        
+        # Determine device from base_model if not provided
+        if device is None:
+            # Get device from base_model's encoders
+            if hasattr(base_model, 'encoders') and base_model.encoders:
+                self.device = next(iter(base_model.encoders.values())).parameters().__next__().device
+            elif hasattr(base_model, 'device'):
+                self.device = base_model.device
+            else:
+                self.device = torch.device('cpu')
+        else:
+            self.device = device
+        
         self.n_surveys = n_surveys
         self.latent_dim = latent_dim
         self.adaptation_method = adaptation_method
@@ -44,14 +91,18 @@ class DomainAdaptationTrainer:
         # Domain discriminators
         if adaptation_method in ['adv', 'both']:
             self.domain_discriminators = self._build_domain_discriminators()
+            self.domain_discriminators = self.domain_discriminators.to(self.device)
 
-        # MMD kernel parameters
+        # MMD kernel parameters optimized for cosmological data scales
         if adaptation_method in ['mmd', 'both']:
-            self.mmd_kernel_bandwidth = 1.0
+            # Multiscale bandwidths centered around latent_dim
+            base_scale = np.sqrt(latent_dim)
+            bandwidths = [base_scale * f for f in [0.1, 0.5, 1.0, 2.0, 10.0]]
+            self.kernel = MultiscaleGaussianKernel(bandwidths).to(self.device)
             self.mmd_lambda = 1.0
 
         # Survey embeddings (learnable)
-        self.survey_embeddings = nn.Embedding(n_surveys, latent_dim)
+        self.survey_embeddings = nn.Embedding(n_surveys, latent_dim).to(self.device)
 
         # Adaptation loss tracking
         self.adaptation_losses = []
@@ -64,11 +115,11 @@ class DomainAdaptationTrainer:
         for modality in self.base_model.encoders.keys():
             discriminator = nn.Sequential(
                 nn.Linear(self.latent_dim, 128),
+                nn.LayerNorm(128),
                 nn.ReLU(),
                 nn.Linear(128, 64),
                 nn.ReLU(),
-                nn.Linear(64, 1),
-                nn.Sigmoid()
+                nn.Linear(64, self.n_surveys)  # Predict survey ID, not just binary
             )
             discriminators[modality] = discriminator
 
@@ -77,56 +128,63 @@ class DomainAdaptationTrainer:
     def compute_mmd_loss(self, source_features: torch.Tensor,
                         target_features: torch.Tensor) -> torch.Tensor:
         """
-        Compute Maximum Mean Discrepancy (MMD) loss.
-
-        MMD measures distribution difference between domains.
-
+        Compute Maximum Mean Discrepancy (MMD) loss using Multiscale Kernel.
+        
         Parameters:
             source_features: Features from source domain
             target_features: Features from target domain
-
+            
         Returns:
             torch.Tensor: MMD loss
         """
-        # Convert to numpy for kernel computation
-        source_np = source_features.detach().cpu().numpy()
-        target_np = target_features.detach().cpu().numpy()
+        if len(source_features) == 0 or len(target_features) == 0:
+             return torch.tensor(0.0, device=self.device)
 
-        # Compute RBF kernel matrices
-        source_kernel = rbf_kernel(source_np, source_np, gamma=1.0/self.mmd_kernel_bandwidth)
-        target_kernel = rbf_kernel(target_np, target_np, gamma=1.0/self.mmd_kernel_bandwidth)
-        cross_kernel = rbf_kernel(source_np, target_np, gamma=1.0/self.mmd_kernel_bandwidth)
-
-        # MMD statistic
-        n_source = source_np.shape[0]
-        n_target = target_np.shape[0]
-
-        mmd = (np.sum(source_kernel) / (n_source ** 2) +
-               np.sum(target_kernel) / (n_target ** 2) -
-               2 * np.sum(cross_kernel) / (n_source * n_target))
-
-        return torch.tensor(mmd, device=source_features.device, requires_grad=True)
+        # Compute kernel matrices
+        xx = self.kernel(source_features, source_features)
+        yy = self.kernel(target_features, target_features)
+        xy = self.kernel(source_features, target_features)
+        
+        # Unbiased MMD estimate
+        # E[k(x,x')] + E[k(y,y')] - 2E[k(x,y)]
+        m = source_features.shape[0]
+        n = target_features.shape[0]
+        
+        # Exclude diagonal for unbiased estimator of E[k(x,x')]
+        mmd = (xx.sum() - torch.trace(xx)) / (m * (m - 1)) + \
+              (yy.sum() - torch.trace(yy)) / (n * (n - 1)) - \
+              2 * xy.sum() / (m * n)
+              
+        return mmd
 
     def compute_adversarial_loss(self, features: torch.Tensor,
-                                domain_labels: torch.Tensor,
+                                survey_ids: torch.Tensor,
                                 modality: str) -> torch.Tensor:
         """
         Compute adversarial domain adaptation loss.
-
+        
         Parameters:
             features: Encoded features
-            domain_labels: Domain/survey labels (0 or 1)
+            survey_ids: Actual survey IDs
             modality: Modality name
-
+            
         Returns:
             torch.Tensor: Adversarial loss
         """
         discriminator = self.domain_discriminators[modality]
-        domain_predictions = discriminator(features).squeeze()
-
-        # Binary cross-entropy loss
-        loss = F.binary_cross_entropy(domain_predictions, domain_labels.float())
-
+        survey_predictions = discriminator(features)
+        
+        # Cross-entropy loss: Can the discriminator guess the survey?
+        # We want to MAXIMIZE this entropy (confuse discriminator),
+        # but standard GRL (Gradient Reversal Layer) isn't implemented here.
+        # Instead, we return the loss that the DISCRIMINATOR minimizes.
+        # The Encoder should maximize this (or minimize negative).
+        
+        # NOTE: In a proper GAN setup, we alternate. Here we return the loss
+        # for the discriminator. The encoder needs to minimize -loss (or maximize entropy).
+        
+        loss = F.cross_entropy(survey_predictions, survey_ids.long())
+        
         return loss
 
     def adapt_domains(self, batch: Dict[str, torch.Tensor],
@@ -134,12 +192,12 @@ class DomainAdaptationTrainer:
                      adaptation_method: Optional[str] = None) -> Dict[str, torch.Tensor]:
         """
         Perform domain adaptation on batch.
-
+        
         Parameters:
             batch: Batch of data from different surveys
             survey_ids: Survey identifiers for each sample
             adaptation_method: Override default method
-
+            
         Returns:
             dict: Adaptation losses
         """
@@ -147,13 +205,21 @@ class DomainAdaptationTrainer:
         losses = {}
 
         # Get base model encodings
-        with torch.no_grad():  # Don't update base model during adaptation
-            encodings = self.base_model.encode(batch)
-
+        # NOTE: We need gradients to flow back to encoder for adaptation!
+        # Removing torch.no_grad() if we want to train the encoder to be invariant.
+        # If we only train the adapter, then no_grad is fine, but that defeats the purpose.
+        # Assuming we are in a training loop where optimizer steps on encoder.
+        
+        encodings = self.base_model.encode(batch)
+        
         total_loss = 0
 
         # Apply adaptation per modality
         for modality, features in encodings.items():
+            # Ensure features require grad
+            if not features.requires_grad:
+                features.requires_grad_(True)
+
             if method in ['mmd', 'both']:
                 # MMD adaptation: minimize distance between survey distributions
                 mmd_loss = self._compute_batch_mmd_loss(features, survey_ids)
@@ -161,10 +227,23 @@ class DomainAdaptationTrainer:
                 total_loss += self.mmd_lambda * mmd_loss
 
             if method in ['adv', 'both']:
-                # Adversarial adaptation: confuse domain discriminator
-                adv_loss = self._compute_adversarial_loss(features, survey_ids, modality)
-                losses[f'{modality}_adv'] = adv_loss
-                total_loss += adv_loss
+                # Adversarial adaptation
+                # If we are updating the ENCODER, we want to MAXIMIZE the discriminator error
+                # (make features indistinguishable).
+                # Simple implementation: minimize -entropy (maximize uniform distribution)
+                
+                discriminator = self.domain_discriminators[modality]
+                preds = discriminator(features)
+                
+                # Target uniform distribution (confusion)
+                n_classes = preds.shape[1]
+                uniform_target = torch.full_like(preds, 1.0/n_classes)
+                
+                # KL Divergence from Uniform (minimize this to confuse)
+                confusion_loss = F.kl_div(F.log_softmax(preds, dim=1), uniform_target, reduction='batchmean')
+                
+                losses[f'{modality}_confusion'] = confusion_loss
+                total_loss += confusion_loss
 
         losses['total_adaptation'] = total_loss
         self.adaptation_losses.append(losses)
@@ -175,13 +254,6 @@ class DomainAdaptationTrainer:
                                survey_ids: torch.Tensor) -> torch.Tensor:
         """
         Compute MMD loss across all survey pairs in batch.
-
-        Parameters:
-            features: Encoded features
-            survey_ids: Survey IDs
-
-        Returns:
-            torch.Tensor: Average MMD loss
         """
         unique_surveys = torch.unique(survey_ids)
         mmd_losses = []
@@ -202,53 +274,29 @@ class DomainAdaptationTrainer:
         if mmd_losses:
             return torch.stack(mmd_losses).mean()
         else:
-            return torch.tensor(0.0, device=features.device)
-
-    def _compute_adversarial_loss(self, features: torch.Tensor,
-                                 survey_ids: torch.Tensor,
-                                 modality: str) -> torch.Tensor:
-        """
-        Compute adversarial loss for domain confusion.
-
-        Parameters:
-            features: Encoded features
-            survey_ids: Survey IDs
-            modality: Modality name
-
-        Returns:
-            torch.Tensor: Adversarial loss
-        """
-        # Create domain labels (randomly assign some as "source" vs "target")
-        # In practice, this would be based on actual survey groupings
-        n_samples = features.shape[0]
-        domain_labels = torch.randint(0, 2, (n_samples,), device=features.device)
-
-        return self.compute_adversarial_loss(features, domain_labels, modality)
-
+            return torch.tensor(0.0, device=features.device, requires_grad=True)
+            
     def get_adaptation_metrics(self) -> Dict[str, Any]:
-        """
-        Get adaptation training metrics.
-
-        Returns:
-            dict: Adaptation metrics
-        """
+        """Get adaptation training metrics."""
         if not self.adaptation_losses:
             return {}
 
         # Average losses over training
         avg_losses = {}
-        for key in self.adaptation_losses[0].keys():
-            values = [loss_dict.get(key, 0) for loss_dict in self.adaptation_losses]
+        # Safely handle tensors in dict
+        loss_keys = self.adaptation_losses[0].keys()
+        
+        for key in loss_keys:
+            values = []
+            for loss_dict in self.adaptation_losses:
+                val = loss_dict.get(key, 0)
+                if isinstance(val, torch.Tensor):
+                    val = val.item()
+                values.append(val)
             avg_losses[f'avg_{key}'] = np.mean(values)
-
-        # Convergence metrics
-        recent_losses = self.adaptation_losses[-10:]  # Last 10 batches
-        recent_avg = np.mean([loss_dict.get('total_adaptation', 0) for loss_dict in recent_losses])
 
         return {
             'average_losses': avg_losses,
-            'recent_adaptation_loss': recent_avg,
-            'convergence_indicator': recent_avg < 0.1,  # Arbitrary threshold
             'total_adaptation_steps': len(self.adaptation_losses)
         }
 
@@ -256,7 +304,7 @@ class DomainAdaptationTrainer:
         """Save adaptation state."""
         state = {
             'survey_embeddings': self.survey_embeddings.state_dict(),
-            'adaptation_losses': self.adaptation_losses,
+            # Don't save losses if they contain tensors
             'n_surveys': self.n_surveys,
             'latent_dim': self.latent_dim,
             'adaptation_method': self.adaptation_method
@@ -272,8 +320,7 @@ class DomainAdaptationTrainer:
         state = torch.load(path)
 
         self.survey_embeddings.load_state_dict(state['survey_embeddings'])
-        self.adaptation_losses = state['adaptation_losses']
-
+        
         if 'domain_discriminators' in state and hasattr(self, 'domain_discriminators'):
             self.domain_discriminators.load_state_dict(state['domain_discriminators'])
 
@@ -290,12 +337,6 @@ class SurveyInvariantValidator:
                                         features_by_survey: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """
         Compute metrics quantifying survey invariance.
-
-        Parameters:
-            features_by_survey: Features grouped by survey
-
-        Returns:
-            dict: Invariance metrics
         """
         metrics = {}
 
@@ -317,18 +358,14 @@ class SurveyInvariantValidator:
                     torch.mean(features1, dim=0) - torch.mean(features2, dim=0)
                 ))
 
-                # 2. Distribution KL divergence approximation
-                # (Simplified - would need more sophisticated implementation)
+                distribution_distances.append(mean_diff.item())
 
-                distribution_distances.append({
-                    'survey_pair': f'{survey1}_{survey2}',
-                    'mean_difference': mean_diff.item()
-                })
-
+        if not distribution_distances:
+            return {}
+            
         # Overall invariance score (lower is better)
-        mean_differences = [d['mean_difference'] for d in distribution_distances]
-        metrics['average_distribution_distance'] = np.mean(mean_differences)
-        metrics['max_distribution_distance'] = np.max(mean_differences)
-        metrics['survey_invariance_score'] = 1.0 / (1.0 + np.mean(mean_differences))
+        metrics['average_distribution_distance'] = np.mean(distribution_distances)
+        metrics['max_distribution_distance'] = np.max(distribution_distances)
+        metrics['survey_invariance_score'] = 1.0 / (1.0 + np.mean(distribution_distances))
 
         return metrics

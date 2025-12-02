@@ -14,7 +14,10 @@ class LymanAlphaEncoder(nn.Module):
 
     def __init__(self, input_dim: int, latent_dim: int = 512):
         super().__init__()
+        self.input_dim = input_dim
+        self.latent_dim = latent_dim
         self.encoder = nn.Sequential(
+            nn.BatchNorm1d(1), # Normalize input channel
             nn.Conv1d(1, 64, kernel_size=5, stride=2, padding=2),
             nn.ReLU(),
             nn.Conv1d(64, 128, kernel_size=3, stride=2, padding=1),

@@ -11,6 +11,7 @@ from pathlib import Path
 import tempfile
 
 from scripts.bao_visualization import BAOVisualization
+from pipeline.common.reporting import HLambdaDMReporter
 
 
 class TestBAOVisualization:
@@ -192,3 +193,76 @@ class TestBAOVisualization:
 
                 # Error should be smaller than value
                 assert measurement.get('error', 0) < measurement['value']
+
+    def test_reporting_displays_fiducial_compression_component(self, tmp_path):
+        """BAO reporting should mention the explicit fiducial-compression systematic."""
+        reporter = HLambdaDMReporter(output_dir=str(tmp_path))
+        dataset_names = ['wigglez', 'sdss_dr7', '2dfgrs']
+        bao_data = {}
+        prediction_test = {}
+        for name in dataset_names:
+            bao_data[name] = {
+                'survey_systematics': {
+                    'baseline': False,
+                    'method': 'spectroscopic',
+                    'tracer': 'LRG',
+                    'reference': 'Legacy Survey',
+                    'redshift_calibration': 0.004,
+                    'survey_geometry': 0.012,
+                    'reconstruction_bias': 0.014,
+                    'fiducial_cosmology': 0.008,
+                    'fiber_collision': 0.006,
+                    'template_fitting': 0.006,
+                    'fiducial_compression_systematic': 0.0183
+                },
+                'redshift_calibration': {
+                    'method': 'spectroscopic',
+                    'precision': 0.0004,
+                    'systematic_offset': 0.0,
+                    'redshift_bias_model': 'linear',
+                    'calibration_reference': 'Legacy Survey'
+                }
+            }
+            prediction_test[name] = {
+                'individual_tests': [{
+                    'z_observed': 0.2,
+                    'z_calibrated': 0.2,
+                    'observed': 0.2,
+                    'theoretical': 0.198,
+                    'residual': 0.002,
+                    'z_score': 0.1,
+                    'p_value': 0.92,
+                    'passed': True,
+                    'sigma_statistical': 0.006,
+                    'sigma_systematic': 0.004,
+                    'sigma_total': 0.0072
+                }],
+                'summary': {
+                    'n_passed': 1,
+                    'n_total': 1,
+                    'chi2': 0.01,
+                    'dof': 1,
+                    'chi2_per_dof': 0.01,
+                    'p_value': 0.92
+                }
+            }
+
+        bao_results = {
+            'results': {
+                'main': {
+                    'theoretical_rs': 150.71,
+                    'rs_lcdm': 147.5,
+                    'prediction_test': prediction_test,
+                    'bao_data': bao_data,
+                    'datasets_tested': dataset_names,
+                    'forward_predictions': {},
+                    'covariance_analysis': {},
+                    'sound_horizon_consistency': {}
+                }
+            }
+        }
+
+        report_text = reporter._generate_pipeline_results('bao', bao_results)
+
+        assert report_text.count("Fiducial-compression (legacy rs/D_V): 0.0183 (1.83%)") >= 3
+        assert "explicit 1.83% fiducial-compression systematic" in report_text

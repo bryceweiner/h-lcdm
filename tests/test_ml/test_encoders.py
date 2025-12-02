@@ -169,9 +169,9 @@ class TestJWSTEncoder:
         """Test forward pass."""
         encoder = JWSTEncoder(input_dim=25, latent_dim=128)
         
-        # Input: (batch, height, width) - assuming square image
-        # For 25 features, assume 5x5 image
-        x = torch.randn(4, 5, 5)
+        # Input: flattened features (batch, features)
+        # JWSTEncoder expects flattened 1D input
+        x = torch.randn(4, 25)
         output = encoder(x)
         
         assert output.shape == (4, 128)

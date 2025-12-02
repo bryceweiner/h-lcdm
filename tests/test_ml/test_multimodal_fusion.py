@@ -115,6 +115,25 @@ class TestMultimodalFusion:
         result = fusion.cross_modal_attention('cmb', ['missing'], encodings)
         assert result == {}
 
+    def test_cross_modal_attention_no_keys(self):
+        """Test cross-modal attention with no valid keys."""
+        fusion = MultimodalFusion(
+            latent_dim=128,
+            fusion_dim=64
+        )
+        
+        encodings = {
+            'cmb': torch.randn(4, 128)
+        }
+        
+        # Query modality not in encodings
+        result = fusion.cross_modal_attention('missing', ['bao'], encodings)
+        assert result == {}
+        
+        # Empty key_modalities list
+        result2 = fusion.cross_modal_attention('cmb', [], encodings)
+        assert result2 == {}
+
     def test_cross_attention(self):
         """Test cross-attention mechanism."""
         fusion = MultimodalFusion(
