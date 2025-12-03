@@ -169,6 +169,7 @@ class TestBAOPipeline:
         alpha_scan = result['alpha_sensitivity']
         assert isinstance(alpha_scan.get('scan', []), list)
         assert 'best_alpha' in alpha_scan
+        assert 'bao_residuals_plot' in result
 
     def test_different_datasets(self, bao_pipeline):
         """Test pipeline with different dataset combinations."""
@@ -233,6 +234,36 @@ class TestBAOPipeline:
         """Verify that the alpha sensitivity plot is created during run."""
         result = bao_pipeline.run()
         plot_path = result.get('alpha_sensitivity_plot')
+        assert plot_path
+        assert Path(plot_path).exists()
+
+    def test_cmb_residuals_plot_generated(self, bao_pipeline, monkeypatch):
+        """Ensure the BAO pipeline produces the Planck residual figure."""
+        def make_sample_spectrum(amplitude: float, slope: float) -> tuple:
+            ell = np.linspace(30, 2000, 80)
+            values = amplitude * (ell / 300.0)**(-slope)
+            errors = np.maximum(values * 0.04, 1e-15)
+            return ell, values, errors
+
+        sample_data = {
+            'TT': make_sample_spectrum(1e-11, 0.6),
+            'TE': make_sample_spectrum(5e-12, 0.7),
+            'EE': make_sample_spectrum(3e-12, 0.9)
+        }
+        monkeypatch.setattr(bao_pipeline.data_loader, "load_planck_2018", lambda: sample_data)
+
+        result = bao_pipeline.run({'datasets': ['boss_dr12'], 'blinding_enabled': False})
+        assert 'cmb_power_spectrum_residuals' in result
+        plot_path = result.get('cmb_power_spectrum_residuals_plot')
+        assert plot_path
+        assert Path(plot_path).exists()
+
+    def test_bao_residuals_plot_generated(self, bao_pipeline):
+        """Ensure the BAO residuals figure is produced for the reported claim."""
+        bao_data = bao_pipeline._load_bao_datasets(['boss_dr12'])
+        predictions = bao_pipeline._test_theoretical_predictions(bao_data, include_systematics=True)
+        residuals = bao_pipeline._summarize_redshift_residuals(predictions)
+        plot_path = bao_pipeline._plot_bao_residuals(predictions, residuals)
         assert plot_path
         assert Path(plot_path).exists()
 
