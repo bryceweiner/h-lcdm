@@ -161,6 +161,9 @@ class BAOPipeline(AnalysisPipeline):
         direct_distance_datasets = self._get_direct_distance_dataset_names(bao_data)
         systematic_stress_tests = self._run_systematic_stress_tests(bao_data, prediction_results, consistency_results, scales=[0.5, 0.75, 1.0, 1.5, 2.0])
         redshift_binned_residuals = self._summarize_redshift_residuals(prediction_results)
+        bao_residuals_plot = self._plot_bao_residuals(prediction_results, redshift_binned_residuals)
+        cmb_residuals = self._run_planck_power_spectrum_residuals()
+        cmb_residuals_plot = self._plot_cmb_power_spectrum_residuals(cmb_residuals)
         alpha_model_comparison = self._perform_alpha_model_comparison(prediction_results)
         alpha_sensitivity = self._run_alpha_sensitivity_scan(bao_data)
         alpha_sensitivity_plot = self._plot_alpha_sensitivity(alpha_sensitivity)
@@ -189,6 +192,9 @@ class BAOPipeline(AnalysisPipeline):
             'cross_correlation_analysis': cross_correlation_analysis,
             'systematic_stress_tests': systematic_stress_tests,
             'redshift_binned_residuals': redshift_binned_residuals,
+            'bao_residuals_plot': bao_residuals_plot,
+            'cmb_power_spectrum_residuals': cmb_residuals,
+            'cmb_power_spectrum_residuals_plot': cmb_residuals_plot,
             'alpha_model_comparison': alpha_model_comparison,
             'loo_cv': loo_cv_results,
             'jackknife': jackknife_results,
@@ -204,6 +210,8 @@ class BAOPipeline(AnalysisPipeline):
         }
         if alpha_sensitivity_plot:
             results['alpha_sensitivity_plot'] = alpha_sensitivity_plot
+        if cmb_residuals_plot:
+            results['cmb_power_spectrum_residuals_plot'] = cmb_residuals_plot
         results['model_comparison_multi'] = self._compare_alternative_models(bao_data)
 
         self.results = results
@@ -2744,6 +2752,207 @@ class BAOPipeline(AnalysisPipeline):
         ax.grid(True, linestyle=":", alpha=0.7)
         ax.legend()
         path = self.figures_dir / "bao_alpha_sensitivity.png"
+        fig.tight_layout()
+        fig.savefig(path)
+        plt.close(fig)
+        return str(path)
+
+    def _plot_bao_residuals(self,
+                            prediction_results: Dict[str, Any],
+                            residual_summary: Dict[str, Any]) -> str:
+        """Visualize BAO residuals vs. redshift with error bars and trend."""
+        measurements = []
+        for dataset_name, dataset_info in prediction_results.items():
+            for entry in dataset_info.get('individual_tests', []):
+                z = entry.get('z_calibrated', entry.get('z_observed'))
+                residual = entry.get('residual')
+                sigma = entry.get('sigma_total')
+                if residual is None or sigma is None or sigma <= 0 or z is None:
+                    continue
+                measurements.append({
+                    'z': float(z),
+                    'residual': float(residual),
+                    'sigma': float(sigma),
+                    'dataset': dataset_name,
+                    'passed': entry.get('passed', False)
+                })
+
+        if not measurements:
+            return ""
+
+        z_vals = np.array([m['z'] for m in measurements])
+        residuals = np.array([m['residual'] for m in measurements])
+        sigmas = np.array([m['sigma'] for m in measurements])
+        fig, ax = plt.subplots(figsize=(7, 4.25))
+        ax.errorbar(
+            z_vals, residuals, yerr=sigmas, fmt='o', ms=4, capsize=3,
+            color="#1b4f72", ecolor="#7f8c8d", alpha=0.75, label="Measurements", mec='k', mew=0.5
+        )
+
+        bin_centers = []
+        bin_means = []
+        bin_errors = []
+        max_z_value = np.max(z_vals) if len(z_vals) > 0 else 0.0
+        for bin_stat in residual_summary.get('bins', []):
+            n = bin_stat.get('n_measurements', 0)
+            uncertainty = bin_stat.get('uncertainty')
+            if n == 0 or uncertainty is None or not np.isfinite(uncertainty):
+                continue
+            z_min, z_max = bin_stat.get('range', (0.0, np.inf))
+            if np.isinf(z_max):
+                z_max = max_z_value if max_z_value > z_min else z_min + 0.1
+            center = 0.5 * (z_min + z_max) if np.isfinite(z_max) else z_min
+            bin_centers.append(center)
+            bin_means.append(bin_stat.get('mean_residual', 0.0))
+            bin_errors.append(uncertainty)
+
+        if bin_centers:
+            ax.errorbar(
+                bin_centers, bin_means, yerr=bin_errors, fmt='s', ms=7, capsize=4,
+                color="#0e6b39", label="Weighted bin mean", mec='k', mew=0.8
+            )
+
+        z_min_plot = np.min(z_vals)
+        z_max_plot = np.max(z_vals)
+        ax.axhline(0, color="#2c3e50", linestyle="--", linewidth=1.25, label="Zero residual")
+
+        trend = residual_summary.get('trend', {})
+        slope = trend.get('slope')
+        intercept = trend.get('intercept')
+        slope_error = trend.get('slope_error')
+        if np.isfinite(slope) and np.isfinite(intercept):
+            span = np.linspace(z_min_plot, z_max_plot, 250)
+            ax.plot(span, intercept + slope * span, color="#cb4335", linewidth=1.5, label="Weighted trend")
+            ax.text(
+                0.98, 0.92,
+                f"Slope = {slope:.2e} ± {slope_error:.2e}",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=8,
+                bbox=dict(facecolor="white", edgecolor="none", alpha=0.8)
+            )
+
+        ax.set_xlabel(r"Calibrated redshift $z$")
+        ax.set_ylabel(r"Residual $D_M/r_d^{\mathrm{obs}} - D_M/r_d^{\mathrm{pred}}$")
+        ax.set_title("BAO residuals vs. redshift")
+        ax.set_xlim(z_min_plot - 0.05, z_max_plot + 0.05)
+        y_limit = max(np.max(np.abs(residuals + sigmas)), np.max(np.abs(residuals - sigmas)))
+        if np.isfinite(y_limit) and y_limit > 0:
+            ax.set_ylim(-1.5 * y_limit, 1.5 * y_limit)
+        ax.grid(True, linestyle=":", alpha=0.7)
+        ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+
+        path = self.figures_dir / "bao_residuals_vs_redshift.png"
+        fig.tight_layout()
+        fig.savefig(path)
+        plt.close(fig)
+        return str(path)
+
+    def _run_planck_power_spectrum_residuals(self) -> Dict[str, Any]:
+        """Compute Planck 2018 residuals relative to a shifted H-ΛCDM angular scale."""
+        try:
+            planck_data = self.data_loader.load_planck_2018()
+        except Exception as exc:
+            self.log_progress(f"Planck residual figure skipped (data unavailable): {exc}")
+            return {}
+
+        if not planck_data:
+            return {}
+
+        shift_scale = float(self.rs_theory / self.rs_lcdm) if self.rs_lcdm else 1.0
+        residuals = {}
+
+        for spectrum in ('TT', 'TE', 'EE'):
+            entry = planck_data.get(spectrum)
+            if not entry:
+                continue
+            ell, C_ell, C_ell_err = map(np.array, entry)
+            if len(ell) < 3 or ell[0] <= 0:
+                continue
+
+            scaled_ell = ell / shift_scale
+            valid = (scaled_ell >= ell[0]) & (scaled_ell <= ell[-1])
+            if not np.any(valid):
+                continue
+
+            ell_valid = ell[valid]
+            observed = C_ell[valid]
+            error = C_ell_err[valid]
+            shifted_prediction = np.interp(scaled_ell[valid], ell, C_ell)
+            predicted_error = np.interp(scaled_ell[valid], ell, C_ell_err)
+            residual = observed - shifted_prediction
+            normalized = np.zeros_like(residual)
+            positive_error = error > 0
+            normalized[positive_error] = residual[positive_error] / error[positive_error]
+
+            residuals[spectrum] = {
+                'ell': ell_valid.tolist(),
+                'residual': residual.tolist(),
+                'error': error.tolist(),
+                'normalized': normalized.tolist(),
+                'observed': observed.tolist(),
+                'predicted': shifted_prediction.tolist(),
+                'predicted_error': predicted_error.tolist()
+            }
+
+        return {
+            'scale_factor': shift_scale,
+            'residuals': residuals
+        }
+
+    def _plot_cmb_power_spectrum_residuals(self, residual_results: Dict[str, Any]) -> str:
+        """Plot normalized residuals between Planck TT/TE/EE and the shifted H-ΛCDM spectrum."""
+        if not residual_results or not residual_results.get('residuals'):
+            return ""
+
+        residuals = residual_results['residuals']
+        if not residuals:
+            return ""
+
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        ell_arrays = [np.array(entry['ell']) for entry in residuals.values() if entry.get('ell')]
+        if not ell_arrays:
+            return ""
+        ell_min = min(arr.min() for arr in ell_arrays)
+        ell_max = max(arr.max() for arr in ell_arrays)
+        ax.axhline(0, color="#2c3e50", linestyle="--", linewidth=1.2, label="Zero residual")
+        ax.fill_between([ell_min, ell_max], -1.0, 1.0, color="#fdebd0", alpha=0.4, label="±1σ band")
+
+        palette = {'TT': "#1f77b4", 'TE': "#ff7f0e", 'EE': "#2ca02c"}
+        for spectrum, entry in residuals.items():
+            ell_vals = np.array(entry['ell'])
+            normalized = np.array(entry['normalized'])
+            if len(ell_vals) == 0:
+                continue
+            ax.plot(
+                ell_vals, normalized, '.', ms=3.5,
+                markeredgecolor='k', markeredgewidth=0.2,
+                color=palette.get(spectrum, "#7f8c8d"),
+                label=fr"{spectrum} residual / σ"
+            )
+
+        ax.set_xscale('log')
+        ax.set_xlabel(r"Multipole ℓ")
+        ax.set_ylabel(r"$(C_\ell^{\mathrm{obs}} - C_\ell^{\mathrm{pred}})/\sigma$")
+        ax.set_title("Planck 2018 TT/TE/EE residuals after H-ΛCDM acoustic shift")
+        ax.set_xlim(ell_min * 0.9, ell_max * 1.1)
+        ax.grid(True, linestyle=":", alpha=0.7)
+        ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+
+        scale_factor = residual_results.get('scale_factor')
+        if scale_factor:
+            ax.text(
+                0.98, 0.06,
+                f"ℓ scaled by {scale_factor:.4f}",
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=8,
+                bbox=dict(facecolor="white", edgecolor="none", alpha=0.75)
+            )
+
+        path = self.figures_dir / "cmb_planck_residuals.png"
         fig.tight_layout()
         fig.savefig(path)
         plt.close(fig)

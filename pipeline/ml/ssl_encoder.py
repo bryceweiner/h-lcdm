@@ -97,6 +97,15 @@ class ContrastiveLearner:
         # Momentum update parameter
         self.momentum = 0.996
 
+    def eval(self):
+        """Set encoders/projectors to eval mode for inference."""
+        for encoder in self.encoders.values():
+            encoder.eval()
+        for encoder in self.momentum_encoders.values():
+            encoder.eval()
+        self.projector.eval()
+        self.momentum_projector.eval()
+
     def _build_encoders(self) -> Dict[str, nn.Module]:
         """Build modality-specific encoders."""
         encoders = {}
