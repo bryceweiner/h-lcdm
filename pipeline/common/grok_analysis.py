@@ -10,6 +10,7 @@ import requests
 import json
 import logging
 import time
+import os
 from typing import Dict, Any, Optional, List
 
 class GrokAnalysisClient:
