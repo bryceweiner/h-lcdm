@@ -2426,6 +2426,8 @@ class DataLoader:
                 event_iterator = catalog_event_versions
             
             for event_info in event_iterator:
+                # Initialize event_name before try block to avoid UnboundLocalError in exception handler
+                event_name = None
                 try:
                     event_name = event_info['event_name']
                     event_version = event_info['event_version']
@@ -2500,7 +2502,9 @@ class DataLoader:
                         # tqdm is available, don't spam logs
                         pass
                     except ImportError:
-                        self.log_message(f"  Warning: Failed to process {event_name}: {e}")
+                        # Use event_name if available, otherwise use a safe fallback
+                        event_id = event_name if event_name else (event_info.get('event_name', 'unknown') if isinstance(event_info, dict) else 'unknown')
+                        self.log_message(f"  Warning: Failed to process {event_id}: {e}")
                     continue
             
             if not events:

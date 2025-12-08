@@ -467,8 +467,17 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
     if args.ml_unblind:
         ml_subcommands.append('unblind')
 
-    # If ML subcommands specified, override general ML flag
-    if ml_subcommands:
+    # Merge ML subcommands with args.ml instead of overriding
+    # This allows --ml validate --ml-blind to work correctly
+    if args.ml is not None:
+        # Start with args.ml, then add any subcommands not already present
+        ml_combined = list(args.ml) if isinstance(args.ml, list) else [args.ml]
+        for subcmd in ml_subcommands:
+            if subcmd not in ml_combined:
+                ml_combined.append(subcmd)
+        pipeline_flags['ml'] = ml_combined
+    elif ml_subcommands:
+        # Only use subcommands if args.ml was not specified
         pipeline_flags['ml'] = ml_subcommands
 
     for pipeline_name, validation_args in pipeline_flags.items():
@@ -508,19 +517,27 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
                 })
             elif pipeline_name == 'ml':
                 # Handle ML subcommands
+                # Start with stages from args.ml if present
                 stages = []
-                if args.ml_train or not any([args.ml_detect, args.ml_interpret, args.ml_validate, args.ml_blind, args.ml_unblind]):
+                ml_args_list = validation_level if validation_level else []
+                
+                # Check args.ml for stage names
+                if 'train' in ml_args_list or args.ml_train:
                     stages.extend(['ssl', 'domain'])  # Train includes SSL + domain adaptation
-                if args.ml_detect or not any([args.ml_train, args.ml_interpret, args.ml_validate, args.ml_blind, args.ml_unblind]):
+                if 'detect' in ml_args_list or args.ml_detect:
                     stages.append('detect')
-                if args.ml_interpret or not any([args.ml_train, args.ml_detect, args.ml_validate, args.ml_blind, args.ml_unblind]):
+                if 'interpret' in ml_args_list or args.ml_interpret:
                     stages.append('interpret')
-                if args.ml_validate or not any([args.ml_train, args.ml_detect, args.ml_interpret, args.ml_blind, args.ml_unblind]):
+                if 'validate' in ml_args_list or args.ml_validate:
                     stages.append('validate')
-                if args.ml_blind:
+                if 'blind' in ml_args_list or args.ml_blind:
                     stages.append('blind')
-                if args.ml_unblind:
+                if 'unblind' in ml_args_list or args.ml_unblind:
                     stages.append('unblind')
+
+                # If validate_basic is True (from standard validation parsing), ensure 'validate' is in stages
+                if validate_basic and 'validate' not in stages:
+                    stages.append('validate')
 
                 # If no specific stages requested, run all
                 if not stages:
@@ -721,15 +738,35 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
             else:
                 # Standard pipeline structure
                 saved_results = saved_data.get('results', {})
-            if saved_results.get('main') or saved_results.get('clustering_analysis'):
-                main_results_exist = True
-                results = saved_results
-                if not quiet:
-                    logger.info(f"✓ Found existing main analysis results")
-            if saved_results.get('validation'):
-                basic_validation_exists = True
-                if not quiet:
-                    logger.info(f"✓ Found existing basic validation results")
+                if saved_results.get('main') or saved_results.get('clustering_analysis'):
+                    main_results_exist = True
+                    results = saved_results
+                    if not quiet:
+                        logger.info(f"✓ Found existing main analysis results")
+                if saved_results.get('validation'):
+                    basic_validation_exists = True
+                    if not quiet:
+                        logger.info(f"✓ Found existing basic validation results")
+            
+            # Special handling for ML pipeline: check checkpoint files for validation results
+            if pipeline_name == 'ml':
+                checkpoint_dir = Path("results") / "ml_pipeline" / "checkpoints"
+                validation_checkpoint = checkpoint_dir / "stage5_validation.pkl"
+                validation_results_file = checkpoint_dir / "stage5_validation_results.json"
+                if validation_checkpoint.exists() and validation_results_file.exists():
+                    # Check if validation was actually completed by looking at results file
+                    try:
+                        with open(validation_results_file, 'r') as f:
+                            validation_data = json.load(f)
+                            if validation_data and isinstance(validation_data, dict):
+                                # Check if results contain actual validation data
+                                if any(key in validation_data for key in ['bootstrap_results', 'null_hypothesis_results', 'cross_survey_results']):
+                                    basic_validation_exists = True
+                                    if not quiet:
+                                        logger.info(f"✓ Found existing ML validation checkpoint results")
+                    except Exception as e:
+                        if not quiet:
+                            logger.warning(f"⚠ Could not read ML validation checkpoint: {e}")
         except Exception as e:
             if not quiet:
                 logger.warning(f"⚠ Could not load {json_path}: {e}")
@@ -753,6 +790,28 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
     need_main_analysis = not main_results_exist
     need_basic_validation = config.get('validate_basic', False) and not basic_validation_exists
     need_extended_validation = config.get('validate_extended', False) and not extended_validation_exists
+    
+    # Special handling for ML pipeline: if 'validate' is in requested stages, ensure it runs
+    if pipeline_name == 'ml':
+        requested_stages = config.get('context', {}).get('stages', [])
+        if 'validate' in requested_stages:
+            # For ML, validation is part of run(), so we need to ensure run() is called
+            # Check if validation was actually completed by examining checkpoint
+            checkpoint_dir = Path("results") / "ml_pipeline" / "checkpoints"
+            validation_checkpoint = checkpoint_dir / "stage5_validation.pkl"
+            validation_results_file = checkpoint_dir / "stage5_validation_results.json"
+            
+            # If validation checkpoint doesn't exist or is incomplete, force rerun
+            if not (validation_checkpoint.exists() and validation_results_file.exists()):
+                need_main_analysis = True  # Force rerun to include validation
+                if not quiet:
+                    logger.info(f"ML validation requested but checkpoint not found, will run validation stage")
+            else:
+                # Check if blind was requested - if so, validation needs to be rerun to register protocol
+                if 'blind' in requested_stages:
+                    need_main_analysis = True  # Force rerun to register blind protocol
+                    if not quiet:
+                        logger.info(f"ML blind validation requested, forcing rerun to register protocol")
     
     # If all requested data products exist, skip to reporting
     if not need_main_analysis and not need_basic_validation and not need_extended_validation:
