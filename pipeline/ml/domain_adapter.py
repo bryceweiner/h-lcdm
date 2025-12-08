@@ -323,7 +323,7 @@ class DomainAdaptationTrainer:
         if hasattr(self.base_model, 'encode_with_grad'):
             encodings = self.base_model.encode_with_grad(batch)
         else:
-        encodings = self.base_model.encode(batch)
+            encodings = self.base_model.encode(batch)
         
         total_loss = 0
 
