@@ -42,7 +42,9 @@ class MockDatasetGenerator:
 
     def generate_mock_cmb_maps(self, n_multipoles: int = 1000,
                               ell_min: int = 100, ell_max: int = 3000,
-                              cosmic_variance: bool = True) -> Dict[str, Any]:
+                              cosmic_variance: bool = True,
+                              use_planck_template: bool = False,
+                              template_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate mock CMB power spectra matching real data statistics.
 
@@ -51,15 +53,37 @@ class MockDatasetGenerator:
             ell_min: Minimum multipole
             ell_max: Maximum multipole
             cosmic_variance: Include cosmic variance noise
+            use_planck_template: If True, use a Planck 2018 TT spectrum as the mean C_ell.
+            template_path: Optional path to a three-column file [ell, D_ell, sigma]; if None, use
+                           downloaded_data/planck_2018/planck_2018_TT_spectrum.dat when available.
 
         Returns:
             dict: Mock CMB data with same format as real data
         """
         ell = np.linspace(ell_min, ell_max, n_multipoles)
 
-        # Generate power law + Gaussian noise (typical CMB-like)
-        # C_ell ∝ ell^(-2.7) with scatter
-        base_cl = 1000 * (ell / 1000)**(-2.7)
+        # ------------------------------------------------------------------
+        # Choose base spectrum: template (preferred) or power-law fallback
+        # ------------------------------------------------------------------
+        base_cl = None
+        if use_planck_template:
+            path = Path(template_path) if template_path else Path("downloaded_data/planck_2018/planck_2018_TT_spectrum.dat")
+            if path.exists():
+                try:
+                    data = np.loadtxt(path)
+                    # Expect columns: ell, D_ell, sigma
+                    ell_template = data[:, 0]
+                    dell_template = data[:, 1]
+                    # Convert D_ell -> C_ell: D_ell = ell (ell+1) C_ell / (2π)
+                    cl_template = dell_template * 2 * np.pi / (ell_template * (ell_template + 1))
+                    # Interpolate onto target ell grid
+                    base_cl = np.interp(ell, ell_template, cl_template, left=cl_template[0], right=cl_template[-1])
+                except Exception:
+                    base_cl = None
+
+        if base_cl is None:
+            # Fallback: power-law with mild scatter
+            base_cl = 1000 * (ell / 1000) ** (-2.7)
 
         # Add random fluctuations (no phase transitions)
         noise_factor = 0.1
@@ -70,7 +94,7 @@ class MockDatasetGenerator:
             cosmic_var = np.sqrt(2 / (2 * ell + 1)) * mock_cl
             mock_cl += np.random.normal(0, cosmic_var)
 
-        mock_cl_err = 0.1 * mock_cl  # Typical measurement error
+        mock_cl_err = 0.1 * np.abs(mock_cl)  # Typical measurement error, positive
 
         return {
             'ell': ell,
@@ -78,7 +102,8 @@ class MockDatasetGenerator:
             'C_ell_err': mock_cl_err,
             'source': 'mock_cmb',
             'n_multipoles': n_multipoles,
-            'note': 'Mock CMB spectrum without H-ΛCDM phase transitions'
+            'note': 'Mock CMB spectrum without H-ΛCDM phase transitions',
+            'template_used': bool(use_planck_template and base_cl is not None)
         }
 
     def generate_mock_bao_measurements(self, n_measurements: int = 3,

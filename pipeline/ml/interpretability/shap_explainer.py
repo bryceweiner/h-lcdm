@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from typing import Dict, Any, List, Optional, Callable, Union, Tuple
 import warnings
+import logging
 
 try:
     import shap
@@ -44,6 +45,7 @@ class SHAPExplainer:
         self.model_predict_function = model_predict_function
         self.background_dataset = background_dataset
         self.max_evals = max_evals  # Will be set adaptively based on feature count
+        self.logger = logging.getLogger(__name__)
 
         # SHAP explainer (initialized when needed)
         self.explainer = None
@@ -136,14 +138,34 @@ class SHAPExplainer:
             indices = np.arange(len(dataset))
 
         explanations = []
+        
+        # Setup progress tracking
+        has_tqdm = False
+        pbar = None
+        try:
+            from tqdm import tqdm
+            pbar = tqdm(total=len(selected_data), desc="SHAP Explanations")
+            has_tqdm = True
+        except ImportError:
+            self.logger.info(f"Starting SHAP explanations for {len(selected_data)} samples...")
+
         for i, instance in enumerate(selected_data):
+            # Log progress if tqdm is not available
+            if not has_tqdm and (i % max(1, len(selected_data) // 10) == 0):
+                self.logger.info(f"SHAP progress: Explaining sample {i+1}/{len(selected_data)}...")
+
             try:
                 explanation = self.explain_instance(instance, background_samples)
                 explanation['original_index'] = int(indices[i])
                 explanations.append(explanation)
             except Exception as e:
                 warnings.warn(f"Failed to explain instance {i}: {e}")
-                continue
+            
+            if has_tqdm and pbar:
+                pbar.update(1)
+                
+        if pbar:
+            pbar.close()
 
         # Compute global feature importance
         if explanations:
