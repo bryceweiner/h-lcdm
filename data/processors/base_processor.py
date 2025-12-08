@@ -101,12 +101,35 @@ class BaseDataProcessor(ABC):
             'processing_timestamp': pd.Timestamp.now().isoformat(),
         }
 
+        # Helper function to check if data contains non-JSON-serializable objects
+        def contains_dataframes(obj):
+            """Check if object contains pandas DataFrames or other non-JSON-serializable objects."""
+            if isinstance(obj, pd.DataFrame):
+                return True
+            elif isinstance(obj, dict):
+                return any(contains_dataframes(v) for v in obj.values())
+            elif isinstance(obj, (list, tuple)):
+                return any(contains_dataframes(item) for item in obj)
+            elif isinstance(obj, (np.ndarray, np.generic)):
+                return True
+            elif isinstance(obj, (pd.Timestamp, pd.Timedelta)):
+                return True
+            return False
+        
         # Save based on data type
         if isinstance(data, pd.DataFrame):
             data.to_pickle(file_path)
         elif isinstance(data, (dict, list)):
-            with open(file_path.with_suffix('.json'), 'w') as f:
-                json.dump(data_package, f, indent=2, default=str)
+            # Check if dict/list contains DataFrames or other non-JSON-serializable objects
+            if contains_dataframes(data):
+                # Use pickle to preserve DataFrames and other complex objects
+                import pickle
+                with open(file_path.with_suffix('.pkl'), 'wb') as f:
+                    pickle.dump(data_package, f)
+            else:
+                # Safe to save as JSON
+                with open(file_path.with_suffix('.json'), 'w') as f:
+                    json.dump(data_package, f, indent=2, default=str)
         elif isinstance(data, np.ndarray):
             np.save(file_path.with_suffix('.npy'), data)
             # Save metadata separately

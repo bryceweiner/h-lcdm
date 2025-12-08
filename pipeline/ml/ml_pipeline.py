@@ -178,6 +178,12 @@ class MLPipeline(AnalysisPipeline):
 
         # Check if specific stages are requested
         requested_stages = self.context.get('stages', ['all'])
+        self.logger.info(f"Requested stages from context: {requested_stages}")
+
+        # If 'blind' is requested, force rerun validation to ensure blind protocol is registered
+        if 'blind' in requested_stages:
+            force_rerun = True
+            self.logger.info(f"Blind analysis requested: forcing validation rerun to register protocol. Requested stages: {requested_stages}, force_rerun: {force_rerun}")
 
         results = {}
 
@@ -244,12 +250,15 @@ class MLPipeline(AnalysisPipeline):
 
             # Stage 5: Validation
             if 'all' in requested_stages or 'validate' in requested_stages:
-                self.logger.info("Stage 5: Statistical Validation")
+                self.logger.info(f"Stage 5: Statistical Validation (requested_stages={requested_stages}, 'validate' in requested_stages={'validate' in requested_stages})")
                 validation_results = self.run_validation(master_pbar is not None, force_rerun=force_rerun)
+                self.logger.info(f"Validation completed. Results keys: {list(validation_results.keys()) if isinstance(validation_results, dict) else 'N/A'}")
                 results['validation'] = validation_results
                 if master_pbar:
                     master_pbar.update(1)
                     master_pbar.set_description("ML Pipeline: Validation Complete")
+            else:
+                self.logger.warning(f"Validation stage not requested. requested_stages={requested_stages}, 'validate' in requested_stages={'validate' in requested_stages}")
 
             if master_pbar:
                 master_pbar.close()
@@ -849,13 +858,27 @@ class MLPipeline(AnalysisPipeline):
             dict: Validation results
         """
         # Ensure previous stages are completed (load if needed)
-        self._ensure_stage_completed('pattern_detection', 'stage3_pattern_detection')
+        self.logger.info(f"Starting validation stage. force_rerun={force_rerun}")
+        try:
+            self._ensure_stage_completed('pattern_detection', 'stage3_pattern_detection')
+            self.logger.info("✓ Pattern detection stage prerequisites met")
+        except ValueError as e:
+            self.logger.error(f"Prerequisite stage not completed: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Unexpected error loading prerequisite stage: {e}")
+            raise
         
         # Check for checkpoint
         checkpoint_file = self.checkpoint_dir / "stage5_validation.pkl"
         results_file = self.checkpoint_dir / "stage5_validation_results.json"
         
-        if not force_rerun and checkpoint_file.exists() and results_file.exists():
+        self.logger.info(f"Checking for validation checkpoint: checkpoint_file.exists()={checkpoint_file.exists()}, results_file.exists()={results_file.exists()}, force_rerun={force_rerun}")
+        
+        # Skip checkpoint loading if force_rerun is True
+        if force_rerun:
+            self.logger.info("force_rerun=True: Skipping checkpoint load and running validation")
+        elif checkpoint_file.exists() and results_file.exists():
             self.logger.info("Loading validation checkpoint...")
             try:
                 checkpoint = self._load_stage_checkpoint('stage5_validation')
@@ -872,6 +895,7 @@ class MLPipeline(AnalysisPipeline):
             except Exception as e:
                 self.logger.warning(f"Failed to load validation checkpoint: {e}, rerunning stage")
 
+        self.logger.info("Proceeding with validation execution (checkpoint not found or force_rerun=True)")
         validation_results = {}
 
         # Progress bar for validation steps
@@ -882,6 +906,8 @@ class MLPipeline(AnalysisPipeline):
                            desc="Validation Progress",
                            unit="step",
                            bar_format='{desc}: {percentage:3.0f}%|{bar}| {n}/{total} [{elapsed}<{remaining}]')
+        
+        self.logger.info("Beginning validation steps...")
 
         # Cross-survey validation
         if TQDM_AVAILABLE and show_progress:
@@ -949,8 +975,30 @@ class MLPipeline(AnalysisPipeline):
             val_pbar.set_description("Null Hypothesis Testing Complete")
             val_pbar.close()
 
-        # Blind protocol (would be used in real analysis)
+        # Blind protocol (register if blind analysis was requested)
         self.blind_protocol = BlindAnalysisProtocol()
+        
+        # Register blind protocol if 'blind' was requested in stages
+        if 'blind' in self.context.get('stages', []):
+            self.logger.info("Registering blind analysis protocol...")
+            methodology = {
+                'pipeline_stages': ['ssl', 'domain', 'detect', 'interpret', 'validate'],
+                'anomaly_detection_methods': ['isolation_forest', 'hdbscan', 'vae'],
+                'validation_methods': ['bootstrap', 'null_hypothesis', 'cross_survey'],
+                'interpretability_methods': ['lime', 'shap']
+            }
+            research_question = "What cosmological anomalies are detected by unsupervised ML across multiple observational probes?"
+            success_criteria = {
+                'statistical_significance': 'p < 0.05',
+                'bootstrap_stability': '>= 95% detection frequency',
+                'cross_survey_consistency': 'patterns detected across multiple surveys'
+            }
+            registration_result = self.blind_protocol.register_protocol(
+                methodology=methodology,
+                research_question=research_question,
+                success_criteria=success_criteria
+            )
+            self.logger.info(f"Blind protocol registered: {registration_result.get('protocol_hash', 'unknown')}")
 
         self.stage_completed['validation'] = True
 
