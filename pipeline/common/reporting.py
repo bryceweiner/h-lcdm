@@ -1141,6 +1141,79 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
                         if isinstance(v, (int, float, str, bool)):
                             results_section += f"- {k.replace('_',' ').title()}: {v}\n"
                 results_section += "\n"
+                
+                # Statistical Test Results: Chi^2, Bootstrap, MC
+                results_section += "### Statistical Test Results\n\n"
+                
+                # Bootstrap results
+                bootstrap = validation.get('bootstrap', {}) if isinstance(validation, dict) else {}
+                if bootstrap:
+                    bootstrap_results = bootstrap.get('bootstrap_validation', {}) if isinstance(bootstrap, dict) else {}
+                    stability = bootstrap.get('stability_analysis', {}) if isinstance(bootstrap, dict) else {}
+                    
+                    if stability:
+                        results_section += "**Bootstrap Stability Analysis:**\n\n"
+                        mean_freq = stability.get('mean_detection_frequency', None)
+                        std_freq = stability.get('std_detection_frequency', None)
+                        if mean_freq is not None and std_freq is not None:
+                            results_section += f"- Mean detection frequency: {mean_freq:.4f} ± {std_freq:.4f}\n"
+                        stable_samples = stability.get('highly_stable_samples', None)
+                        if stable_samples is not None:
+                            results_section += f"- Highly stable samples (≥95%): {stable_samples}\n"
+                        unstable_samples = stability.get('unstable_samples', None)
+                        if unstable_samples is not None:
+                            results_section += f"- Unstable samples (≤5%): {unstable_samples}\n"
+                        percentiles = stability.get('detection_frequency_percentiles', [])
+                        if percentiles and len(percentiles) >= 3:
+                            results_section += f"- Detection frequency percentiles: Q25={percentiles[0]:.4f}, Q50={percentiles[1]:.4f}, Q75={percentiles[2]:.4f}\n"
+                        results_section += "\n"
+                    
+                    robust_patterns = stability.get('robust_patterns', {}) if isinstance(stability, dict) else {}
+                    if robust_patterns:
+                        n_robust = robust_patterns.get('n_robust_anomalies', None)
+                        if n_robust is not None:
+                            results_section += f"- Robust anomalies (detected in ≥95% of bootstrap samples): {n_robust}\n"
+                        results_section += "\n"
+                
+                # Chi-squared comparison (if available)
+                test_results = validation.get('test_results', {}) if isinstance(validation, dict) else {}
+                if test_results:
+                    chi2_results = test_results.get('chi_squared', {}) if isinstance(test_results, dict) else {}
+                    if chi2_results:
+                        results_section += "**Chi-Squared Comparison:**\n\n"
+                        hlcdm_chi2 = chi2_results.get('hlcdm', None)
+                        lcdm_chi2 = chi2_results.get('lcdm', None)
+                        if hlcdm_chi2 is not None:
+                            results_section += f"- H-ΛCDM: χ² = {hlcdm_chi2:.3f}\n"
+                        if lcdm_chi2 is not None:
+                            results_section += f"- ΛCDM: χ² = {lcdm_chi2:.3f}\n"
+                        if hlcdm_chi2 is not None and lcdm_chi2 is not None:
+                            delta_chi2 = abs(hlcdm_chi2 - lcdm_chi2)
+                            results_section += f"- Δχ² = {delta_chi2:.3f}\n"
+                        results_section += "\n"
+                
+                # Monte Carlo results (if available)
+                mc_results = validation.get('monte_carlo', {}) if isinstance(validation, dict) else {}
+                if mc_results:
+                    results_section += "**Monte Carlo Simulation Results:**\n\n"
+                    n_sim = mc_results.get('n_simulations', None)
+                    if n_sim is not None:
+                        results_section += f"- Number of simulations: {n_sim}\n"
+                    p_value = mc_results.get('p_value', None)
+                    if p_value is not None:
+                        results_section += f"- p-value: {p_value:.4f}\n"
+                    significance = mc_results.get('significance_level', None)
+                    if significance is not None:
+                        results_section += f"- Significance level: {significance:.4f}\n"
+                    mc_summary = mc_results.get('summary', {})
+                    if mc_summary:
+                        results_section += "- Simulation summary:\n"
+                        for key, val in mc_summary.items():
+                            if isinstance(val, (int, float)):
+                                results_section += f"  * {key.replace('_', ' ').title()}: {val:.4f}\n"
+                            elif isinstance(val, str):
+                                results_section += f"  * {key.replace('_', ' ').title()}: {val}\n"
+                    results_section += "\n"
 
             # Pattern Detection section moved to end of report
             if pattern:
