@@ -30,6 +30,36 @@ class MultiscaleGaussianKernel(nn.Module):
         self.bandwidths = bandwidths
 
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        # Log input shapes for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Kernel forward: x.shape={x.shape}, y.shape={y.shape}, x.dim()={x.dim()}, y.dim()={y.dim()}")
+        
+        # Ensure 2D tensors
+        if x.dim() > 2:
+            logger.warning(f"Kernel received 3D tensor x: {x.shape}, flattening")
+            x = x.flatten(start_dim=1)
+        if y.dim() > 2:
+            logger.warning(f"Kernel received 3D tensor y: {y.shape}, flattening")
+            y = y.flatten(start_dim=1)
+        
+        # Ensure exactly 2D
+        if x.dim() != 2:
+            logger.error(f"After flattening, x is still not 2D: {x.shape}")
+            x = x.view(x.shape[0], -1)
+        if y.dim() != 2:
+            logger.error(f"After flattening, y is still not 2D: {y.shape}")
+            y = y.view(y.shape[0], -1)
+        
+        # Ensure matching feature dimensions
+        if x.shape[1] != y.shape[1]:
+            logger.warning(f"Feature dimension mismatch: x.shape[1]={x.shape[1]}, y.shape[1]={y.shape[1]}, truncating to min")
+            min_dim = min(x.shape[1], y.shape[1])
+            x = x[:, :min_dim]
+            y = y[:, :min_dim]
+        
+        logger.debug(f"Kernel forward after normalization: x.shape={x.shape}, y.shape={y.shape}")
+        
         # Compute squared Euclidean distance
         xx = torch.matmul(x, x.t())
         yy = torch.matmul(y, y.t())
@@ -148,30 +178,87 @@ class DomainAdaptationTrainer:
         Returns:
             torch.Tensor: MMD loss
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.debug(f"compute_mmd_loss ENTRY: source.shape={source_features.shape}, target.shape={target_features.shape}")
+        logger.debug(f"compute_mmd_loss ENTRY: source.dim()={source_features.dim()}, target.dim()={target_features.dim()}")
+        
         if len(source_features) == 0 or len(target_features) == 0:
              return torch.tensor(0.0, device=self.device)
 
         # Ensure 2D tensors: flatten if needed
         if source_features.dim() > 2:
+            logger.error(f"compute_mmd_loss: source_features is {source_features.dim()}D: {source_features.shape}, flattening")
             source_features = source_features.flatten(start_dim=1)
         if target_features.dim() > 2:
+            logger.error(f"compute_mmd_loss: target_features is {target_features.dim()}D: {target_features.shape}, flattening")
             target_features = target_features.flatten(start_dim=1)
         
-        # Ensure consistent feature dimensions
-        if source_features.shape[1] != target_features.shape[1]:
-            min_dim = min(source_features.shape[1], target_features.shape[1])
-            source_features = source_features[:, :min_dim]
-            target_features = target_features[:, :min_dim]
+        # Force 2D if still not 2D
+        if source_features.dim() != 2:
+            logger.error(f"compute_mmd_loss: source_features still not 2D after flatten: {source_features.shape}, forcing view")
+            source_features = source_features.view(source_features.shape[0], -1)
+        if target_features.dim() != 2:
+            logger.error(f"compute_mmd_loss: target_features still not 2D after flatten: {target_features.shape}, forcing view")
+            target_features = target_features.view(target_features.shape[0], -1)
+        
+        logger.debug(f"compute_mmd_loss AFTER FLATTEN: source.shape={source_features.shape}, target.shape={target_features.shape}")
+        
+        # Ensure consistent feature dimensions: pad/truncate to latent_dim
+        source_feat_dim = source_features.shape[1]
+        target_feat_dim = target_features.shape[1]
+        
+        logger.debug(f"compute_mmd_loss: source_feat_dim={source_feat_dim}, target_feat_dim={target_feat_dim}, latent_dim={self.latent_dim}")
+        
+        if source_feat_dim < self.latent_dim:
+            pad = torch.zeros((source_features.shape[0], self.latent_dim - source_feat_dim), 
+                             device=source_features.device, dtype=source_features.dtype)
+            source_features = torch.cat([source_features, pad], dim=1)
+        elif source_feat_dim > self.latent_dim:
+            source_features = source_features[:, :self.latent_dim]
+        
+        if target_feat_dim < self.latent_dim:
+            pad = torch.zeros((target_features.shape[0], self.latent_dim - target_feat_dim), 
+                             device=target_features.device, dtype=target_features.dtype)
+            target_features = torch.cat([target_features, pad], dim=1)
+        elif target_feat_dim > self.latent_dim:
+            target_features = target_features[:, :self.latent_dim]
+
+        logger.debug(f"compute_mmd_loss BEFORE KERNEL: source.shape={source_features.shape}, target.shape={target_features.shape}")
+        logger.debug(f"compute_mmd_loss BEFORE KERNEL: source.dim()={source_features.dim()}, target.dim()={target_features.dim()}")
 
         # Compute kernel matrices
+        try:
         xx = self.kernel(source_features, source_features)
         yy = self.kernel(target_features, target_features)
         xy = self.kernel(source_features, target_features)
+        except Exception as e:
+            logger.error(f"compute_mmd_loss KERNEL ERROR: {e}")
+            logger.error(f"  source_features.shape={source_features.shape}, dim={source_features.dim()}")
+            logger.error(f"  target_features.shape={target_features.shape}, dim={target_features.dim()}")
+            raise
         
         # Unbiased MMD estimate
         # E[k(x,x')] + E[k(y,y')] - 2E[k(x,y)]
         m = source_features.shape[0]
         n = target_features.shape[0]
+        
+        # Handle edge cases
+        if m < 2 or n < 2:
+            # Fallback for small sample sizes
+            if m == 1 and n == 1:
+                return torch.tensor(0.0, device=source_features.device, requires_grad=True)
+            elif m == 1:
+                return (yy.sum() - torch.trace(yy)) / (n * (n - 1))
+            elif n == 1:
+                return (xx.sum() - torch.trace(xx)) / (m * (m - 1))
+        
+        # Ensure kernel matrices are 2D for trace operation
+        if xx.dim() > 2:
+            xx = xx.squeeze()
+        if yy.dim() > 2:
+            yy = yy.squeeze()
         
         # Exclude diagonal for unbiased estimator of E[k(x,x')]
         mmd = (xx.sum() - torch.trace(xx)) / (m * (m - 1)) + \
@@ -236,26 +323,47 @@ class DomainAdaptationTrainer:
         if hasattr(self.base_model, 'encode_with_grad'):
             encodings = self.base_model.encode_with_grad(batch)
         else:
-            encodings = self.base_model.encode(batch)
+        encodings = self.base_model.encode(batch)
         
         total_loss = 0
 
         # Apply adaptation per modality
+        import logging
+        logger = logging.getLogger(__name__)
+        
         for modality, features in encodings.items():
+            logger.debug(f"Processing modality {modality}: features.shape={features.shape}, features.dim()={features.dim()}")
+            
             # Ensure features require grad
             if not features.requires_grad:
                 features.requires_grad_(True)
 
             # Flatten to 2D and align dims across surveys to latent_dim
             if features.dim() > 2:
+                logger.warning(f"Modality {modality}: features is {features.dim()}D with shape {features.shape}, flattening")
                 features = features.flatten(start_dim=1)
+            elif features.dim() == 1:
+                logger.warning(f"Modality {modality}: features is 1D with shape {features.shape}, unsqueezing")
+                features = features.unsqueeze(0)
+            
+            # Ensure exactly 2D
+            if features.dim() != 2:
+                logger.error(f"Modality {modality}: After normalization, features is still not 2D: {features.shape}")
+                features = features.view(features.shape[0], -1)
+            
             # Pad or truncate to latent_dim for consistent kernel shapes
             feat_dim = features.shape[1]
+            logger.debug(f"Modality {modality}: feat_dim={feat_dim}, latent_dim={self.latent_dim}")
+            
             if feat_dim < self.latent_dim:
                 pad = torch.zeros((features.shape[0], self.latent_dim - feat_dim), device=features.device, dtype=features.dtype)
                 features = torch.cat([features, pad], dim=1)
+                logger.debug(f"Modality {modality}: Padded from {feat_dim} to {self.latent_dim}")
             elif feat_dim > self.latent_dim:
                 features = features[:, :self.latent_dim]
+                logger.debug(f"Modality {modality}: Truncated from {feat_dim} to {self.latent_dim}")
+            
+            logger.debug(f"Modality {modality}: Final features.shape={features.shape}")
 
             if method in ['mmd', 'both']:
                 # MMD adaptation: minimize distance between survey distributions
@@ -292,25 +400,54 @@ class DomainAdaptationTrainer:
                                         # Only use features from different surveys
                                         if cached_sid != current_sid:
                                             feats_dev = feats.to(self.device)
-                                            # Ensure cached features are normalized to latent_dim
+                                            # Ensure cached features are 2D and normalized to latent_dim
                                             if feats_dev.dim() > 2:
                                                 feats_dev = feats_dev.flatten(start_dim=1)
+                                            elif feats_dev.dim() == 1:
+                                                feats_dev = feats_dev.unsqueeze(0)
+                                            # Ensure exactly 2D: (batch, features)
+                                            if feats_dev.dim() != 2:
+                                                continue
                                             cached_feat_dim = feats_dev.shape[1]
                                             if cached_feat_dim < self.latent_dim:
                                                 pad = torch.zeros((feats_dev.shape[0], self.latent_dim - cached_feat_dim), device=feats_dev.device, dtype=feats_dev.dtype)
                                                 feats_dev = torch.cat([feats_dev, pad], dim=1)
                                             elif cached_feat_dim > self.latent_dim:
                                                 feats_dev = feats_dev[:, :self.latent_dim]
-                                            other_feats.append(feats_dev)
-                                            other_ids.append(torch.full((feats_dev.shape[0],), cached_sid, dtype=torch.long, device=self.device))
-                                    except (ValueError, IndexError):
+                                            # Final check: ensure 2D with correct feature dim
+                                            if feats_dev.dim() == 2 and feats_dev.shape[1] == self.latent_dim:
+                                                other_feats.append(feats_dev)
+                                                other_ids.append(torch.full((feats_dev.shape[0],), cached_sid, dtype=torch.long, device=self.device))
+                                    except (ValueError, IndexError, RuntimeError) as e:
                                         continue
                     
                     if other_feats:
                         cached_feat_cat = torch.cat(other_feats, dim=0)
                         cached_ids_cat = torch.cat(other_ids, dim=0)
+                        # Ensure features is also properly normalized before concatenation
+                        if features.dim() != 2 or features.shape[1] != self.latent_dim:
+                            # Re-normalize features to be safe
+                            if features.dim() > 2:
+                                features = features.flatten(start_dim=1)
+                            feat_dim = features.shape[1]
+                            if feat_dim < self.latent_dim:
+                                pad = torch.zeros((features.shape[0], self.latent_dim - feat_dim), device=features.device, dtype=features.dtype)
+                                features = torch.cat([features, pad], dim=1)
+                            elif feat_dim > self.latent_dim:
+                                features = features[:, :self.latent_dim]
                         augmented_features = torch.cat([features, cached_feat_cat], dim=0)
                         augmented_ids = torch.cat([survey_ids, cached_ids_cat], dim=0)
+                
+                # Final safety check: ensure augmented_features is 2D with correct dimensions
+                if augmented_features.dim() != 2:
+                    augmented_features = augmented_features.flatten(start_dim=1)
+                if augmented_features.shape[1] != self.latent_dim:
+                    feat_dim = augmented_features.shape[1]
+                    if feat_dim < self.latent_dim:
+                        pad = torch.zeros((augmented_features.shape[0], self.latent_dim - feat_dim), device=augmented_features.device, dtype=augmented_features.dtype)
+                        augmented_features = torch.cat([augmented_features, pad], dim=1)
+                    else:
+                        augmented_features = augmented_features[:, :self.latent_dim]
 
                 mmd_loss = self._compute_batch_mmd_loss(augmented_features, augmented_ids)
                 losses[f'{modality}_mmd'] = mmd_loss
@@ -371,12 +508,27 @@ class DomainAdaptationTrainer:
             return 'gw'
         else:
             return modality  # galaxy, frb, lyman_alpha, jwst
-    
+
     def _compute_batch_mmd_loss(self, features: torch.Tensor,
                                survey_ids: torch.Tensor) -> torch.Tensor:
         """
         Compute MMD loss across all survey pairs in batch.
         """
+        # Ensure features are properly normalized before MMD computation
+        if features.dim() > 2:
+            features = features.flatten(start_dim=1)
+        elif features.dim() == 1:
+            features = features.unsqueeze(0)
+        
+        # Normalize feature dimensions to latent_dim
+        feat_dim = features.shape[1]
+        if feat_dim < self.latent_dim:
+            pad = torch.zeros((features.shape[0], self.latent_dim - feat_dim), 
+                             device=features.device, dtype=features.dtype)
+            features = torch.cat([features, pad], dim=1)
+        elif feat_dim > self.latent_dim:
+            features = features[:, :self.latent_dim]
+        
         unique_surveys = torch.unique(survey_ids)
         mmd_losses = []
 
@@ -390,6 +542,12 @@ class DomainAdaptationTrainer:
                 if mask1.sum() > 0 and mask2.sum() > 0:
                     features1 = features[mask1]
                     features2 = features[mask2]
+                    
+                    # Final safety check: ensure both are 2D
+                    if features1.dim() != 2 or features2.dim() != 2:
+                        continue
+                    if features1.shape[1] != self.latent_dim or features2.shape[1] != self.latent_dim:
+                        continue
 
                     mmd_loss = self.compute_mmd_loss(features1, features2)
                     mmd_losses.append(mmd_loss)

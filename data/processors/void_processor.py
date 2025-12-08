@@ -64,7 +64,7 @@ class VoidDataProcessor(BaseDataProcessor):
         Returns:
             dict: Processed void data
         """
-        dataset_name = "void_catalogs_combined_processed"
+        dataset_name = "void_catalogs_combined"
         
         # Default to surveys with publicly available data via direct download
         # Available surveys: sdss_dr7_douglass, sdss_dr7_clampitt, desi, vide_public
@@ -73,10 +73,8 @@ class VoidDataProcessor(BaseDataProcessor):
             surveys = ['sdss_dr7_douglass', 'sdss_dr7_clampitt', 'desi']
 
         # Check if processed data exists and is fresh
-        deduplicated_cache_path = self.processed_data_dir / "voids_deduplicated.pkl"
-        
-        if deduplicated_cache_path.exists() and not force_reprocess:
-            # Check if we have processed data
+        # Note: get_processed_data_path() appends '_processed' automatically, so dataset_name should not include it
+        if not force_reprocess:
             cached_data = self.load_processed_data(dataset_name)
             if cached_data and 'catalog' in cached_data:
                 logger.info("Using cached void catalog processed data")
@@ -591,11 +589,11 @@ class VoidDataProcessor(BaseDataProcessor):
             }
         except Exception as e:
             logger.error(f"Unexpected error in network construction: {type(e).__name__}: {e}")
-        return {
+            return {
                 'error': f'Network construction error: {type(e).__name__}: {str(e)}',
                 'clustering_coefficient': 0.0,
                 'clustering_std': 0.03
-        }
+            }
 
     def process(self, survey_names: List[str]) -> Dict[str, Any]:
         """
@@ -895,6 +893,7 @@ class VoidDataProcessor(BaseDataProcessor):
                             f"x={x_val}, y={y_val}, z={z_val}. This indicates a problem with the cosmology calculation."
                         )
                     positions.append([x_val, y_val, z_val])
+                    continue  # Skip to next row after processing spherical coordinates
                 except Exception as e:
                     raise ValueError(
                         f"CRITICAL ERROR: Coordinate conversion failed at row {idx}: {e}. "
@@ -936,6 +935,7 @@ class VoidDataProcessor(BaseDataProcessor):
                             f"x={x_val}, y={y_val}, z={z_val}. This indicates a problem with the coordinate conversion."
                         )
                     positions.append([x_val, y_val, z_val])
+                    continue  # Skip to next row after processing comoving distance coordinates
                 except Exception as e:
                     raise ValueError(
                         f"CRITICAL ERROR: Coordinate conversion failed at row {idx}: {e}. "

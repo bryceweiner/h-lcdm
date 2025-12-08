@@ -157,7 +157,14 @@ class DataLoader:
         """
         # Try to load ACT DR6 first
         try:
-            ell, C_ell, C_ell_err = self.load_act_dr6()
+            act_data = self.load_act_dr6()
+            # Extract TT spectrum from dictionary (fallback to first available if TT missing)
+            if 'TT' in act_data:
+                ell, C_ell, C_ell_err = act_data['TT']
+            else:
+                # Fallback to first available spectrum
+                first_spectrum = next(iter(act_data.values()))
+                ell, C_ell, C_ell_err = first_spectrum
             return {
                 'ell': ell,
                 'C_ell': C_ell,
@@ -167,9 +174,15 @@ class DataLoader:
         except Exception:
             # Fallback to Planck 2018
             try:
-                result = self.load_planck_2018()
-                if result:
-                    ell, C_ell, C_ell_err = result
+                planck_data = self.load_planck_2018()
+                if planck_data:
+                    # Extract TT spectrum from dictionary (fallback to first available if TT missing)
+                    if 'TT' in planck_data:
+                        ell, C_ell, C_ell_err = planck_data['TT']
+                    else:
+                        # Fallback to first available spectrum
+                        first_spectrum = next(iter(planck_data.values()))
+                        ell, C_ell, C_ell_err = first_spectrum
                     return {
                         'ell': ell,
                         'C_ell': C_ell,

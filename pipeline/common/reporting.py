@@ -11,7 +11,7 @@ while ensuring accessibility.
 
 import os
 import numpy as np
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
 import json
 from datetime import datetime
@@ -114,11 +114,224 @@ class HLambdaDMReporter:
 
         with open(report_path, 'w') as f:
             f.write(self._generate_pipeline_header(pipeline_name, metadata))
-            f.write(self._generate_pipeline_results(pipeline_name, results))
-            f.write(self._generate_pipeline_validation(pipeline_name, results))
+            # For ML pipeline, generate Grok sections first, then results at end
+            if pipeline_name == 'ml':
+                grok_sections, analysis_results = self._generate_ml_pipeline_sections(results)
+                f.write(grok_sections)
+                f.write(self._generate_pipeline_validation(pipeline_name, results))
+                f.write(analysis_results)
+            else:
+                f.write(self._generate_pipeline_results(pipeline_name, results))
+                f.write(self._generate_pipeline_validation(pipeline_name, results))
             f.write(self._generate_pipeline_conclusion(pipeline_name, results))
 
         return str(report_path)
+
+    def _generate_ml_pipeline_sections(self, results: Dict[str, Any]) -> Tuple[str, str]:
+        """
+        Generate ML pipeline sections split into Grok analysis (early) and Analysis Results (end).
+        
+        Returns:
+            Tuple[str, str]: (grok_sections, analysis_results_section)
+        """
+        # Get main results
+        actual_results = results.get('results', results)
+        main_results = actual_results.get('main', {})
+        if not main_results or len(main_results) == 0:
+            main_results = {k: v for k, v in actual_results.items() if k not in ['validation', 'validation_extended']}
+        
+        pattern = main_results.get('pattern_detection', {})
+        grok_sections = ""
+        analysis_results_section = "## Analysis Results\n\n"
+        
+        # Extract Grok sections from pattern detection
+        top_anoms = pattern.get('top_anomalies', []) if pattern else []
+        sample_context = pattern.get('sample_context', {}) or {}
+        
+        # Bootstrap robustness info
+        robust_indices = []
+        bootstrap = main_results.get('validation', {}).get('bootstrap', {}) if isinstance(main_results.get('validation', {}), dict) else {}
+        stability = bootstrap.get('stability_analysis', {}) if isinstance(bootstrap, dict) else {}
+        robust_patterns = stability.get('robust_patterns', {}) if isinstance(stability, dict) else {}
+        if isinstance(robust_patterns, dict):
+            robust_indices = robust_patterns.get('robust_anomaly_indices', []) or []
+        
+        # Index -> enriched anomaly
+        by_idx = {a.get('sample_index'): a for a in top_anoms if 'sample_index' in a}
+        
+        # Build anomalies with score >= 0.5 from ensemble scores
+        anomalies_ge = []
+        ensemble_scores = pattern.get('aggregated_results', {}).get('ensemble_scores', []) if pattern else []
+        agg_context = pattern.get('aggregated_results', {}) or {} if pattern else {}
+        default_modalities = agg_context.get('modalities', [])
+        default_ctx = {'redshift_regime': 'n/a', 'modalities': default_modalities}
+        sample_context = agg_context.get('sample_context', {}) or {}
+        
+        # Safely check if ensemble_scores has elements
+        has_scores = False
+        if isinstance(ensemble_scores, (list, tuple)):
+            has_scores = bool(ensemble_scores)
+        elif isinstance(ensemble_scores, np.ndarray):
+            has_scores = ensemble_scores.size > 0
+        
+        if has_scores:
+            for i, sc in enumerate(ensemble_scores):
+                if sc >= 0.5:
+                    base = by_idx.get(i, {"sample_index": i})
+                    entry = {
+                        **base,
+                        "anomaly_score": base.get("anomaly_score", float(sc)),
+                        "favored_model": base.get("favored_model", "INDETERMINATE"),
+                        "ontology_tags": base.get("ontology_tags", []),
+                        "context": base.get("context") or sample_context.get(str(i)) or sample_context.get(i, {}) or default_ctx
+                    }
+                    if not entry["context"]:
+                        entry["context"] = default_ctx
+                    entry["context"].setdefault("redshift_regime", "n/a")
+                    entry["context"].setdefault("modalities", default_modalities)
+                    anomalies_ge.append(entry)
+        else:
+            anomalies_ge = []
+            for a in top_anoms:
+                if a.get("anomaly_score", 0) >= 0.5:
+                    ctx = a.get("context") or sample_context.get(str(a.get('sample_index'))) or sample_context.get(a.get('sample_index'), {}) or default_ctx
+                    ctx.setdefault("redshift_regime", "n/a")
+                    ctx.setdefault("modalities", default_modalities)
+                    enriched = dict(a)
+                    enriched.setdefault("favored_model", "INDETERMINATE")
+                    enriched.setdefault("ontology_tags", [])
+                    enriched["context"] = ctx
+                    anomalies_ge.append(enriched)
+        
+        # Apply robustness filter if available
+        if robust_indices:
+            anomalies_ge = [a for a in anomalies_ge if a.get('sample_index') in robust_indices]
+        
+        # Generate Grok sections (Scientific Interpretation, Recommendations, Detailed Analysis)
+        anomalies_for_grok = anomalies_ge if anomalies_ge else top_anoms
+        if self.grok_client and anomalies_for_grok:
+            grok_sections += "### Scientific Interpretation (AI Generated)\n\n"
+            grok_analysis = self.grok_client.generate_anomaly_report(
+                anomalies_for_grok, 
+                context="unsupervised ML pipeline analyzing CMB, BAO, and Void data for H-Lambda-CDM signatures",
+                two_stage=True,
+                three_stage=True
+            )
+            grok_sections += f"{grok_analysis}\n\n"
+        
+        # Generate Analysis Results section (technical details)
+        pipeline_status = main_results.get('pipeline_completed', False)
+        stages = main_results.get('stages_completed', {})
+        feature_summary = main_results.get('feature_summary', {})
+        ssl = main_results.get('ssl_training', {})
+        domain = main_results.get('domain_adaptation', {})
+        interp = main_results.get('interpretability', {})
+        validation = main_results.get('validation', {})
+        
+        analysis_results_section += f"### ML Pipeline Status\n\n"
+        analysis_results_section += f"- Pipeline completed: {'✓' if pipeline_status else '✗'}\n"
+        if stages:
+            completed = [k for k, v in stages.items() if v]
+            analysis_results_section += f"- Stages completed: {', '.join(completed)}\n"
+        if feature_summary:
+            analysis_results_section += f"- Latent samples: {feature_summary.get('n_samples', 'N/A')} × {feature_summary.get('latent_dim', 'N/A')} dims\n"
+        analysis_results_section += "\n"
+        
+        if ssl:
+            analysis_results_section += "### SSL Training\n\n"
+            analysis_results_section += f"- Training completed: {'✓' if ssl.get('training_completed') else '✗'}\n"
+            analysis_results_section += f"- Final contrastive loss: {ssl.get('final_loss', 'N/A')}\n"
+            analysis_results_section += f"- Modalities trained: {', '.join(ssl.get('modalities_trained', []))}\n\n"
+        
+        if domain:
+            metrics = domain.get('adaptation_metrics', {})
+            analysis_results_section += "### Domain Adaptation\n\n"
+            analysis_results_section += f"- Adaptation batches: {metrics.get('total_adaptation_steps', domain.get('total_batches', 'N/A'))}\n"
+            avg_losses = metrics.get('average_losses', {})
+            if avg_losses:
+                analysis_results_section += f"- Avg total adaptation loss: {avg_losses.get('avg_total_adaptation', 'N/A')}\n"
+            analysis_results_section += "\n"
+        
+        mcmc_res = main_results.get('mcmc', {})
+        if mcmc_res:
+            analysis_results_section += "### MCMC Inference\n\n"
+            acc = mcmc_res.get('acceptance_rate')
+            device = mcmc_res.get('device')
+            if acc is not None:
+                analysis_results_section += f"- Acceptance rate: {acc:.3f}\n"
+            if device:
+                analysis_results_section += f"- Device: {device}\n"
+            summary = mcmc_res.get('summary', {})
+            if summary:
+                analysis_results_section += "- Posterior summaries:\n"
+                for p, stats in summary.items():
+                    mean = stats.get('mean', 'N/A')
+                    lo = stats.get('ci16', None)
+                    hi = stats.get('ci84', None)
+                    if lo is not None and hi is not None:
+                        analysis_results_section += f"  * {p}: {mean} [{lo}, {hi}]\n"
+                    else:
+                        analysis_results_section += f"  * {p}: {mean}\n"
+            analysis_results_section += "\n"
+        
+        if interp:
+            analysis_results_section += "### Interpretability\n\n"
+            analysis_results_section += f"- Interpretability completed: {'✓' if interp.get('interpretability_completed') else '✗'}\n"
+            lime_count = len(interp.get('lime_explanations', []))
+            analysis_results_section += f"- LIME explanations: {lime_count}\n\n"
+        
+        if validation:
+            analysis_results_section += "### Validation\n\n"
+            if isinstance(validation, dict):
+                for k, v in validation.items():
+                    if isinstance(v, (int, float, str, bool)):
+                        analysis_results_section += f"- {k.replace('_',' ').title()}: {v}\n"
+            analysis_results_section += "\n"
+        
+        # Pattern Detection section
+        if pattern:
+            analysis_results_section += "### Pattern Detection\n\n"
+            analysis_results_section += f"- Detection completed: {'✓' if pattern.get('detection_completed') else '✗'}\n"
+            analysis_results_section += f"- Samples analyzed: {pattern.get('n_samples_analyzed', 'N/A')}\n"
+            
+            analysis_results_section += f"- Anomalies with score ≥ 0.5: {len(anomalies_ge)}\n"
+            if robust_indices:
+                analysis_results_section += f"  (Filtered to bootstrap-robust indices: {len(robust_indices)})\n"
+            
+            if anomalies_ge:
+                anomalies_ge_sorted = sorted(anomalies_ge, key=lambda x: -float(x.get("anomaly_score", 0)))
+                analysis_results_section += f"  - Highest anomaly score: {anomalies_ge_sorted[0].get('anomaly_score', 'N/A')}\n"
+                analysis_results_section += f"  - Anomaly leaderboard (all {len(anomalies_ge_sorted)} samples):\n"
+                for entry in anomalies_ge_sorted:
+                    si = entry.get('sample_index', 'N/A')
+                    sc = entry.get('anomaly_score', 'N/A')
+                    fm = entry.get('favored_model', 'INDETERMINATE')
+                    tags = entry.get('ontology_tags', [])
+                    ctx = entry.get('context', {}) if isinstance(entry.get('context'), dict) else {}
+                    zreg = ctx.get('redshift_regime', 'n/a')
+                    mods = ctx.get('modalities', [])
+                    analysis_results_section += f"    * {si}: {sc} | {fm} | tags={tags} | z={zreg} | mods={mods}\n"
+                
+                favored_counts = {}
+                tag_counts = {}
+                for entry in anomalies_ge_sorted:
+                    favored = entry.get("favored_model", "INDETERMINATE")
+                    favored_counts[favored] = favored_counts.get(favored, 0) + 1
+                    for tag in entry.get("ontology_tags", []):
+                        tag_counts[tag] = tag_counts.get(tag, 0) + 1
+                if favored_counts:
+                    analysis_results_section += "  - Model preference (favored_model counts):\n"
+                    for fm, cnt in favored_counts.items():
+                        analysis_results_section += f"    * {fm}: {cnt}\n"
+                if tag_counts:
+                    analysis_results_section += "  - Ontology tags (counts):\n"
+                    for tg, cnt in sorted(tag_counts.items(), key=lambda x: -x[1]):
+                        analysis_results_section += f"    * {tg}: {cnt}\n"
+            else:
+                analysis_results_section += "- No anomalies meet the score ≥ 0.5 threshold under current robustness filters.\n"
+            analysis_results_section += "\n"
+        
+        return grok_sections, analysis_results_section
 
     def _generate_hlcdm_individual_reports(self, results: Dict[str, Any],
                                           metadata: Optional[Dict[str, Any]] = None) -> str:
@@ -891,7 +1104,45 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
                 if avg_losses:
                     results_section += f"- Avg total adaptation loss: {avg_losses.get('avg_total_adaptation', 'N/A')}\n"
                 results_section += "\n"
+            
+            # Optional MCMC inference summary (if present in results)
+            mcmc_res = main_results.get('mcmc', {})
+            if mcmc_res:
+                results_section += "### MCMC Inference\n\n"
+                acc = mcmc_res.get('acceptance_rate')
+                device = mcmc_res.get('device')
+                if acc is not None:
+                    results_section += f"- Acceptance rate: {acc:.3f}\n"
+                if device:
+                    results_section += f"- Device: {device}\n"
+                summary = mcmc_res.get('summary', {})
+                if summary:
+                    results_section += "- Posterior summaries:\n"
+                    for p, stats in summary.items():
+                        mean = stats.get('mean', 'N/A')
+                        lo = stats.get('ci16', None)
+                        hi = stats.get('ci84', None)
+                        if lo is not None and hi is not None:
+                            results_section += f"  * {p}: {mean} [{lo}, {hi}]\n"
+                        else:
+                            results_section += f"  * {p}: {mean}\n"
+                results_section += "\n"
+                                
+            if interp:
+                results_section += "### Interpretability\n\n"
+                results_section += f"- Interpretability completed: {'✓' if interp.get('interpretability_completed') else '✗'}\n"
+                lime_count = len(interp.get('lime_explanations', []))
+                results_section += f"- LIME explanations: {lime_count}\n\n"
 
+            if validation:
+                results_section += "### Validation\n\n"
+                if isinstance(validation, dict):
+                    for k, v in validation.items():
+                        if isinstance(v, (int, float, str, bool)):
+                            results_section += f"- {k.replace('_',' ').title()}: {v}\n"
+                results_section += "\n"
+
+            # Pattern Detection section moved to end of report
             if pattern:
                 results_section += "### Pattern Detection\n\n"
                 results_section += f"- Detection completed: {'✓' if pattern.get('detection_completed') else '✗'}\n"
@@ -996,52 +1247,17 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
                     results_section += "- No anomalies meet the score ≥ 0.5 threshold under current robustness filters.\n"
                 results_section += "\n"
 
-                # GROK INTEGRATION: Generate qualitative interpretation
+                # GROK INTEGRATION: Generate qualitative interpretation (three-stage)
                 anomalies_for_grok = anomalies_ge if 'anomalies_ge' in locals() and anomalies_ge else top_anoms
                 if self.grok_client and anomalies_for_grok:
                     results_section += "### Scientific Interpretation (AI Generated)\n\n"
                     grok_analysis = self.grok_client.generate_anomaly_report(
                         anomalies_for_grok, 
-                        context="unsupervised ML pipeline analyzing CMB, BAO, and Void data for H-Lambda-CDM signatures"
+                        context="unsupervised ML pipeline analyzing CMB, BAO, and Void data for H-Lambda-CDM signatures",
+                        two_stage=True,  # Generate narrative first, then detailed analysis
+                        three_stage=True  # Also generate analytical test recommendations
                     )
                     results_section += f"{grok_analysis}\n\n"
-            
-            # Optional MCMC inference summary (if present in results)
-            mcmc_res = main_results.get('mcmc', {})
-            if mcmc_res:
-                results_section += "### MCMC Inference\n\n"
-                acc = mcmc_res.get('acceptance_rate')
-                device = mcmc_res.get('device')
-                if acc is not None:
-                    results_section += f"- Acceptance rate: {acc:.3f}\n"
-                if device:
-                    results_section += f"- Device: {device}\n"
-                summary = mcmc_res.get('summary', {})
-                if summary:
-                    results_section += "- Posterior summaries:\n"
-                    for p, stats in summary.items():
-                        mean = stats.get('mean', 'N/A')
-                        lo = stats.get('ci16', None)
-                        hi = stats.get('ci84', None)
-                        if lo is not None and hi is not None:
-                            results_section += f"  * {p}: {mean} [{lo}, {hi}]\n"
-                        else:
-                            results_section += f"  * {p}: {mean}\n"
-                results_section += "\n"
-                                
-            if interp:
-                results_section += "### Interpretability\n\n"
-                results_section += f"- Interpretability completed: {'✓' if interp.get('interpretability_completed') else '✗'}\n"
-                lime_count = len(interp.get('lime_explanations', []))
-                results_section += f"- LIME explanations: {lime_count}\n\n"
-
-            if validation:
-                results_section += "### Validation\n\n"
-                if isinstance(validation, dict):
-                    for k, v in validation.items():
-                        if isinstance(v, (int, float, str, bool)):
-                            results_section += f"- {k.replace('_',' ').title()}: {v}\n"
-                results_section += "\n"
         
         elif pipeline_name == 'tmdc':
             max_amp = main_results.get('max_amplification', 0)
@@ -1177,6 +1393,11 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
         basic_val = actual_results.get('validation', {})
         extended_val = actual_results.get('validation_extended', {})
         
+        # ML pipeline has special validation structure
+        if pipeline_name == 'ml':
+            validation += self._generate_ml_validation_section(actual_results)
+            return validation
+        
         if basic_val:
             overall_status = basic_val.get('overall_status', 'UNKNOWN')
             validation += f"### Basic Validation\n\n"
@@ -1287,6 +1508,131 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
                     validation += f"- Jackknife bias: {jk_bias:.6f}\n" if isinstance(jk_bias, (int, float)) else f"- Jackknife bias: {jk_bias}\n"
                     validation += f"- Jackknife std error: {jk_std:.6f}\n" if isinstance(jk_std, (int, float)) else f"- Jackknife std error: {jk_std}\n"
                     validation += "\n"
+        
+        return validation
+    
+    def _generate_ml_validation_section(self, actual_results: Dict[str, Any]) -> str:
+        """Generate ML pipeline validation section with statistical tests."""
+        validation = "### Basic Validation\n\n"
+        
+        # Get validation results - ML pipeline stores validation in main results
+        validation_data = actual_results.get('validation', {})
+        
+        # Determine overall status
+        overall_status = validation_data.get('overall_status', 'UNKNOWN')
+        if overall_status == 'UNKNOWN':
+            # Try to infer from available data
+            bootstrap = validation_data.get('bootstrap', {})
+            null_hypothesis = validation_data.get('null_hypothesis', {})
+            monte_carlo = validation_data.get('monte_carlo', {})
+            
+            if bootstrap or null_hypothesis or monte_carlo:
+                overall_status = 'PENDING_STATISTICAL_ANALYSIS'
+            else:
+                overall_status = 'UNKNOWN'
+        
+        validation += f"**Overall Status:** {overall_status}\n\n"
+        
+        # Bootstrap Stability Analysis
+        bootstrap = validation_data.get('bootstrap', {})
+        if bootstrap:
+            validation += "#### Bootstrap Stability Analysis\n\n"
+            stability_analysis = bootstrap.get('stability_analysis', {})
+            if stability_analysis:
+                mean_freq = stability_analysis.get('mean_detection_frequency', 0)
+                highly_stable = stability_analysis.get('highly_stable_samples', 0)
+                unstable = stability_analysis.get('unstable_samples', 0)
+                robust_anomalies = stability_analysis.get('n_robust_anomalies', 0)
+                
+                validation += f"**Bootstrap Resampling:** {bootstrap.get('validation_metadata', {}).get('n_bootstraps', 'N/A')} iterations\n\n"
+                validation += f"- Mean detection frequency: {mean_freq:.3f}\n"
+                validation += f"- Highly stable samples (≥95% frequency): {highly_stable}\n"
+                validation += f"- Unstable samples (≤5% frequency): {unstable}\n"
+                validation += f"- Robust anomalies (≥95% frequency): {robust_anomalies}\n\n"
+                
+                stability_summary = bootstrap.get('stability_summary', {})
+                if stability_summary:
+                    status = stability_summary.get('stability_status', 'N/A')
+                    validation += f"**Stability Status:** {status}\n\n"
+        
+        # Chi-Squared Comparison (H-ΛCDM vs ΛCDM)
+        null_hypothesis = validation_data.get('null_hypothesis', {})
+        if null_hypothesis:
+            validation += "#### Chi-Squared Comparison (H-ΛCDM vs ΛCDM)\n\n"
+            
+            real_data_result = null_hypothesis.get('real_data_result', {})
+            statistical_analysis = null_hypothesis.get('statistical_analysis', {})
+            
+            # Extract chi-squared values if available
+            hlcdm_chi2 = real_data_result.get('hlcdm_chi2')
+            lcdm_chi2 = real_data_result.get('lcdm_chi2')
+            
+            # If not in real_data_result, check statistical_analysis
+            if hlcdm_chi2 is None:
+                hlcdm_chi2 = statistical_analysis.get('hlcdm_chi2')
+            if lcdm_chi2 is None:
+                lcdm_chi2 = statistical_analysis.get('lcdm_chi2')
+            
+            if hlcdm_chi2 is not None and lcdm_chi2 is not None:
+                delta_chi2 = abs(hlcdm_chi2 - lcdm_chi2)
+                
+                validation += f"**Model Comparison:**\n\n"
+                validation += f"- H-ΛCDM χ²: {hlcdm_chi2:.2f}\n"
+                validation += f"- ΛCDM χ²: {lcdm_chi2:.2f}\n"
+                validation += f"- Δχ² (H-ΛCDM - ΛCDM): {delta_chi2:.2f}\n\n"
+                
+                # Statistical conclusion
+                if delta_chi2 > 6:
+                    if hlcdm_chi2 < lcdm_chi2:
+                        validation += f"**Conclusion:** Strong statistical evidence (Δχ² = {delta_chi2:.2f} > 6) favors H-ΛCDM over ΛCDM. "
+                        validation += f"The lower χ² value ({hlcdm_chi2:.2f} vs {lcdm_chi2:.2f}) indicates H-ΛCDM provides a better fit to the observed anomaly patterns.\n\n"
+                    else:
+                        validation += f"**Conclusion:** Strong statistical evidence (Δχ² = {delta_chi2:.2f} > 6) favors ΛCDM over H-ΛCDM. "
+                        validation += f"The lower χ² value ({lcdm_chi2:.2f} vs {hlcdm_chi2:.2f}) indicates ΛCDM provides a better fit.\n\n"
+                elif delta_chi2 > 2:
+                    validation += f"**Conclusion:** Moderate statistical evidence (2 < Δχ² = {delta_chi2:.2f} ≤ 6) suggests a preference, but not definitive. "
+                    validation += f"Further data or analysis may clarify the model comparison.\n\n"
+                else:
+                    validation += f"**Conclusion:** Weak or no statistical preference (Δχ² = {delta_chi2:.2f} ≤ 2). "
+                    validation += f"Both models fit the data comparably within statistical uncertainty.\n\n"
+            else:
+                validation += "Chi-squared values not available in validation results.\n\n"
+            
+            # Null hypothesis test results
+            significance_test = null_hypothesis.get('significance_test', {})
+            if significance_test:
+                p_value = significance_test.get('p_value')
+                overall_sig = significance_test.get('overall_significance', False)
+                
+                validation += f"**Null Hypothesis Test:**\n\n"
+                if p_value is not None:
+                    validation += f"- p-value: {p_value:.4f}\n"
+                validation += f"- Overall significance: {'Significant' if overall_sig else 'Not significant'}\n\n"
+        
+        # Monte Carlo Simulation Results
+        monte_carlo = validation_data.get('monte_carlo', {})
+        if monte_carlo:
+            validation += "#### Monte Carlo Simulation Results\n\n"
+            n_simulations = monte_carlo.get('n_simulations', 'N/A')
+            p_value = monte_carlo.get('p_value')
+            significance_level = monte_carlo.get('significance_level', 0.05)
+            mean_sim_score = monte_carlo.get('mean_sim_score')
+            std_sim_score = monte_carlo.get('std_sim_score')
+            
+            validation += f"**Simulations:** {n_simulations}\n"
+            if p_value is not None:
+                validation += f"- p-value: {p_value:.4f}\n"
+                validation += f"- Significance level: {significance_level}\n"
+                if p_value < significance_level:
+                    validation += f"- **Result:** Statistically significant (p < {significance_level})\n\n"
+                else:
+                    validation += f"- **Result:** Not statistically significant (p ≥ {significance_level})\n\n"
+            if mean_sim_score is not None and std_sim_score is not None:
+                validation += f"- Mean anomaly score (simulations): {mean_sim_score:.3f} ± {std_sim_score:.3f}\n\n"
+        
+        # If no validation data available
+        if not bootstrap and not null_hypothesis and not monte_carlo:
+            validation += "No statistical validation results available. Validation tests may not have been completed.\n\n"
         
         return validation
 

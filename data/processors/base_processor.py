@@ -145,18 +145,24 @@ class BaseDataProcessor(ABC):
 
         try:
             if file_path.suffix == '.pkl':
-                return pd.read_pickle(file_path)
+                loaded = pd.read_pickle(file_path)
+                # Check if it's a package dict (from fallback pickle) or a DataFrame (direct save)
+                if isinstance(loaded, dict) and 'data' in loaded:
+                    return loaded.get('data')
+                return loaded
             elif file_path.suffix == '.json':
                 with open(file_path, 'r') as f:
                     package = json.load(f)
-                return package
+                # Extract 'data' from package dict to match save_processed_data structure
+                return package.get('data') if isinstance(package, dict) and 'data' in package else package
             elif file_path.suffix == '.npy':
                 return np.load(file_path)
             else:
                 import pickle
                 with open(file_path, 'rb') as f:
                     package = pickle.load(f)
-                return package
+                # Extract 'data' from package dict to match save_processed_data structure
+                return package.get('data') if isinstance(package, dict) and 'data' in package else package
         except Exception:
             return None
 
