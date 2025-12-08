@@ -230,9 +230,9 @@ class DomainAdaptationTrainer:
 
         # Compute kernel matrices
         try:
-        xx = self.kernel(source_features, source_features)
-        yy = self.kernel(target_features, target_features)
-        xy = self.kernel(source_features, target_features)
+            xx = self.kernel(source_features, source_features)
+            yy = self.kernel(target_features, target_features)
+            xy = self.kernel(source_features, target_features)
         except Exception as e:
             logger.error(f"compute_mmd_loss KERNEL ERROR: {e}")
             logger.error(f"  source_features.shape={source_features.shape}, dim={source_features.dim()}")
