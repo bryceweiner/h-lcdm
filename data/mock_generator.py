@@ -193,7 +193,7 @@ class MockDatasetGenerator:
             'radius_mpc': void_radii,
             'ellipticity': ellipticities,
             'density_contrast': density_contrasts,
-            'alignment_angle_deg': alignment_angles,
+            'orientation_deg': alignment_angles,  # Use orientation_deg to match void feature extractor expectations
             'volume_mpc3': (4/3) * np.pi * void_radii**3,
             'surface_area_mpc2': 4 * np.pi * void_radii**2,
             'survey': 'mock_voids',

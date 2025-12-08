@@ -171,6 +171,9 @@ class VoidDataProcessor(BaseDataProcessor):
         combined = pd.concat(all_catalogs, ignore_index=True)
         logger.info(f"Combined catalog: {len(combined)} voids before deduplication")
 
+        # Define cache path for deduplicated catalog
+        deduplicated_cache_path = self.processed_data_dir / "voids_deduplicated.pkl"
+
         # Remove duplicates with caching
         if deduplicated_cache_path.exists() and not force_reprocess:
             logger.info("  Loading deduplicated catalog from cache...")
@@ -795,7 +798,7 @@ class VoidDataProcessor(BaseDataProcessor):
         
         # Optional columns - fill with defaults
         optional_columns = {
-            'void_id': lambda: range(len(catalog)),
+            'void_id': lambda: list(range(len(catalog))),  # Convert range to list for proper DataFrame assignment
             'aspect_ratio_method': lambda: 'default',
             'radius_mpc': lambda: np.nan,  # Can be calculated later
             'density_contrast': lambda: np.nan,  # Can be calculated later
