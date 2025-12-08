@@ -49,6 +49,7 @@ class BootstrapValidator:
 
         self.logger.info(f"Bootstrapping on {n_samples} samples")
 
+        n_failures = 0
         for i in range(self.n_bootstraps):
             if (i + 1) % 100 == 0:
                 self.logger.info(f"Bootstrap iteration {i + 1}/{self.n_bootstraps}")
@@ -63,10 +64,20 @@ class BootstrapValidator:
                 )
                 bootstrap_result['bootstrap_index'] = i
                 bootstrap_results.append(bootstrap_result)
+                
+                if not bootstrap_result.get('success', False):
+                    n_failures += 1
 
+            except (TypeError, ValueError) as e:
+                self.logger.error(f"Critical error in bootstrap {i}: {e}")
+                raise e
             except Exception as e:
                 self.logger.warning(f"Bootstrap {i} failed: {e}")
+                n_failures += 1
                 bootstrap_results.append({'bootstrap_index': i, 'error': str(e), 'success': False})
+
+        if n_failures > self.n_bootstraps * 0.1:
+            raise RuntimeError(f"Bootstrap validation failed: {n_failures}/{self.n_bootstraps} iterations failed. This exceeds the 10% tolerance threshold.")
 
         analysis_results = self._analyze_bootstrap_results(bootstrap_results)
 
@@ -159,6 +170,9 @@ class BootstrapValidator:
 
             return bootstrap_result
 
+        except (TypeError, ValueError) as e:
+            # Critical errors indicating code bugs should propagate
+            raise e
         except Exception as e:
             return {'success': False, 'error': str(e)}
 

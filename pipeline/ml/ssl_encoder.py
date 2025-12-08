@@ -356,6 +356,15 @@ class ContrastiveLearner:
             encodings = self.forward(data, use_momentum=False)
             return {mod: enc['encoded'] for mod, enc in encodings.items()}
 
+    def encode_with_grad(self, data: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """
+        Encode data to latent space with gradients enabled (for domain adaptation).
+        """
+        encodings = self.forward(data, use_momentum=False)
+        # Return only the encoded tensor (not the projected dict) so downstream
+        # domain adaptation sees a 2D tensor per modality.
+        return {mod: enc['encoded'] for mod, enc in encodings.items() if isinstance(enc, dict) and 'encoded' in enc}
+
     def save_checkpoint(self, path: str):
         """Save model checkpoint."""
         checkpoint = {

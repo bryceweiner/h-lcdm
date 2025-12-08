@@ -59,7 +59,8 @@ class NullHypothesisTester:
 
     def test_null_hypothesis(self, model_factory: Callable,
                            real_dataset: Dict[str, Any],
-                           modality: str = 'combined') -> Dict[str, Any]:
+                           modality: str = 'combined',
+                           mcmc_callback: Optional[Callable[[Dict[str, Any], bool], Any]] = None) -> Dict[str, Any]:
         """
         Test null hypothesis using mock datasets.
 
@@ -67,6 +68,8 @@ class NullHypothesisTester:
             model_factory: Function that creates fresh model instances
             real_dataset: Real cosmological dataset
             modality: Which modality to test ('combined' or specific modality)
+            mcmc_callback: Optional hook to run an MCMC posterior on the processed
+                           result; called as mcmc_callback(result_dict, is_real).
 
         Returns:
             dict: Null hypothesis testing results
@@ -81,6 +84,12 @@ class NullHypothesisTester:
             return {'error': 'Failed to test on real dataset'}
 
         self.logger.info(f"Real data: {real_result['n_detected']} detections, rate: {real_result['detection_rate']:.3f}")
+
+        if mcmc_callback:
+            try:
+                mcmc_callback(real_result, True)
+            except Exception as e:
+                self.logger.warning(f"MCMC callback on real data failed: {e}")
 
         # Test on mock datasets
         mock_results = []
@@ -98,6 +107,12 @@ class NullHypothesisTester:
 
             if mock_result.get('success', False):
                 mock_results.append(mock_result)
+
+                if mcmc_callback and (i < 20):  # Limit to a small subset to save time
+                    try:
+                        mcmc_callback(mock_result, False)
+                    except Exception as e:
+                        self.logger.warning(f"MCMC callback on mock {i+1} failed: {e}")
             else:
                 self.logger.warning(f"Mock test {i} failed")
 

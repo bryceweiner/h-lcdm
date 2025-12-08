@@ -32,7 +32,7 @@ import math
 import numpy as np
 import time
 import pandas as pd
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, List, Callable, Tuple
 from pathlib import Path
 import torch
 import logging
@@ -354,6 +354,33 @@ class MLPipeline(AnalysisPipeline):
             if ssl_pbar:
                 ssl_pbar.update(1)
                 ssl_pbar.set_postfix({'loss': f'{training_results[-1]["loss"]:.4f}'})
+            
+            # Save intermediate checkpoint every 500 epochs
+            if (epoch + 1) % 500 == 0:
+                intermediate_name = f'stage1_ssl_training_epoch_{epoch + 1}'
+                self._save_stage_checkpoint(intermediate_name, {
+                    'ssl_learner': self.ssl_learner,
+                    'cosmological_data': self.cosmological_data,
+                    'encoder_dims': encoder_dims
+                }, {
+                    'training_completed': False,
+                    'current_epoch': epoch + 1,
+                    'total_epochs': num_epochs,
+                    'loss': training_results[-1]['loss'],
+                    'training_history': training_results
+                })
+                # Also update the main checkpoint so we can resume if killed
+                self._save_stage_checkpoint('stage1_ssl_training', {
+                    'ssl_learner': self.ssl_learner,
+                    'cosmological_data': self.cosmological_data,
+                    'encoder_dims': encoder_dims
+                }, {
+                    'training_completed': False,
+                    'current_epoch': epoch + 1,
+                    'total_epochs': num_epochs,
+                    'loss': training_results[-1]['loss'],
+                    'training_history': training_results
+                })
 
         if ssl_pbar:
             ssl_pbar.close()
@@ -429,9 +456,12 @@ class MLPipeline(AnalysisPipeline):
         n_surveys = max(len(unique_surveys), 10)  # At least 10 surveys expected
         
         # Initialize domain adapter (device is automatically inferred from base_model)
+        # Use SSL learner's latent_dim to ensure consistency
+        ssl_latent_dim = getattr(self.ssl_learner, 'latent_dim', 512)
         self.domain_adapter = DomainAdaptationTrainer(
             base_model=self.ssl_learner,
             n_surveys=n_surveys,  # Dynamically determined from loaded surveys
+            latent_dim=ssl_latent_dim,  # Use SSL learner's latent dimension
             device=self.device
         )
 
@@ -623,6 +653,57 @@ class MLPipeline(AnalysisPipeline):
             ensemble_predictions['individual_scores']
         )
 
+        # Build full anomaly list (all samples, sorted by score) and ensure favored_model defaults
+        scores = aggregated_results.get('ensemble_scores', None)
+        if scores is None:
+            scores = ensemble_predictions.get('ensemble_scores', None)
+        if scores is None:
+            scores = []
+        scores_arr = np.array(scores)
+        full_anomalies = []
+        if scores_arr.size > 0:
+            ranked_indices = np.argsort(-scores_arr)
+            for r, idx in enumerate(ranked_indices, start=1):
+                full_anomalies.append({
+                    'sample_index': int(idx),
+                    'anomaly_score': float(scores_arr[idx]),
+                    'rank': r,
+                    'favored_model': 'H_LCDM_candidate' if scores_arr[idx] >= 0.7 else ('LCDM_consistent' if scores_arr[idx] <= 0.55 else 'INDETERMINATE'),
+                    'ontology_tags': ['high_score'] if scores_arr[idx] >= 0.7 else []
+                })
+        aggregated_results['top_anomalies'] = full_anomalies
+
+        # Enrich anomalies with minimal context so reporting has non-empty fields
+        sample_context = {}
+        default_modalities = list(self.ssl_learner.encoders.keys()) if self.ssl_learner else []
+        for idx in range(len(test_features)):
+            if self.extracted_metadata_cache and idx < len(self.extracted_metadata_cache):
+                meta = self.extracted_metadata_cache[idx]
+                sample_context[idx] = {
+                    'modalities': meta.get('modalities', default_modalities),
+                    'redshift_regime': meta.get('redshift_regime', 'n/a'),
+                    'redshift': meta.get('redshift')
+                }
+            else:
+                sample_context[idx] = {
+                    'modalities': default_modalities,
+                    'redshift_regime': 'n/a',
+                    'redshift': None
+                }
+
+        def _with_context(anomalies):
+            enriched = []
+            for a in anomalies:
+                entry = dict(a)
+                entry.setdefault('favored_model', 'INDETERMINATE')
+                entry.setdefault('ontology_tags', [])
+                entry['context'] = sample_context.get(a.get('sample_index'), {})
+                enriched.append(entry)
+            return enriched
+
+        aggregated_results['sample_context'] = sample_context
+        aggregated_results['top_anomalies'] = _with_context(aggregated_results.get('top_anomalies', []))
+
         self.stage_completed['pattern_detection'] = True
 
         results = {
@@ -698,14 +779,17 @@ class MLPipeline(AnalysisPipeline):
         )
 
         # Explain top anomalies - for astrophysics, analyze more candidates
-        # Top 1% of anomalies or top 20, whichever is smaller
+        # For reporting completeness, explain ALL anomalies (all samples)
         anomaly_scores = self.ensemble_detector.predict(test_features)['ensemble_scores']
-        n_top_anomalies = min(max(20, len(test_features) // 100), len(test_features))
-        top_anomaly_indices = np.argsort(-anomaly_scores)[:n_top_anomalies]
-        self.logger.info(f"Explaining top {n_top_anomalies} anomalies (top {100*n_top_anomalies/len(test_features):.1f}%)")
+        top_anomaly_indices = np.argsort(-anomaly_scores)
+        n_top_anomalies = len(top_anomaly_indices)
+        self.logger.info(f"Explaining all {n_top_anomalies} anomalies/samples (100.0%)")
 
         lime_explanations = []
         shap_explanations = []
+
+        if TQDM_AVAILABLE and show_progress:
+            pbar = tqdm(total=len(top_anomaly_indices), desc="Interpretability Analysis")
 
         for idx in top_anomaly_indices:
             instance = test_features[idx]
@@ -720,6 +804,12 @@ class MLPipeline(AnalysisPipeline):
                 shap_explanations.append(shap_exp)
             except:
                 shap_explanations.append({'error': 'SHAP explanation failed'})
+            
+            if TQDM_AVAILABLE and show_progress and pbar:
+                pbar.update(1)
+        
+        if TQDM_AVAILABLE and show_progress and pbar:
+            pbar.close()
 
         # Global SHAP importance
         global_shap = {'error': 'SHAP not available'}
@@ -820,10 +910,11 @@ class MLPipeline(AnalysisPipeline):
         if TQDM_AVAILABLE and show_progress:
             val_pbar.set_description("Running Bootstrap Validation")
         self.bootstrap_validator = BootstrapValidator(n_bootstraps=n_bootstraps)
-        test_data = {'features': self._extract_features_with_ssl(self._load_test_data())}
+        # Use extract_features_with_ssl directly to get the feature array (not wrapped in dict)
+        test_features_array = self._extract_features_with_ssl(self._load_test_data())
         bootstrap_results = self.bootstrap_validator.validate_stability(
             model_factory=lambda: EnsembleDetector(input_dim=512),
-            full_dataset=test_data
+            full_dataset=test_features_array
         )
         validation_results['bootstrap'] = bootstrap_results
 
@@ -845,9 +936,10 @@ class MLPipeline(AnalysisPipeline):
         )
 
         # Run null hypothesis test on combined modality
+        # NullHypothesisTester expects a dict with 'features' key for the real dataset
         null_results = self.null_hypothesis_tester.test_null_hypothesis(
             model_factory=lambda: EnsembleDetector(input_dim=512),
-            real_dataset={'features': test_data['features']},
+            real_dataset={'features': test_features_array},
             modality='combined'
         )
         validation_results['null_hypothesis'] = null_results
@@ -1381,9 +1473,12 @@ class MLPipeline(AnalysisPipeline):
         self.logger.info(f"Created {len(batches)} training batches")
         return batches
 
-    def _extract_features_from_data(self, data: Dict[str, Any], encoder_dims: Dict[str, int]) -> Dict[str, np.ndarray]:
+    def _extract_features_from_data(self, data: Dict[str, Any], encoder_dims: Dict[str, int], return_metadata: bool = False):
         """Delegate to FeatureExtractor module."""
-        return self.feature_extractor.extract_features_from_data(data, encoder_dims)
+        features, metadata = self.feature_extractor.extract_features_from_data(data, encoder_dims)
+        if return_metadata:
+            return features, metadata
+        return features
     
     def _extract_features_from_data_old(self, data: Dict[str, Any], encoder_dims: Dict[str, int]) -> Dict[str, np.ndarray]:
         """
@@ -1492,8 +1587,11 @@ class MLPipeline(AnalysisPipeline):
         return features
     
     def _clean_extracted_features(self, extracted_features: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-        """Delegate to FeatureExtractor module."""
-        return self.feature_extractor.clean_extracted_features(extracted_features)
+        """
+        Clean extracted features.
+        FeatureExtractor now handles cleaning and augmentation during extraction.
+        """
+        return extracted_features
     
     def _clean_extracted_features_old(self, extracted_features: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """
@@ -2107,10 +2205,11 @@ class MLPipeline(AnalysisPipeline):
         
         # Extract features from data
         encoder_dims = self._get_encoder_dimensions(data)
-        extracted_features = self._extract_features_from_data(data, encoder_dims)
+        extracted_features, extracted_metadata = self._extract_features_from_data(data, encoder_dims, return_metadata=True)
         
         # Use SSL encoders to extract latent representations
         all_latent_features = []
+        all_latent_metadata = []  # list of lists matching latent features per modality
         
         self.ssl_learner.eval()  # Set to evaluation mode
         with torch.no_grad():
@@ -2128,6 +2227,15 @@ class MLPipeline(AnalysisPipeline):
                 # Convert back to numpy
                 latent_np = latent.cpu().numpy()
                 all_latent_features.append(latent_np)
+                # Capture matching metadata list (or empty) for this modality
+                modality_meta = extracted_metadata.get(modality, [])
+                # Ensure metadata length matches latent rows
+                if len(modality_meta) < len(latent_np):
+                    # Pad with empty dicts
+                    modality_meta = modality_meta + [{}] * (len(latent_np) - len(modality_meta))
+                elif len(modality_meta) > len(latent_np):
+                    modality_meta = modality_meta[:len(latent_np)]
+                all_latent_metadata.append(modality_meta)
         
         if not all_latent_features:
             self.logger.warning("No features extracted, falling back to random features")
@@ -2137,16 +2245,56 @@ class MLPipeline(AnalysisPipeline):
         max_samples = max(len(f) for f in all_latent_features)
         target_samples = max(10, max_samples)
 
-        def resample_to_target(latent_array: np.ndarray, target: int) -> np.ndarray:
+        def resample_to_target(latent_array: np.ndarray, meta_list: List[Dict[str, Any]], target: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
             n = latent_array.shape[0]
             if n == 0:
-                return np.zeros((target, latent_dim))
+                return np.zeros((target, latent_dim)), [{} for _ in range(target)]
             repeats = math.ceil(target / n)
             repeated = np.tile(latent_array, (repeats, 1))
-            return repeated[:target]
+            repeated_meta = (meta_list * repeats)[:target]
+            return repeated[:target], repeated_meta
 
-        resampled = np.stack([resample_to_target(f, target_samples) for f in all_latent_features], axis=0)
+        resampled_features = []
+        resampled_metadata = []
+        for f, m in zip(all_latent_features, all_latent_metadata):
+            rf, rm = resample_to_target(f, m, target_samples)
+            resampled_features.append(rf)
+            resampled_metadata.append(rm)
+
+        resampled = np.stack(resampled_features, axis=0)
         combined_features = np.mean(resampled, axis=0)
+
+        # Combine metadata per sample across modalities
+        combined_metadata: List[Dict[str, Any]] = []
+        for idx in range(target_samples):
+            metas_here = [rm[idx] for rm in resampled_metadata if idx < len(rm)]
+            # gather redshift estimates
+            z_vals = []
+            for md in metas_here:
+                zc = md.get('z') or md.get('redshift')
+                if zc is not None:
+                    try:
+                        z_vals.append(float(zc))
+                    except Exception:
+                        pass
+            if z_vals:
+                z_mean = float(np.nanmean(z_vals))
+                if z_mean < 1.0:
+                    z_reg = 'low-z'
+                elif z_mean < 6.0:
+                    z_reg = 'mid-z'
+                else:
+                    z_reg = 'high-z'
+            else:
+                z_mean = None
+                z_reg = 'n/a'
+            combined_metadata.append({
+                'redshift': z_mean,
+                'redshift_regime': z_reg,
+                'modalities': list(self.ssl_learner.encoders.keys())
+            })
+        # cache metadata for downstream reporting
+        self.extracted_metadata_cache = combined_metadata
 
         self.logger.info("Extracted latent features per modality: %s", [len(f) for f in all_latent_features])
         

@@ -84,8 +84,16 @@ class DomainAdaptationTrainer:
         else:
             self.device = device
         
+        # Infer latent_dim from base_model if not provided
+        if latent_dim is None or latent_dim <= 0:
+            if hasattr(base_model, 'latent_dim'):
+                self.latent_dim = base_model.latent_dim
+            else:
+                self.latent_dim = 512  # Default fallback
+        else:
+            self.latent_dim = latent_dim
+        
         self.n_surveys = n_surveys
-        self.latent_dim = latent_dim
         self.adaptation_method = adaptation_method
 
         # Domain discriminators
@@ -106,6 +114,9 @@ class DomainAdaptationTrainer:
 
         # Adaptation loss tracking
         self.adaptation_losses = []
+        # Cache a small sample per (modality_type, survey_id) to enable cross-survey MMD
+        # Key format: "modality_type_survey_id" (e.g., "cmb_tt_0" for CMB TT from survey 0)
+        self.survey_feature_cache: Dict[str, torch.Tensor] = {}
 
     def _build_domain_discriminators(self) -> nn.ModuleDict:
         """Build domain discriminators for adversarial training."""
@@ -131,14 +142,26 @@ class DomainAdaptationTrainer:
         Compute Maximum Mean Discrepancy (MMD) loss using Multiscale Kernel.
         
         Parameters:
-            source_features: Features from source domain
-            target_features: Features from target domain
+            source_features: Features from source domain (must be 2D: batch, features)
+            target_features: Features from target domain (must be 2D: batch, features)
             
         Returns:
             torch.Tensor: MMD loss
         """
         if len(source_features) == 0 or len(target_features) == 0:
              return torch.tensor(0.0, device=self.device)
+
+        # Ensure 2D tensors: flatten if needed
+        if source_features.dim() > 2:
+            source_features = source_features.flatten(start_dim=1)
+        if target_features.dim() > 2:
+            target_features = target_features.flatten(start_dim=1)
+        
+        # Ensure consistent feature dimensions
+        if source_features.shape[1] != target_features.shape[1]:
+            min_dim = min(source_features.shape[1], target_features.shape[1])
+            source_features = source_features[:, :min_dim]
+            target_features = target_features[:, :min_dim]
 
         # Compute kernel matrices
         xx = self.kernel(source_features, source_features)
@@ -210,7 +233,10 @@ class DomainAdaptationTrainer:
         # If we only train the adapter, then no_grad is fine, but that defeats the purpose.
         # Assuming we are in a training loop where optimizer steps on encoder.
         
-        encodings = self.base_model.encode(batch)
+        if hasattr(self.base_model, 'encode_with_grad'):
+            encodings = self.base_model.encode_with_grad(batch)
+        else:
+            encodings = self.base_model.encode(batch)
         
         total_loss = 0
 
@@ -220,9 +246,73 @@ class DomainAdaptationTrainer:
             if not features.requires_grad:
                 features.requires_grad_(True)
 
+            # Flatten to 2D and align dims across surveys to latent_dim
+            if features.dim() > 2:
+                features = features.flatten(start_dim=1)
+            # Pad or truncate to latent_dim for consistent kernel shapes
+            feat_dim = features.shape[1]
+            if feat_dim < self.latent_dim:
+                pad = torch.zeros((features.shape[0], self.latent_dim - feat_dim), device=features.device, dtype=features.dtype)
+                features = torch.cat([features, pad], dim=1)
+            elif feat_dim > self.latent_dim:
+                features = features[:, :self.latent_dim]
+
             if method in ['mmd', 'both']:
                 # MMD adaptation: minimize distance between survey distributions
-                mmd_loss = self._compute_batch_mmd_loss(features, survey_ids)
+                # Extract modality type (e.g., "cmb_tt" from "cmb_act_dr6_tt")
+                modality_type = self._extract_modality_type(modality)
+                unique_ids = torch.unique(survey_ids)
+                current_sid = int(unique_ids[0].item()) if len(unique_ids) == 1 else None
+                
+                # Always cache features for this modality/survey combination
+                if current_sid is not None:
+                    cache_key = f"{modality_type}_{current_sid}"
+                    # Store normalized features (already normalized above)
+                    self.survey_feature_cache[cache_key] = features.detach().cpu()[:32]
+                
+                # Augment with cached features from OTHER surveys for the SAME modality type
+                augmented_features = features
+                augmented_ids = survey_ids
+                
+                if current_sid is not None and self.survey_feature_cache:
+                    other_feats = []
+                    other_ids = []
+                    # Look for cached features from OTHER surveys for THIS modality type
+                    for cache_key_str, feats in self.survey_feature_cache.items():
+                        if feats is None or feats.numel() == 0:
+                            continue
+                        # Parse cache key: "modality_type_survey_id"
+                        if isinstance(cache_key_str, str) and '_' in cache_key_str:
+                            parts = cache_key_str.rsplit('_', 1)
+                            if len(parts) == 2:
+                                cached_mod_type, cached_sid_str = parts
+                                if cached_mod_type == modality_type:
+                                    try:
+                                        cached_sid = int(cached_sid_str)
+                                        # Only use features from different surveys
+                                        if cached_sid != current_sid:
+                                            feats_dev = feats.to(self.device)
+                                            # Ensure cached features are normalized to latent_dim
+                                            if feats_dev.dim() > 2:
+                                                feats_dev = feats_dev.flatten(start_dim=1)
+                                            cached_feat_dim = feats_dev.shape[1]
+                                            if cached_feat_dim < self.latent_dim:
+                                                pad = torch.zeros((feats_dev.shape[0], self.latent_dim - cached_feat_dim), device=feats_dev.device, dtype=feats_dev.dtype)
+                                                feats_dev = torch.cat([feats_dev, pad], dim=1)
+                                            elif cached_feat_dim > self.latent_dim:
+                                                feats_dev = feats_dev[:, :self.latent_dim]
+                                            other_feats.append(feats_dev)
+                                            other_ids.append(torch.full((feats_dev.shape[0],), cached_sid, dtype=torch.long, device=self.device))
+                                    except (ValueError, IndexError):
+                                        continue
+                    
+                    if other_feats:
+                        cached_feat_cat = torch.cat(other_feats, dim=0)
+                        cached_ids_cat = torch.cat(other_ids, dim=0)
+                        augmented_features = torch.cat([features, cached_feat_cat], dim=0)
+                        augmented_ids = torch.cat([survey_ids, cached_ids_cat], dim=0)
+
+                mmd_loss = self._compute_batch_mmd_loss(augmented_features, augmented_ids)
                 losses[f'{modality}_mmd'] = mmd_loss
                 total_loss += self.mmd_lambda * mmd_loss
 
@@ -246,10 +336,42 @@ class DomainAdaptationTrainer:
                 total_loss += confusion_loss
 
         losses['total_adaptation'] = total_loss
-        self.adaptation_losses.append(losses)
+        
+        # Convert tensors to floats for logging/storage to avoid "tensor(0., ...)" strings in JSON
+        loggable_losses = {}
+        for k, v in losses.items():
+            loggable_losses[k] = v.item() if isinstance(v, torch.Tensor) else v
+            
+        self.adaptation_losses.append(loggable_losses)
 
-        return losses
+        # Return loggable (JSON-safe) losses so callers don't propagate tensors
+        return loggable_losses
 
+    def _extract_modality_type(self, modality: str) -> str:
+        """
+        Extract modality type from full modality name.
+        
+        Examples:
+            "cmb_act_dr6_tt" -> "cmb_tt"
+            "cmb_planck_2018_te" -> "cmb_te"
+            "bao_boss_dr12" -> "bao"
+            "galaxy" -> "galaxy"
+        """
+        if modality.startswith('cmb_'):
+            # Extract polarization type (tt, te, ee) from CMB modalities
+            for pol_type in ['tt', 'te', 'ee']:
+                if modality.endswith(f'_{pol_type}'):
+                    return f'cmb_{pol_type}'
+            return 'cmb'  # Fallback
+        elif modality.startswith('bao_'):
+            return 'bao'
+        elif modality.startswith('void_'):
+            return 'void'
+        elif modality.startswith('gw_'):
+            return 'gw'
+        else:
+            return modality  # galaxy, frb, lyman_alpha, jwst
+    
     def _compute_batch_mmd_loss(self, features: torch.Tensor,
                                survey_ids: torch.Tensor) -> torch.Tensor:
         """
@@ -264,7 +386,8 @@ class DomainAdaptationTrainer:
                 mask1 = survey_ids == survey1
                 mask2 = survey_ids == survey2
 
-                if mask1.sum() > 1 and mask2.sum() > 1:  # Need at least 2 samples
+                # Need at least 1 sample per survey for MMD
+                if mask1.sum() > 0 and mask2.sum() > 0:
                     features1 = features[mask1]
                     features2 = features[mask2]
 
@@ -274,7 +397,8 @@ class DomainAdaptationTrainer:
         if mmd_losses:
             return torch.stack(mmd_losses).mean()
         else:
-            return torch.tensor(0.0, device=features.device, requires_grad=True)
+            # If no pairs found, return a small non-zero value to ensure gradients flow
+            return torch.tensor(1e-6, device=features.device, requires_grad=True)
             
     def get_adaptation_metrics(self) -> Dict[str, Any]:
         """Get adaptation training metrics."""

@@ -33,22 +33,26 @@ class FeatureExtractor:
         self.logger = logger
         self.device = device
     
-    def extract_features_from_data(self, data: Dict[str, Any], encoder_dims: Dict[str, int]) -> Dict[str, np.ndarray]:
+    def extract_features_from_data(self, data: Dict[str, Any], encoder_dims: Dict[str, int]) -> Tuple[Dict[str, np.ndarray], Dict[str, List[Dict[str, Any]]]]:
         """
-        Extract features from actual cosmological data.
+        Extract features from actual cosmological data and capture metadata for physics residuals.
         
         Parameters:
             data: Dictionary of loaded cosmological data
             encoder_dims: Expected dimensions for each modality
             
         Returns:
-            Dictionary mapping modality names to feature arrays
+            Tuple containing:
+                - Dictionary mapping modality names to feature arrays
+                - Dictionary mapping modality names to list of metadata dicts (one per sample)
         """
         features = {}
+        metadata = {}
         
         for modality, dim in encoder_dims.items():
             if modality not in data or data[modality] is None:
                 features[modality] = np.array([])
+                metadata[modality] = []
                 continue
             
             modality_data = data[modality]
@@ -63,75 +67,107 @@ class FeatureExtractor:
                         
                         if len(C_ell) > 0:
                             # Interpolate/resample to expected dimension
-                            features[modality] = self._process_cmb_spectrum(ell, C_ell, C_ell_err, dim)
+                            feats, metas = self._process_cmb_spectrum(ell, C_ell, C_ell_err, dim)
+                            features[modality] = feats
+                            metadata[modality] = metas
                         else:
                             features[modality] = np.array([])
+                            metadata[modality] = []
                     else:
                         features[modality] = np.array([])
+                        metadata[modality] = []
                 
                 elif modality.startswith('bao_'):
                     # BAO measurement data
                     if isinstance(modality_data, pd.DataFrame):
-                        features[modality] = self._extract_bao_features(modality_data, dim)
+                        # DataFrame path not fully optimized for metadata yet, converting to dict logic
+                        # Or implementing generic DF handler
+                        feats, metas = self._extract_bao_features(modality_data, dim)
+                        features[modality] = feats
+                        metadata[modality] = metas
                     elif isinstance(modality_data, dict):
-                        features[modality] = self._extract_bao_features_from_dict(modality_data, dim)
+                        feats, metas = self._extract_bao_features_from_dict(modality_data, dim)
+                        features[modality] = feats
+                        metadata[modality] = metas
                     else:
                         features[modality] = np.array([])
+                        metadata[modality] = []
                 
                 elif modality.startswith('void_'):
                     # Void catalog data
                     if isinstance(modality_data, pd.DataFrame) and not modality_data.empty:
-                        features[modality] = self._extract_void_features(modality_data, dim)
+                        feats, metas = self._extract_void_features(modality_data, dim)
+                        features[modality] = feats
+                        metadata[modality] = metas
                     else:
                         features[modality] = np.array([])
+                        metadata[modality] = []
                 
                 elif modality == 'galaxy':
                     # Galaxy catalog data
                     if isinstance(modality_data, pd.DataFrame) and not modality_data.empty:
-                        features[modality] = self._extract_galaxy_features(modality_data, dim)
+                        feats, metas = self._extract_galaxy_features(modality_data, dim)
+                        features[modality] = feats
+                        metadata[modality] = metas
                     else:
                         features[modality] = np.array([])
+                        metadata[modality] = []
                 
                 elif modality == 'frb':
                     if isinstance(modality_data, pd.DataFrame) and not modality_data.empty:
-                        features[modality] = self._extract_frb_features(modality_data, dim)
+                        feats, metas = self._extract_frb_features(modality_data, dim)
+                        features[modality] = feats
+                        metadata[modality] = metas
                     else:
                         features[modality] = np.array([])
+                        metadata[modality] = []
                 
                 elif modality == 'lyman_alpha':
                     if isinstance(modality_data, pd.DataFrame) and not modality_data.empty:
-                        features[modality] = self._extract_lyman_alpha_features(modality_data, dim)
+                        feats, metas = self._extract_lyman_alpha_features(modality_data, dim)
+                        features[modality] = feats
+                        metadata[modality] = metas
                     else:
                         features[modality] = np.array([])
+                        metadata[modality] = []
                 
                 elif modality == 'jwst':
                     if isinstance(modality_data, pd.DataFrame) and not modality_data.empty:
-                        features[modality] = self._extract_jwst_features(modality_data, dim)
+                        feats, metas = self._extract_jwst_features(modality_data, dim)
+                        features[modality] = feats
+                        metadata[modality] = metas
                     else:
                         features[modality] = np.array([])
+                        metadata[modality] = []
                 
                 elif modality.startswith('gw_'):
                     if isinstance(modality_data, pd.DataFrame) and not modality_data.empty:
-                        features[modality] = self._extract_gw_features(modality_data, dim)
+                        feats, metas = self._extract_gw_features(modality_data, dim)
+                        features[modality] = feats
+                        metadata[modality] = metas
                     else:
                         features[modality] = np.array([])
+                        metadata[modality] = []
                 
                 else:
                     features[modality] = np.array([])
+                    metadata[modality] = []
                     
             except Exception as e:
                 self.logger.warning(f"Failed to extract features for {modality}: {e}")
                 features[modality] = np.array([])
+                metadata[modality] = []
         
-        return features
+        return features, metadata
 
     def _extract_dataframe_features(self, df: pd.DataFrame, target_dim: int, 
-                                  priority_cols: List[str] = []) -> np.ndarray:
+                                  priority_cols: List[str] = []) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         """
         Generic extraction with deterministic column ordering and downsampling.
+        Returns features and metadata list.
         """
         if df.empty:
-            return np.zeros((1, target_dim))
+            return np.zeros((1, target_dim)), [{}]
 
         # Apply deterministic downsampling to keep sizes manageable but statistically significant
         # Target ~50-100 samples per survey
@@ -157,17 +193,55 @@ class FeatureExtractor:
         ordered_cols = present_priority + other_cols
         
         if not ordered_cols:
-            return np.zeros((len(df_subset), target_dim))
+            return np.zeros((len(df_subset), target_dim)), [{} for _ in range(len(df_subset))]
             
         features = df_subset[ordered_cols].values
         
+        # Capture metadata for each row
+        # Prioritize z, ra, dec, mass, etc.
+        metadata_list = []
+        for _, row in df_subset.iterrows():
+            meta = {
+                'z': row.get('z', row.get('redshift', row.get('Z', 0.0))),
+                'ra': row.get('ra', row.get('RA', row.get('right_ascension', 0.0))),
+                'dec': row.get('dec', row.get('DEC', row.get('declination', 0.0))),
+                'original_data': row.to_dict()
+            }
+            metadata_list.append(meta)
+        
+        # If we have too few samples, augment by jittering
+        if len(features) < 10 and len(features) > 0:
+            n_needed = 50
+            n_copies = max(2, n_needed // len(features))
+            
+            aug_features_list = [features]
+            aug_meta_list = list(metadata_list)
+            
+            for _ in range(n_copies):
+                # Add small relative noise (1%) using deterministic seed per iteration
+                # Create deterministic seed based on feature sum and iteration index
+                iteration_seed = int(np.abs(features.sum()) * 1000) + _
+                rng = np.random.RandomState(iteration_seed % 2**32)
+                noise = rng.normal(0, 0.01, size=features.shape) * (np.abs(features) + 1e-6)
+                jittered = features + noise
+                aug_features_list.append(jittered)
+                
+                # Duplicate metadata with flag
+                for meta in metadata_list:
+                    new_meta = meta.copy()
+                    new_meta['is_augmented'] = True
+                    aug_meta_list.append(new_meta)
+            
+            features = np.vstack(aug_features_list)
+            metadata_list = aug_meta_list
+
         # Pad or truncate
         features = self._pad_features(features, target_dim)
             
         # Clean but DO NOT Normalize
         features = np.nan_to_num(features, nan=0.0, posinf=1e10, neginf=-1e10)
         
-        return features
+        return features, metadata_list
         
     def _pad_features(self, features: np.ndarray, target_dim: int) -> np.ndarray:
         """Pad or truncate features to target dimension."""
@@ -178,7 +252,7 @@ class FeatureExtractor:
             return features[:, :target_dim]
         return features
 
-    def _extract_void_features(self, void_df: pd.DataFrame, target_dim: int) -> np.ndarray:
+    def _extract_void_features(self, void_df: pd.DataFrame, target_dim: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         """
         Extract void features enforcing [RA, Dec, Z, ...] order.
         """
@@ -198,120 +272,52 @@ class FeatureExtractor:
             
         return self._extract_dataframe_features(void_df, target_dim, priority_cols)
 
-    def _extract_galaxy_features(self, galaxy_df: pd.DataFrame, target_dim: int) -> np.ndarray:
+    def _extract_galaxy_features(self, galaxy_df: pd.DataFrame, target_dim: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         """
-        Extract galaxy features with strict grouping for GalaxyEncoder compatibility.
+        Extract galaxy features with specific astrophysical columns.
         """
-        if galaxy_df.empty:
-            return np.zeros((1, target_dim))
-            
-        # Downsample first
-        target_samples = 100
-        if len(galaxy_df) > target_samples:
-            seed = len(galaxy_df) % 10000
-            rng = np.random.RandomState(seed)
-            indices = rng.choice(len(galaxy_df), target_samples, replace=False)
-            galaxy_df = galaxy_df.iloc[indices].copy()
+        # Map columns to standard set
+        col_map = {
+            'ra': ['ra', 'RA', 'right_ascension'],
+            'dec': ['dec', 'DEC', 'declination'],
+            'z': ['z', 'redshift', 'Z'],
+            'mass': ['mass', 'stellar_mass', 'logMstar'],
+            'sfr': ['sfr', 'SFR', 'logSFR'],
+            'metallicity': ['metallicity', 'Z_gas', 'OH_gas'],
+            'magnitude': ['mag', 'magnitude', 'petroMag_r']
+        }
+        
+        # Identify present columns
+        present_map = {}
+        for std, variants in col_map.items():
+            for v in variants:
+                if v in galaxy_df.columns:
+                    present_map[std] = v
+                    break
+        
+        # Construct priority list
+        priority_cols = [present_map.get(c) for c in ['ra', 'dec', 'z'] if c in present_map]
+        
+        # Use generic extractor but prioritize physics columns
+        return self._extract_dataframe_features(galaxy_df, target_dim, priority_cols)
 
-        all_cols = galaxy_df.select_dtypes(include=[np.number]).columns.tolist()
-        
-        # Define keyword matchers
-        photo_keys = ['mag', 'color', 'flux', '_u', '_g', '_r', '_i', '_z', 'band']
-        morph_keys = ['size', 'radius', 'ellip', 'conc', 'petro', 'deV', 'exp']
-        spec_keys = ['z', 'redshift', 'spec', 'line', 'alpha', 'oiii', 'h_beta']
-        
-        # Categorize columns
-        photo_cols = []
-        morph_cols = []
-        spec_cols = []
-        cluster_cols = []
-        
-        used_cols = set()
-        
-        # 1. Spectroscopic (Prioritize Z)
-        for col in all_cols:
-            if any(k in col.lower() for k in spec_keys):
-                spec_cols.append(col)
-                used_cols.add(col)
-        spec_cols.sort()
-        
-        # 2. Morphological
-        for col in all_cols:
-            if col in used_cols: continue
-            if any(k in col.lower() for k in morph_keys):
-                morph_cols.append(col)
-                used_cols.add(col)
-        morph_cols.sort()
-        
-        # 3. Photometric
-        for col in all_cols:
-            if col in used_cols: continue
-            if any(k in col.lower() for k in photo_keys):
-                photo_cols.append(col)
-                used_cols.add(col)
-        photo_cols.sort()
-        
-        # 4. Remaining (Clustering/Environment)
-        for col in all_cols:
-            if col not in used_cols:
-                cluster_cols.append(col)
-        cluster_cols.sort()
-        
-        # Construct ordered list
-        final_cols = []
-        
-        # Fill Photometric (pad or truncate to 10)
-        final_cols.extend(photo_cols[:10])
-        final_cols.extend([None] * (10 - len(photo_cols[:10])))
-        
-        # Fill Morphological (pad or truncate to 5)
-        final_cols.extend(morph_cols[:5])
-        final_cols.extend([None] * (5 - len(morph_cols[:5])))
-        
-        # Fill Spectroscopic (pad or truncate to 10)
-        final_cols.extend(spec_cols[:10])
-        final_cols.extend([None] * (10 - len(spec_cols[:10])))
-        
-        # Fill Clustering (rest)
-        final_cols.extend(cluster_cols)
-        
-        # Extract data
-        n_samples = len(galaxy_df)
-        features = np.zeros((n_samples, target_dim))
-        
-        current_idx = 0
-        for col in final_cols:
-            if current_idx >= target_dim:
-                break
-                
-            if col is not None and col in galaxy_df.columns:
-                features[:, current_idx] = galaxy_df[col].values
-            # Else leave as 0.0 (padding)
-            
-            current_idx += 1
-            
-        # Clean but DO NOT Normalize
-        features = np.nan_to_num(features, nan=0.0, posinf=1e10, neginf=-1e10)
-            
-        return features
-
-    def _extract_bao_features(self, bao_df: pd.DataFrame, target_dim: int) -> np.ndarray:
+    def _extract_bao_features(self, bao_df: pd.DataFrame, target_dim: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         """Extract features from BAO DataFrame."""
         return self._extract_dataframe_features(bao_df, target_dim, priority_cols=['z', 'redshift'])
 
-    def _extract_frb_features(self, frb_df: pd.DataFrame, target_dim: int) -> np.ndarray:
+    def _extract_frb_features(self, frb_df: pd.DataFrame, target_dim: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         return self._extract_dataframe_features(frb_df, target_dim)
 
-    def _extract_lyman_alpha_features(self, lyman_df: pd.DataFrame, target_dim: int) -> np.ndarray:
+    def _extract_lyman_alpha_features(self, lyman_df: pd.DataFrame, target_dim: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         return self._extract_dataframe_features(lyman_df, target_dim)
 
-    def _extract_jwst_features(self, jwst_df: pd.DataFrame, target_dim: int) -> np.ndarray:
+    def _extract_jwst_features(self, jwst_df: pd.DataFrame, target_dim: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         return self._extract_dataframe_features(jwst_df, target_dim)
 
-    def _extract_gw_features(self, gw_df: pd.DataFrame, target_dim: int) -> np.ndarray:
+    def _extract_gw_features(self, gw_df: pd.DataFrame, target_dim: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         return self._extract_dataframe_features(gw_df, target_dim)
 
-    def _augment_single_summary(self, row: np.ndarray, target_dim: int, n_aug: int = 100) -> np.ndarray:
+    def _augment_single_summary(self, row: np.ndarray, target_dim: int, n_aug: int = 100) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         """
         Augment single summary statistic into N samples.
         row: [z, val, err]
@@ -333,16 +339,29 @@ class FeatureExtractor:
         # Stack columns
         features = np.column_stack([z_samples, val_samples, err_samples])
         
-        return self._pad_features(features, target_dim)
+        # Create metadata
+        metadata_list = []
+        for i in range(n_aug):
+            metadata_list.append({
+                'z': z_samples[i],
+                'value': val_samples[i],
+                'error': err,
+                'is_augmented': True,
+                'source_z': z,
+                'source_val': val
+            })
+        
+        return self._pad_features(features, target_dim), metadata_list
 
-    def _extract_bao_features_from_dict(self, bao_dict: Dict[str, Any], target_dim: int) -> np.ndarray:
+    def _extract_bao_features_from_dict(self, bao_dict: Dict[str, Any], target_dim: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         """
         Extract features from BAO dict format (consensus measurements).
-        Returns (n_bins, dim) array.
+        Returns (n_bins, dim) array and metadata list.
         """
         # Case 1: 'measurements' list (standard from loader)
         if 'measurements' in bao_dict:
             rows = []
+            metadata_list = []
             for m in bao_dict['measurements']:
                 # Extract z, value, error
                 # Handle potential variations in keys
@@ -350,67 +369,78 @@ class FeatureExtractor:
                 val = m.get('value', 0.0)
                 err = m.get('error', 0.0)
                 rows.append([z, val, err])
+                metadata_list.append({
+                    'z': z,
+                    'value': val,
+                    'error': err,
+                    'type': 'BAO_D_M' # Assuming transverse unless specified
+                })
             
             features = np.array(rows)
             
             if len(features) == 0:
-                return np.zeros((1, target_dim))
+                return np.zeros((1, target_dim)), [{}]
                 
-            # If single point, augment
-            if len(features) == 1:
-                return self._augment_single_summary(features[0], target_dim)
+            # If few points (e.g. < 10), augment each measurement to create a statistical distribution
+            if len(features) < 10:
+                all_aug_feats = []
+                all_aug_meta = []
+                # Target ~50-100 total samples, split across the available measurements
+                n_aug_per_row = max(10, 100 // len(features))
                 
-            return self._pad_features(features, target_dim)
+                for i in range(len(features)):
+                    # _augment_single_summary returns padded features, we need unpadded for vstack if we want to be careful, 
+                    # but it pads to target_dim which is consistent.
+                    aug_feats, aug_meta = self._augment_single_summary(features[i], target_dim, n_aug=n_aug_per_row)
+                    all_aug_feats.append(aug_feats)
+                    all_aug_meta.extend(aug_meta)
+                
+                # Also include the original raw measurements
+                raw_padded = self._pad_features(features, target_dim)
+                all_aug_feats.append(raw_padded)
+                all_aug_meta.extend(metadata_list)
+                
+                return np.vstack(all_aug_feats), all_aug_meta
+                
+            return self._pad_features(features, target_dim), metadata_list
 
         # Case 2: Direct arrays (legacy or specialized format)
         arrays = []
         for key in ['z', 'D_M_over_r_d', 'D_H_over_r_d', 'error']:
             if key in bao_dict and isinstance(bao_dict[key], np.ndarray):
                 arrays.append(bao_dict[key])
-        
-        if len(arrays) > 0:
+                
+        if arrays:
+            # Assuming first array is z
             features = np.column_stack(arrays)
-            return self._pad_features(features, target_dim)
+            # Create basic metadata
+            metadata_list = []
+            for i in range(len(features)):
+                row = features[i]
+                metadata_list.append({
+                    'z': row[0] if len(row) > 0 else 0.0,
+                    'value': row[1] if len(row) > 1 else 0.0,
+                    'error': row[-1] if len(row) > 2 else 0.0
+                })
+            return self._pad_features(features, target_dim), metadata_list
             
-        return np.zeros((1, target_dim))
-
-    def clean_extracted_features(self, extracted_features: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-        """Clean extracted features by removing NaN/inf values."""
-        cleaned = {}
-        for modality, features in extracted_features.items():
-            if len(features) == 0:
-                cleaned[modality] = np.array([])
-                continue
-            
-            # Remove NaN/Inf rows
-            if len(features.shape) == 2:
-                valid_mask = ~(np.isnan(features).any(axis=1) | np.isinf(features).any(axis=1))
-                features_clean = features[valid_mask]
-                features_clean = np.nan_to_num(features_clean, nan=0.0, posinf=1e10, neginf=-1e10)
-            else:
-                features_clean = np.nan_to_num(features, nan=0.0, posinf=1e10, neginf=-1e10)
-            
-            # Ensure minimum samples? No, let the encoders handle small batches or let augmentation handle it.
-            # But the user said "every modality produces at least N samples" via fallback augmentation.
-            # I've handled augmentation in extractors. Here we just clean.
-            
-            cleaned[modality] = features_clean
-        return cleaned
+        return np.zeros((1, target_dim)), [{}]
 
     def _process_cmb_spectrum(self, ell: np.ndarray, C_ell: np.ndarray, 
-                             C_ell_err: Optional[np.ndarray], target_dim: int) -> np.ndarray:
+                             C_ell_err: Optional[np.ndarray], target_dim: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         """
         Process CMB power spectrum by chunking into low/mid/high-ell segments.
         Treats each chunk as an independent example.
+        Returns (n_samples, dim) and metadata list.
         """
         if len(C_ell) == 0:
-            return np.zeros((1, target_dim))
+            return np.zeros((1, target_dim)), [{}]
         
         C_ell = np.nan_to_num(C_ell, nan=0.0, posinf=1e10, neginf=-1e10)
         ell = np.nan_to_num(ell, nan=0.0, posinf=1e10, neginf=-1e10)
         
         if len(ell) == 0:
-            return np.zeros((1, target_dim))
+            return np.zeros((1, target_dim)), [{}]
 
         # Define chunks (Low, Mid, High)
         # Overlapping windows to increase sample count slightly and capture boundaries
@@ -422,6 +452,7 @@ class FeatureExtractor:
         ]
         
         samples = []
+        metadata_list = []
         
         # Pre-calculate error or variance
         if C_ell_err is None:
@@ -449,12 +480,12 @@ class FeatureExtractor:
             # Log-modulus transform
             D_ell_scaled_raw = D_ell * 1e12
             D_ell_scaled = np.sign(D_ell_scaled_raw) * np.log1p(np.abs(D_ell_scaled_raw))
-            
+        
             # Interpolate to target_dim
             ell_interp = np.linspace(chunk_ell.min(), chunk_ell.max(), target_dim)
             f_interp = interp1d(chunk_ell, D_ell_scaled, kind='cubic', bounds_error=False, fill_value='extrapolate')
             D_ell_interp = f_interp(ell_interp)
-            
+        
             # Interpolate error for noise addition
             with np.errstate(divide='ignore', invalid='ignore'):
                 rel_err = np.abs(chunk_err) / (np.abs(chunk_Cell) + 1e-20)
@@ -464,46 +495,61 @@ class FeatureExtractor:
             rel_err_interp = f_err(ell_interp)
             
             # Create a few realizations for this chunk to robustify
-            n_realizations = 5
-            for _ in range(n_realizations):
-                # Add noise based on error
-                noise = np.random.normal(0, rel_err_interp) * np.abs(D_ell_interp)
+            # Increased to 10 to ensure we get >10 samples even if only 1-2 chunks are valid
+            n_realizations = 10
+            for r_idx in range(n_realizations):
+                # Add noise based on error using deterministic seed
+                # Seed based on chunk properties and realization index
+                chunk_seed = int(np.abs(chunk_Cell.sum()) * 1000) + int(l_min) + r_idx
+                rng = np.random.RandomState(chunk_seed % 2**32)
+                noise = rng.normal(0, rel_err_interp) * np.abs(D_ell_interp)
                 sample = D_ell_interp + noise
                 sample = np.nan_to_num(sample, nan=0.0, posinf=10.0, neginf=-10.0)
                 samples.append(sample)
+                
+                # Metadata for physics calculation
+                # We store the mean ell and mean C_ell (scaled) for this chunk
+                # as a proxy for "location" in frequency space
+                metadata_list.append({
+                    'l_min': float(l_min),
+                    'l_max': float(l_max),
+                    'l_mean': float(np.mean(chunk_ell)),
+                    'C_ell_mean': float(np.mean(chunk_Cell)),
+                    'D_ell_mean': float(np.mean(D_ell)),
+                    'error_mean': float(np.mean(chunk_err)),
+                    'realization': r_idx,
+                    'type': 'CMB_Power_Spectrum'
+                })
 
         if not samples:
             # Fallback if no chunks worked (e.g. sparse data)
-            return np.zeros((1, target_dim))
-            
-        return np.array(samples)
+            return np.zeros((1, target_dim)), [{}]
+        
+        return np.array(samples), metadata_list
 
     def augment_data(self, features: np.ndarray, modality: str) -> np.ndarray:
         """
         Apply physics-informed data augmentation.
         """
         augmented = features.copy()
-        batch_size, dim = augmented.shape
+        
+        # Use deterministic seed based on feature content
+        seed_val = int(np.abs(features.sum()) * 1000) % 2**32
+        rng = np.random.RandomState(seed_val)
         
         if modality.startswith('cmb_'):
             # CMB noise is ell-dependent, but here we have feature vectors
             # Add generic noise
-            noise = np.random.normal(0, 0.1, size=augmented.shape)
+            noise = rng.normal(0, 0.1, size=augmented.shape)
             augmented = augmented + noise
         elif modality.startswith('bao_'):
-            noise = np.random.normal(0, 0.01, size=augmented.shape)
+            noise = rng.normal(0, 0.01, size=augmented.shape)
             augmented = augmented * (1 + noise)
         elif modality.startswith('void_'):
-            noise = np.random.normal(0, 0.05, size=augmented.shape)
+            noise = rng.normal(0, 0.05, size=augmented.shape)
             augmented = augmented + noise
         else:
-            noise_scale = 0.05
-            noise = np.random.normal(0, noise_scale, size=augmented.shape)
+            noise = rng.normal(0, 0.02, size=augmented.shape)
             augmented = augmented + noise
-        
-        dropout_rate = 0.1
-        mask = np.random.random(augmented.shape) > dropout_rate
-        augmented = augmented * mask
-        
-        augmented = np.nan_to_num(augmented, nan=0.0, posinf=1e10, neginf=-1e10)
+            
         return augmented
