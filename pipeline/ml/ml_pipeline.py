@@ -174,16 +174,18 @@ class MLPipeline(AnalysisPipeline):
         self.data_prep.context = self.context
         
         # Check for force_rerun flag
-        force_rerun = self.context.get('force_rerun', False)
+        force_rerun_all = self.context.get('force_rerun', False)
 
         # Check if specific stages are requested
         requested_stages = self.context.get('stages', ['all'])
         self.logger.info(f"Requested stages from context: {requested_stages}")
 
         # If 'blind' is requested, force rerun validation to ensure blind protocol is registered
+        # But don't force rerun prerequisite stages - they can use existing checkpoints
+        force_rerun_validation = False
         if 'blind' in requested_stages:
-            force_rerun = True
-            self.logger.info(f"Blind analysis requested: forcing validation rerun to register protocol. Requested stages: {requested_stages}, force_rerun: {force_rerun}")
+            force_rerun_validation = True
+            self.logger.info(f"Blind analysis requested: will force validation rerun to register protocol. Requested stages: {requested_stages}")
 
         results = {}
 
@@ -192,16 +194,61 @@ class MLPipeline(AnalysisPipeline):
         if 'all' in requested_stages:
             stages_to_run = ['ssl', 'domain', 'detect', 'interpret', 'validate']
         else:
-            if 'ssl' in requested_stages:
+            # Check which stages are explicitly requested
+            requested_ssl = 'ssl' in requested_stages or 'train' in requested_stages
+            requested_domain = 'domain' in requested_stages or 'train' in requested_stages
+            requested_detect = 'detect' in requested_stages
+            requested_interpret = 'interpret' in requested_stages
+            requested_validate = 'validate' in requested_stages
+            
+            # Auto-include prerequisites for requested stages
+            # Validation requires: interpret -> detect -> domain -> ssl
+            # Interpret requires: detect -> domain -> ssl
+            # Detection requires: domain -> ssl
+            # Domain requires: ssl
+            
+            if requested_validate:
+                # Validation should have interpretability results to explain patterns
+                # This is especially important for blind analysis
+                requested_interpret = True
+                # Validation needs pattern detection
+                requested_detect = True
+            if requested_interpret:
+                # Interpretability needs pattern detection to explain
+                requested_detect = True
+            if requested_detect:
+                # Detection needs domain adaptation
+                requested_domain = True
+            if requested_domain:
+                # Domain adaptation needs SSL training
+                requested_ssl = True
+            
+            # Add stages in order
+            if requested_ssl:
                 stages_to_run.append('ssl')
-            if 'domain' in requested_stages:
+            if requested_domain:
                 stages_to_run.append('domain')
-            if 'detect' in requested_stages:
+            if requested_detect:
                 stages_to_run.append('detect')
-            if 'interpret' in requested_stages:
+            if requested_interpret:
                 stages_to_run.append('interpret')
-            if 'validate' in requested_stages:
+            if requested_validate:
                 stages_to_run.append('validate')
+            
+            # Log auto-included prerequisites
+            auto_included = []
+            if requested_validate and 'interpret' not in requested_stages:
+                auto_included.append('interpret (for explaining patterns before validation)')
+            if requested_validate and 'detect' not in requested_stages:
+                auto_included.append('detect (prerequisite for validate)')
+            if (requested_interpret or requested_validate) and 'detect' not in requested_stages and 'detect' not in auto_included:
+                auto_included.append('detect (prerequisite for interpret)')
+            if (requested_detect or requested_interpret or requested_validate) and 'domain' not in requested_stages:
+                auto_included.append('domain (prerequisite for detect)')
+            if (requested_domain or requested_detect or requested_interpret or requested_validate) and 'ssl' not in requested_stages:
+                auto_included.append('ssl (prerequisite for domain)')
+            if auto_included:
+                self.logger.info(f"Auto-including prerequisite stages: {', '.join(auto_included)}")
 
         # Master progress bar
         master_pbar = None
@@ -213,45 +260,47 @@ class MLPipeline(AnalysisPipeline):
 
         try:
             # Stage 1: Self-Supervised Learning
-            if 'all' in requested_stages or 'ssl' in requested_stages:
+            if 'ssl' in stages_to_run:
                 self.logger.info("Stage 1: Self-Supervised Feature Learning")
-                ssl_results = self.run_ssl_training(master_pbar is not None, force_rerun=force_rerun)
+                ssl_results = self.run_ssl_training(master_pbar is not None, force_rerun=force_rerun_all)
                 results['ssl_training'] = ssl_results
                 if master_pbar:
                     master_pbar.update(1)
                     master_pbar.set_description("ML Pipeline: SSL Complete")
 
             # Stage 2: Domain Adaptation
-            if 'all' in requested_stages or 'domain' in requested_stages:
+            if 'domain' in stages_to_run:
                 self.logger.info("Stage 2: Domain Adaptation")
-                domain_results = self.run_domain_adaptation(master_pbar is not None, force_rerun=force_rerun)
+                domain_results = self.run_domain_adaptation(master_pbar is not None, force_rerun=force_rerun_all)
                 results['domain_adaptation'] = domain_results
                 if master_pbar:
                     master_pbar.update(1)
                     master_pbar.set_description("ML Pipeline: Domain Adaptation Complete")
 
             # Stage 3: Pattern Detection
-            if 'all' in requested_stages or 'detect' in requested_stages:
+            if 'detect' in stages_to_run:
                 self.logger.info("Stage 3: Ensemble Pattern Detection")
-                detection_results = self.run_pattern_detection(master_pbar is not None, force_rerun=force_rerun)
+                detection_results = self.run_pattern_detection(master_pbar is not None, force_rerun=force_rerun_all)
                 results['pattern_detection'] = detection_results
                 if master_pbar:
                     master_pbar.update(1)
                     master_pbar.set_description("ML Pipeline: Pattern Detection Complete")
 
             # Stage 4: Interpretability
-            if 'all' in requested_stages or 'interpret' in requested_stages:
+            if 'interpret' in stages_to_run:
                 self.logger.info("Stage 4: Interpretability Analysis")
-                interpret_results = self.run_interpretability(master_pbar is not None, force_rerun=force_rerun)
+                interpret_results = self.run_interpretability(master_pbar is not None, force_rerun=force_rerun_all)
                 results['interpretability'] = interpret_results
                 if master_pbar:
                     master_pbar.update(1)
                     master_pbar.set_description("ML Pipeline: Interpretability Complete")
 
             # Stage 5: Validation
-            if 'all' in requested_stages or 'validate' in requested_stages:
-                self.logger.info(f"Stage 5: Statistical Validation (requested_stages={requested_stages}, 'validate' in requested_stages={'validate' in requested_stages})")
-                validation_results = self.run_validation(master_pbar is not None, force_rerun=force_rerun)
+            if 'validate' in stages_to_run:
+                self.logger.info(f"Stage 5: Statistical Validation (requested_stages={requested_stages}, stages_to_run={stages_to_run})")
+                # Use force_rerun_validation if blind was requested, otherwise use force_rerun_all
+                validation_force_rerun = force_rerun_validation or force_rerun_all
+                validation_results = self.run_validation(master_pbar is not None, force_rerun=validation_force_rerun)
                 self.logger.info(f"Validation completed. Results keys: {list(validation_results.keys()) if isinstance(validation_results, dict) else 'N/A'}")
                 results['validation'] = validation_results
                 if master_pbar:
@@ -478,6 +527,9 @@ class MLPipeline(AnalysisPipeline):
 
         # Perform domain adaptation
         adaptation_losses = []
+        
+        # Track which surveys we've warned about batch size mismatches (to avoid spam)
+        warned_surveys = set()
 
         # Progress bar for domain adaptation
         domain_pbar = None
@@ -507,27 +559,51 @@ class MLPipeline(AnalysisPipeline):
                     encoder_dims
                 )
                 
-                # Create modality dictionary with tensors (take batch_size samples)
+                # Determine consistent batch size across ALL modalities
+                # Use minimum available samples to ensure all modalities can provide the same number
+                available_samples = []
                 for modality in survey_modalities:
                     if modality in extracted_features and len(extracted_features[modality]) > 0:
-                        n_samples = min(batch_size, len(extracted_features[modality]))
-                        # Use random sampling to get diverse batches
-                        indices = np.random.choice(len(extracted_features[modality]), 
-                                                  size=n_samples, 
-                                                  replace=False if n_samples <= len(extracted_features[modality]) else True)
-                        features = extracted_features[modality][indices]
-                        modality_dict[modality] = torch.FloatTensor(features).to(self.device)
+                        available_samples.append(len(extracted_features[modality]))
+                
+                if available_samples:
+                    # Use the minimum of requested batch_size and smallest modality size
+                    consistent_batch_size = min(batch_size, min(available_samples))
+                    
+                    # Create modality dictionary with tensors (all use same batch size)
+                    for modality in survey_modalities:
+                        if modality in extracted_features and len(extracted_features[modality]) > 0:
+                            # Use random sampling to get diverse batches
+                            indices = np.random.choice(len(extracted_features[modality]), 
+                                                      size=consistent_batch_size, 
+                                                      replace=False if consistent_batch_size <= len(extracted_features[modality]) else True)
+                            features = extracted_features[modality][indices]
+                            modality_dict[modality] = torch.FloatTensor(features).to(self.device)
             
             # Skip batch if no modalities found
             if not modality_dict:
                 self.logger.warning(f"No modalities found for survey {survey_name}, skipping batch")
                 continue
             
+            # Ensure all modalities have the same batch size
+            # Get minimum batch size across all modalities
+            batch_sizes = [tensor.shape[0] for tensor in modality_dict.values()]
+            min_batch_size = min(batch_sizes)
+            max_batch_size = max(batch_sizes)
+            
+            if min_batch_size != max_batch_size:
+                # Only warn once per survey to avoid log spam
+                if survey_name not in warned_surveys:
+                    self.logger.warning(f"Survey {survey_name}: Modalities have different batch sizes (min={min_batch_size}, max={max_batch_size}), truncating to min for all batches")
+                    warned_surveys.add(survey_name)
+                # Truncate all modalities to minimum batch size
+                modality_dict = {k: v[:min_batch_size] for k, v in modality_dict.items()}
+            
             # Create survey ID tensor - map each sample to a unique survey index
             # Use survey name to create a consistent index
             survey_index_map = {name: idx for idx, name in enumerate(sorted(unique_surveys))}
             survey_idx = survey_index_map.get(survey_name, 0)
-            n_samples = next(iter(modality_dict.values())).shape[0]
+            n_samples = min_batch_size  # Use the common batch size
             survey_id_tensor = torch.full((n_samples,), survey_idx, dtype=torch.long, device=self.device)
             
             try:
@@ -2602,7 +2678,14 @@ class MLPipeline(AnalysisPipeline):
         try:
             from data.loader import DataLoader
             loader = DataLoader(log_file=self.log_file)
-            ell, C_ell, C_ell_err = loader.load_act_dr6()
+            act_data = loader.load_act_dr6()
+            # Extract TT spectrum from dictionary (fallback to first available if TT missing)
+            if 'TT' in act_data:
+                ell, C_ell, C_ell_err = act_data['TT']
+            else:
+                # Fallback to first available spectrum
+                first_spectrum = next(iter(act_data.values()))
+                ell, C_ell, C_ell_err = first_spectrum
             self.log_progress(f"  Loaded {len(ell)} CMB multipoles for pattern matching")
         except Exception:
             self.log_progress("  Using synthetic data for pattern matching")

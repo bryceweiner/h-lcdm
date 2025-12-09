@@ -845,8 +845,11 @@ class VoidDataProcessor(BaseDataProcessor):
                 return np.array([])
 
         positions = []
+        catalog_indices = []  # Track which catalog rows correspond to which positions
 
         for idx, row in catalog.iterrows():
+            position_found = False
+            
             # 1. Direct Cartesian coordinates (Douglass catalogs)
             if all(col in catalog.columns for col in ['x', 'y', 'z']):
                 x = float(row['x'])
@@ -859,6 +862,8 @@ class VoidDataProcessor(BaseDataProcessor):
                         f"NaN/inf values indicate corrupted data. Fix the data source."
                     )
                 positions.append([x, y, z])
+                catalog_indices.append(idx)
+                position_found = True
                 continue
 
             # 2. Spherical coordinates (ra, dec, redshift)
@@ -896,6 +901,8 @@ class VoidDataProcessor(BaseDataProcessor):
                             f"x={x_val}, y={y_val}, z={z_val}. This indicates a problem with the cosmology calculation."
                         )
                     positions.append([x_val, y_val, z_val])
+                    catalog_indices.append(idx)
+                    position_found = True
                     continue  # Skip to next row after processing spherical coordinates
                 except Exception as e:
                     raise ValueError(
@@ -938,19 +945,41 @@ class VoidDataProcessor(BaseDataProcessor):
                             f"x={x_val}, y={y_val}, z={z_val}. This indicates a problem with the coordinate conversion."
                         )
                     positions.append([x_val, y_val, z_val])
+                    catalog_indices.append(idx)
+                    position_found = True
                     continue  # Skip to next row after processing comoving distance coordinates
                 except Exception as e:
                     raise ValueError(
                         f"CRITICAL ERROR: Coordinate conversion failed at row {idx}: {e}. "
                         f"Fix the data source or coordinate conversion logic."
                     ) from e
+            
+            # If no coordinate system matched for this row, raise an error
+            if not position_found:
+                raise ValueError(
+                    f"CRITICAL ERROR: Row {idx} does not match any supported coordinate system. "
+                    f"Catalog columns: {list(catalog.columns)}. "
+                    f"Expected one of: ['x','y','z'], ['ra_deg','dec_deg','redshift'], or ['ra_deg','dec_deg','r_los_mpc']. "
+                    f"Fix the data source or coordinate conversion logic."
+                )
 
         if len(positions) == 0:
             raise ValueError(
                 "CRITICAL ERROR: No valid positions could be extracted from catalog. "
                 "This indicates the catalog format is incorrect or all data is invalid."
             )
+        
+        # Verify we processed all rows
+        if len(positions) != len(catalog):
+            raise ValueError(
+                f"CRITICAL ERROR: Position count ({len(positions)}) does not match catalog length ({len(catalog)}). "
+                f"This indicates rows were skipped during coordinate conversion. "
+                f"Processed indices: {len(catalog_indices)} rows."
+            )
 
+        # Store catalog indices as an attribute for use in deduplication
+        self._catalog_indices_for_positions = catalog_indices
+        
         return np.array(positions)
 
     def _remove_spatial_duplicates(self, catalog: pd.DataFrame, min_separation: float = 5.0,
@@ -979,9 +1008,23 @@ class VoidDataProcessor(BaseDataProcessor):
         n_voids = len(positions_array)
 
         # Use CPU method for now (can add MPS acceleration later if needed)
-        keep_indices = self._remove_duplicates_cpu(positions_array, min_separation)
+        keep_position_indices = self._remove_duplicates_cpu(positions_array, min_separation)
 
-        filtered_catalog = catalog.iloc[keep_indices].copy()
+        # Map position indices back to catalog row indices
+        # If catalog_indices were tracked, use them; otherwise assume 1:1 mapping
+        if hasattr(self, '_catalog_indices_for_positions') and len(self._catalog_indices_for_positions) == len(positions):
+            catalog_indices = self._catalog_indices_for_positions
+            keep_catalog_indices = [catalog_indices[i] for i in keep_position_indices]
+        else:
+            # Fallback: assume positions correspond 1:1 with catalog rows
+            if len(positions) != len(catalog):
+                raise ValueError(
+                    f"CRITICAL ERROR: Position count ({len(positions)}) does not match catalog length ({len(catalog)}). "
+                    f"Cannot safely map position indices to catalog rows."
+                )
+            keep_catalog_indices = keep_position_indices
+
+        filtered_catalog = catalog.iloc[keep_catalog_indices].copy()
 
         logger.info(f"  ✓ Removed {len(catalog) - len(filtered_catalog)} duplicates")
         logger.info(f"  Final catalog: {len(filtered_catalog)} voids")
