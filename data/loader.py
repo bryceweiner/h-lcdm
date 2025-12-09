@@ -2648,6 +2648,29 @@ class DataLoader:
         if not ASTROQUERY_AVAILABLE:
             raise DataUnavailableError("astroquery not available - required for SDSS data loading")
 
+        # Validate and sanitize SQL parameters to prevent injection
+        # Convert to float and validate ranges before interpolating into SQL
+        try:
+            z_min_float = float(z_min)
+            z_max_float = float(z_max)
+            mag_limit_float = float(mag_limit)
+        except (ValueError, TypeError) as e:
+            raise ValueError(
+                f"Invalid parameter types for SDSS query: z_min={z_min} (type: {type(z_min)}), "
+                f"z_max={z_max} (type: {type(z_max)}), mag_limit={mag_limit} (type: {type(mag_limit)}). "
+                f"All parameters must be numeric."
+            ) from e
+        
+        # Validate parameter ranges to prevent SQL injection and ensure reasonable values
+        if not (0.0 <= z_min_float <= 10.0):
+            raise ValueError(f"z_min must be between 0.0 and 10.0, got {z_min_float}")
+        if not (0.0 <= z_max_float <= 10.0):
+            raise ValueError(f"z_max must be between 0.0 and 10.0, got {z_max_float}")
+        if z_min_float >= z_max_float:
+            raise ValueError(f"z_min ({z_min_float}) must be less than z_max ({z_max_float})")
+        if not (0.0 <= mag_limit_float <= 30.0):
+            raise ValueError(f"mag_limit must be between 0.0 and 30.0, got {mag_limit_float}")
+
         try:
             from astroquery.sdss import SDSS
             from astropy import coordinates as coord
@@ -2655,6 +2678,7 @@ class DataLoader:
 
             # Query SDSS for galaxies using explicit table prefixes
             # Remove computed column from SELECT to avoid parsing issues
+            # Parameters are validated above and converted to floats to prevent SQL injection
             query = f"""
             SELECT TOP 50000
                 p.ra, p.dec, s.z, s.zErr,
@@ -2664,9 +2688,9 @@ class DataLoader:
                 p.extinction_r
             FROM PhotoObj AS p
             INNER JOIN SpecObj AS s ON s.bestObjID = p.objID
-            WHERE s.z BETWEEN {z_min} AND {z_max}
+            WHERE s.z BETWEEN {z_min_float} AND {z_max_float}
                 AND s.zWarning = 0
-                AND p.petroMag_r < {mag_limit}
+                AND p.petroMag_r < {mag_limit_float}
                 AND p.clean = 1
                 AND (p.type = 3 OR p.type = 6)
             ORDER BY p.ra

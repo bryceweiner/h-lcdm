@@ -60,13 +60,18 @@ class MultiscaleGaussianKernel(nn.Module):
         
         logger.debug(f"Kernel forward after normalization: x.shape={x.shape}, y.shape={y.shape}")
         
-        # Compute squared Euclidean distance
-        xx = torch.matmul(x, x.t())
-        yy = torch.matmul(y, y.t())
-        xy = torch.matmul(x, y.t())
+        # Compute squared Euclidean distance between all pairs
+        # ||x_i - y_j||^2 = ||x_i||^2 + ||y_j||^2 - 2<x_i, y_j>
         
-        # Distance matrix: ||x-y||^2 = ||x||^2 + ||y||^2 - 2<x,y>
-        dist = xx.unsqueeze(1) + yy.unsqueeze(0) - 2 * xy
+        # Compute norms: ||x_i||^2 for each row
+        x_norm = (x ** 2).sum(dim=1)  # shape: (m,)
+        y_norm = (y ** 2).sum(dim=1)  # shape: (n,)
+        
+        # Compute inner products: <x_i, y_j>
+        xy = torch.matmul(x, y.t())  # shape: (m, n)
+        
+        # Pairwise squared distances: (m, 1) + (1, n) - 2*(m, n) = (m, n)
+        dist = x_norm.unsqueeze(1) + y_norm.unsqueeze(0) - 2 * xy
         
         # Sum of Gaussians at different scales
         val = 0
@@ -233,6 +238,8 @@ class DomainAdaptationTrainer:
             xx = self.kernel(source_features, source_features)
             yy = self.kernel(target_features, target_features)
             xy = self.kernel(source_features, target_features)
+            
+            logger.debug(f"compute_mmd_loss AFTER KERNEL: xx.shape={xx.shape}, yy.shape={yy.shape}, xy.shape={xy.shape}")
         except Exception as e:
             logger.error(f"compute_mmd_loss KERNEL ERROR: {e}")
             logger.error(f"  source_features.shape={source_features.shape}, dim={source_features.dim()}")
@@ -244,21 +251,42 @@ class DomainAdaptationTrainer:
         m = source_features.shape[0]
         n = target_features.shape[0]
         
+        # Ensure kernel matrices are 2D (should be after fix, but check anyway)
+        if xx.dim() > 2:
+            logger.warning(f"xx has dim {xx.dim()}, squeezing to 2D")
+            xx = xx.squeeze()
+        if yy.dim() > 2:
+            logger.warning(f"yy has dim {yy.dim()}, squeezing to 2D")
+            yy = yy.squeeze()
+        if xy.dim() > 2:
+            logger.warning(f"xy has dim {xy.dim()}, squeezing to 2D")
+            xy = xy.squeeze()
+        
         # Handle edge cases
         if m < 2 or n < 2:
             # Fallback for small sample sizes
             if m == 1 and n == 1:
                 return torch.tensor(0.0, device=source_features.device, requires_grad=True)
             elif m == 1:
-                return (yy.sum() - torch.trace(yy)) / (n * (n - 1))
+                # Only yy trace is valid
+                if yy.dim() == 2 and yy.shape[0] == yy.shape[1]:
+                    return (yy.sum() - torch.trace(yy)) / (n * (n - 1))
+                else:
+                    return torch.tensor(0.0, device=source_features.device, requires_grad=True)
             elif n == 1:
-                return (xx.sum() - torch.trace(xx)) / (m * (m - 1))
+                # Only xx trace is valid
+                if xx.dim() == 2 and xx.shape[0] == xx.shape[1]:
+                    return (xx.sum() - torch.trace(xx)) / (m * (m - 1))
+                else:
+                    return torch.tensor(0.0, device=source_features.device, requires_grad=True)
         
-        # Ensure kernel matrices are 2D for trace operation
-        if xx.dim() > 2:
-            xx = xx.squeeze()
-        if yy.dim() > 2:
-            yy = yy.squeeze()
+        # Verify shapes before trace
+        if xx.dim() != 2 or xx.shape[0] != xx.shape[1]:
+            logger.error(f"xx is not a square matrix: shape={xx.shape}, dim={xx.dim()}")
+            return torch.tensor(0.0, device=source_features.device, requires_grad=True)
+        if yy.dim() != 2 or yy.shape[0] != yy.shape[1]:
+            logger.error(f"yy is not a square matrix: shape={yy.shape}, dim={yy.dim()}")
+            return torch.tensor(0.0, device=source_features.device, requires_grad=True)
         
         # Exclude diagonal for unbiased estimator of E[k(x,x')]
         mmd = (xx.sum() - torch.trace(xx)) / (m * (m - 1)) + \
