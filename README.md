@@ -130,6 +130,14 @@ python main.py --bao validate --bao-datasets boss_dr12 desi_y1 eboss
 python main.py --bao --quiet --output-dir ./test_results
 ```
 
+### ML-derived recommendations (CMB residual γ test):
+```bash
+python main.py --recommendation 1
+```
+- Uses ACT DR6 TT data minus Planck ΛCDM TT to search for γ = H/π² modulation in ℓ = 500–2000.
+- Optional validation tiers mirror other pipelines: `--recommendation 1 validate` or `--recommendation 1 validate extended`.
+- Recommendation IDs are integer-coded; current analysis is `1`.
+
 ## Help
 
 For complete command-line options:

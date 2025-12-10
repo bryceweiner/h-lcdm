@@ -140,11 +140,15 @@ class TestMLPipelineMethods:
         
         with patch('pipeline.ml.ml_pipeline.DataLoader') as mock_loader_class:
             mock_loader = Mock()
-            mock_loader.load_act_dr6 = Mock(return_value=(
-                np.linspace(100, 3000, 100),
-                np.random.lognormal(-10, 0.5, 100),
-                np.random.lognormal(-10, 0.5, 100) * 0.1
-            ))
+            # load_act_dr6() returns dict with 'TT', 'TE', 'EE' keys
+            ell = np.linspace(100, 3000, 100)
+            c_ell = np.random.lognormal(-10, 0.5, 100)
+            c_ell_err = c_ell * 0.1
+            mock_loader.load_act_dr6 = Mock(return_value={
+                'TT': (ell, c_ell, c_ell_err),
+                'TE': (ell, c_ell * 0.5, c_ell_err * 0.5),
+                'EE': (ell, c_ell * 0.3, c_ell_err * 0.3)
+            })
             mock_loader_class.return_value = mock_loader
             
             result = pipeline._run_e8_pattern_analysis()
@@ -535,11 +539,15 @@ class TestMLPipelineMethods:
         
         with patch('pipeline.ml.ml_pipeline.DataLoader') as mock_loader_class:
             mock_loader = Mock()
-            mock_loader.load_act_dr6 = Mock(return_value=(
-                np.linspace(100, 3000, 100),
-                np.random.lognormal(-10, 0.5, 100),
-                np.random.lognormal(-10, 0.5, 100) * 0.1
-            ))
+            # load_act_dr6() returns dict with 'TT', 'TE', 'EE' keys
+            ell = np.linspace(100, 3000, 100)
+            c_ell = np.random.lognormal(-10, 0.5, 100)
+            c_ell_err = c_ell * 0.1
+            mock_loader.load_act_dr6 = Mock(return_value={
+                'TT': (ell, c_ell, c_ell_err),
+                'TE': (ell, c_ell * 0.5, c_ell_err * 0.5),
+                'EE': (ell, c_ell * 0.3, c_ell_err * 0.3)
+            })
             mock_loader_class.return_value = mock_loader
             
             result = pipeline.run_scientific_tests({'tests': ['e8_pattern']})

@@ -56,6 +56,7 @@ from .anomaly_detectors import EnsembleDetector
 from .ensemble import EnsembleAggregator
 from .interpretability.lime_explainer import LIMEExplainer
 from .interpretability.shap_explainer import SHAPExplainer
+from .interpretability.modality_attribution import ModalityAttributor
 from .validation.cross_survey_validator import CrossSurveyValidator
 from .validation.bootstrap_validator import BootstrapValidator
 from .validation.null_hypothesis_tester import NullHypothesisTester
@@ -110,7 +111,8 @@ class MLPipeline(AnalysisPipeline):
         self.extracted_features_cache = None
         
         # Checkpoint directory for stage persistence
-        self.checkpoint_dir = Path(self.output_dir) / "ml_pipeline" / "checkpoints"
+        # Use base_output_dir for checkpoints (results/checkpoints) not json_dir (results/json/ml_pipeline/checkpoints)
+        self.checkpoint_dir = Path(self.base_output_dir) / "checkpoints"
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         # Pipeline state
@@ -135,7 +137,8 @@ class MLPipeline(AnalysisPipeline):
         self.logger.info(f"Using device: {self.device}")
 
         # Initialize refactored modules (after logger and device are set)
-        checkpoint_dir = Path(self.output_dir) / "ml_pipeline" / "checkpoints"
+        # Use same checkpoint_dir as set above (results/checkpoints)
+        checkpoint_dir = self.checkpoint_dir
         self.data_prep = DataPreparation(self.data_loader, self.logger, None)  # Context set later
         self.feature_extractor = FeatureExtractor(self.logger, self.device)
         self.checkpoint_manager = CheckpointManager(checkpoint_dir, self.logger)
@@ -180,12 +183,14 @@ class MLPipeline(AnalysisPipeline):
         requested_stages = self.context.get('stages', ['all'])
         self.logger.info(f"Requested stages from context: {requested_stages}")
 
-        # If 'blind' is requested, force rerun validation to ensure blind protocol is registered
-        # But don't force rerun prerequisite stages - they can use existing checkpoints
+        # If 'blind' is requested, force rerun all stages to ensure fresh checkpoints are saved
+        # Blind analysis requires fresh runs to ensure reproducibility and proper checkpoint persistence
         force_rerun_validation = False
+        force_rerun_for_blind = False
         if 'blind' in requested_stages:
             force_rerun_validation = True
-            self.logger.info(f"Blind analysis requested: will force validation rerun to register protocol. Requested stages: {requested_stages}")
+            force_rerun_for_blind = True  # Force rerun stages 2-5 to ensure checkpoints are saved
+            self.logger.info(f"Blind analysis requested: will force rerun stages 2-5 to ensure checkpoint persistence. Requested stages: {requested_stages}")
 
         results = {}
 
@@ -199,7 +204,7 @@ class MLPipeline(AnalysisPipeline):
             requested_domain = 'domain' in requested_stages or 'train' in requested_stages
             requested_detect = 'detect' in requested_stages
             requested_interpret = 'interpret' in requested_stages
-            requested_validate = 'validate' in requested_stages
+            requested_validate = 'validate' in requested_stages or 'blind' in requested_stages
             
             # Auto-include prerequisites for requested stages
             # Validation requires: interpret -> detect -> domain -> ssl
@@ -271,7 +276,10 @@ class MLPipeline(AnalysisPipeline):
             # Stage 2: Domain Adaptation
             if 'domain' in stages_to_run:
                 self.logger.info("Stage 2: Domain Adaptation")
-                domain_results = self.run_domain_adaptation(master_pbar is not None, force_rerun=force_rerun_all)
+                # Force rerun if blind mode is active to ensure checkpoint persistence
+                domain_force_rerun = force_rerun_all or force_rerun_for_blind
+                self.logger.info(f"Stage 2 force_rerun: force_rerun_all={force_rerun_all}, force_rerun_for_blind={force_rerun_for_blind}, domain_force_rerun={domain_force_rerun}")
+                domain_results = self.run_domain_adaptation(master_pbar is not None, force_rerun=domain_force_rerun)
                 results['domain_adaptation'] = domain_results
                 if master_pbar:
                     master_pbar.update(1)
@@ -280,7 +288,9 @@ class MLPipeline(AnalysisPipeline):
             # Stage 3: Pattern Detection
             if 'detect' in stages_to_run:
                 self.logger.info("Stage 3: Ensemble Pattern Detection")
-                detection_results = self.run_pattern_detection(master_pbar is not None, force_rerun=force_rerun_all)
+                # Force rerun if blind mode is active to ensure checkpoint persistence
+                detect_force_rerun = force_rerun_all or force_rerun_for_blind
+                detection_results = self.run_pattern_detection(master_pbar is not None, force_rerun=detect_force_rerun)
                 results['pattern_detection'] = detection_results
                 if master_pbar:
                     master_pbar.update(1)
@@ -289,7 +299,9 @@ class MLPipeline(AnalysisPipeline):
             # Stage 4: Interpretability
             if 'interpret' in stages_to_run:
                 self.logger.info("Stage 4: Interpretability Analysis")
-                interpret_results = self.run_interpretability(master_pbar is not None, force_rerun=force_rerun_all)
+                # Force rerun if blind mode is active to ensure checkpoint persistence
+                interpret_force_rerun = force_rerun_all or force_rerun_for_blind
+                interpret_results = self.run_interpretability(master_pbar is not None, force_rerun=interpret_force_rerun)
                 results['interpretability'] = interpret_results
                 if master_pbar:
                     master_pbar.update(1)
@@ -298,8 +310,8 @@ class MLPipeline(AnalysisPipeline):
             # Stage 5: Validation
             if 'validate' in stages_to_run:
                 self.logger.info(f"Stage 5: Statistical Validation (requested_stages={requested_stages}, stages_to_run={stages_to_run})")
-                # Use force_rerun_validation if blind was requested, otherwise use force_rerun_all
-                validation_force_rerun = force_rerun_validation or force_rerun_all
+                # Force rerun if blind mode is active to ensure checkpoint persistence and blind protocol registration
+                validation_force_rerun = force_rerun_all or force_rerun_validation or force_rerun_for_blind
                 validation_results = self.run_validation(master_pbar is not None, force_rerun=validation_force_rerun)
                 self.logger.info(f"Validation completed. Results keys: {list(validation_results.keys()) if isinstance(validation_results, dict) else 'N/A'}")
                 results['validation'] = validation_results
@@ -336,6 +348,8 @@ class MLPipeline(AnalysisPipeline):
         # Check for checkpoint
         checkpoint_file = self.checkpoint_dir / "stage1_ssl_training.pkl"
         results_file = self.checkpoint_dir / "stage1_ssl_training_results.json"
+        
+        self.logger.info(f"SSL Training: force_rerun={force_rerun}, checkpoint_exists={checkpoint_file.exists()}, results_exists={results_file.exists()}")
         
         if not force_rerun and checkpoint_file.exists() and results_file.exists():
             self.logger.info("Loading SSL training checkpoint...")
@@ -473,22 +487,14 @@ class MLPipeline(AnalysisPipeline):
             dict: Domain adaptation results
         """
         # Ensure SSL training is completed (load if needed)
-        if not self.stage_completed['ssl_training']:
-            if self.ssl_learner is None:
-                # Try to load SSL checkpoint
-                ssl_checkpoint = self._load_stage_checkpoint('stage1_ssl_training')
-                if ssl_checkpoint:
-                    self.ssl_learner = ssl_checkpoint.get('ssl_learner')
-                    self.cosmological_data = ssl_checkpoint.get('cosmological_data')
-                    self.stage_completed['ssl_training'] = True
-                else:
-                    raise ValueError("SSL training must be completed before domain adaptation")
-            else:
-                raise ValueError("SSL training must be completed before domain adaptation")
+        # Use _ensure_stage_completed which handles missing checkpoints gracefully
+        self._ensure_stage_completed('ssl_training', 'stage1_ssl_training')
 
         # Check for checkpoint
         checkpoint_file = self.checkpoint_dir / "stage2_domain_adaptation.pkl"
         results_file = self.checkpoint_dir / "stage2_domain_adaptation_results.json"
+        
+        self.logger.info(f"Domain Adaptation: force_rerun={force_rerun}, checkpoint_exists={checkpoint_file.exists()}, results_exists={results_file.exists()}")
         
         if not force_rerun and checkpoint_file.exists() and results_file.exists():
             self.logger.info("Loading domain adaptation checkpoint...")
@@ -636,11 +642,30 @@ class MLPipeline(AnalysisPipeline):
             'adaptation_metrics': adaptation_metrics
         }
 
-        # Save checkpoint
-        self._save_stage_checkpoint('stage2_domain_adaptation', {
-            'domain_adapter': self.domain_adapter,
-            'ssl_learner': self.ssl_learner  # Keep reference to SSL model
-        }, results)
+        # Save checkpoint (always attempt, even in blind mode)
+        self.logger.info(f"About to save stage2_domain_adaptation checkpoint. Checkpoint dir: {self.checkpoint_dir}")
+        self.logger.info(f"CheckpointManager exists: {self.checkpoint_manager is not None}")
+        try:
+            checkpoint_data = {
+                'domain_adapter': self.domain_adapter,
+                'ssl_learner': self.ssl_learner  # Keep reference to SSL model
+            }
+            self.logger.debug(f"Checkpoint data keys: {list(checkpoint_data.keys())}")
+            self.logger.debug(f"Results keys: {list(results.keys())}")
+            self._save_stage_checkpoint('stage2_domain_adaptation', checkpoint_data, results)
+            self.logger.info("✓ Successfully saved stage2_domain_adaptation checkpoint")
+            # Verify checkpoint was actually created
+            checkpoint_file = self.checkpoint_dir / "stage2_domain_adaptation.pkl"
+            results_file = self.checkpoint_dir / "stage2_domain_adaptation_results.json"
+            if checkpoint_file.exists() and results_file.exists():
+                self.logger.info(f"✓ Verified checkpoint files exist: {checkpoint_file}, {results_file}")
+            else:
+                self.logger.error(f"✗ Checkpoint files NOT found after save: checkpoint={checkpoint_file.exists()}, results={results_file.exists()}")
+        except Exception as e:
+            self.logger.error(f"✗ Failed to save stage2_domain_adaptation checkpoint: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            # Don't fail the stage if checkpoint save fails, but log the error
         
         return results
 
@@ -661,6 +686,8 @@ class MLPipeline(AnalysisPipeline):
         # Check for checkpoint
         checkpoint_file = self.checkpoint_dir / "stage3_pattern_detection.pkl"
         results_file = self.checkpoint_dir / "stage3_pattern_detection_results.json"
+        
+        self.logger.info(f"Pattern Detection: force_rerun={force_rerun}, checkpoint_exists={checkpoint_file.exists()}, results_exists={results_file.exists()}")
         
         if not force_rerun and checkpoint_file.exists() and results_file.exists():
             self.logger.info("Loading pattern detection checkpoint...")
@@ -799,12 +826,19 @@ class MLPipeline(AnalysisPipeline):
             'top_anomalies': aggregated_results['top_anomalies']
         }
 
-        # Save checkpoint
-        self._save_stage_checkpoint('stage3_pattern_detection', {
-            'ensemble_detector': self.ensemble_detector,
-            'ensemble_aggregator': self.ensemble_aggregator,
-            'extracted_features_cache': self.extracted_features_cache
-        }, results)
+        # Save checkpoint (always attempt, even in blind mode)
+        try:
+            self._save_stage_checkpoint('stage3_pattern_detection', {
+                'ensemble_detector': self.ensemble_detector,
+                'ensemble_aggregator': self.ensemble_aggregator,
+                'extracted_features_cache': self.extracted_features_cache
+            }, results)
+            self.logger.info("✓ Successfully saved stage3_pattern_detection checkpoint")
+        except Exception as e:
+            self.logger.error(f"✗ Failed to save stage3_pattern_detection checkpoint: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            # Don't fail the stage if checkpoint save fails, but log the error
         
         return results
 
@@ -825,6 +859,8 @@ class MLPipeline(AnalysisPipeline):
         # Check for checkpoint
         checkpoint_file = self.checkpoint_dir / "stage4_interpretability.pkl"
         results_file = self.checkpoint_dir / "stage4_interpretability_results.json"
+        
+        self.logger.info(f"Interpretability: force_rerun={force_rerun}, checkpoint_exists={checkpoint_file.exists()}, results_exists={results_file.exists()}")
         
         if not force_rerun and checkpoint_file.exists() and results_file.exists():
             self.logger.info("Loading interpretability checkpoint...")
@@ -863,6 +899,20 @@ class MLPipeline(AnalysisPipeline):
             background_dataset=background_data
         )
 
+        # Initialize modality attributor
+        # Get fusion module if available (from domain adaptation stage)
+        fusion_module = None
+        if hasattr(self, 'domain_adapter') and self.domain_adapter is not None:
+            if hasattr(self.domain_adapter, 'fusion_module'):
+                fusion_module = self.domain_adapter.fusion_module
+
+        modality_attributor = ModalityAttributor(
+            ssl_learner=self.ssl_learner,
+            fusion_module=fusion_module,
+            anomaly_detector=self.ensemble_detector,
+            device=self.device.type
+        )
+
         # Explain top anomalies - for astrophysics, analyze more candidates
         # For reporting completeness, explain ALL anomalies (all samples)
         anomaly_scores = self.ensemble_detector.predict(test_features)['ensemble_scores']
@@ -872,6 +922,11 @@ class MLPipeline(AnalysisPipeline):
 
         lime_explanations = []
         shap_explanations = []
+        modality_attributions = []
+
+        # Extract per-modality features for attribution
+        encoder_dims = self._get_encoder_dimensions(test_data)
+        extracted_features, _ = self._extract_features_from_data(test_data, encoder_dims, return_metadata=True)
 
         if TQDM_AVAILABLE and show_progress:
             pbar = tqdm(total=len(top_anomaly_indices), desc="Interpretability Analysis")
@@ -889,6 +944,30 @@ class MLPipeline(AnalysisPipeline):
                 shap_explanations.append(shap_exp)
             except:
                 shap_explanations.append({'error': 'SHAP explanation failed'})
+
+            # Modality attribution
+            try:
+                # Prepare sample data for this index
+                sample_data = {}
+                for modality, features in extracted_features.items():
+                    if len(features) > 0:
+                        # Use modulo to handle cases where features have different lengths
+                        sample_idx = idx % len(features)
+                        feature_tensor = torch.FloatTensor(features[sample_idx:sample_idx+1]).to(self.device)
+                        sample_data[modality] = feature_tensor
+
+                if sample_data:
+                    anomaly_score = float(anomaly_scores[idx])
+                    attribution = modality_attributor.compute_modality_contributions(
+                        sample_data, anomaly_score
+                    )
+                    attribution['sample_index'] = int(idx)
+                    modality_attributions.append(attribution)
+                else:
+                    modality_attributions.append({'error': 'No modality data available', 'sample_index': int(idx)})
+            except Exception as e:
+                self.logger.warning(f"Modality attribution failed for sample {idx}: {e}")
+                modality_attributions.append({'error': str(e), 'sample_index': int(idx)})
             
             if TQDM_AVAILABLE and show_progress and pbar:
                 pbar.update(1)
@@ -903,6 +982,9 @@ class MLPipeline(AnalysisPipeline):
         except:
             pass
 
+        # Aggregate modality attribution results
+        modality_attribution_summary = self._summarize_modality_attributions(modality_attributions)
+
         self.stage_completed['interpretability'] = True
 
         results = {
@@ -910,15 +992,25 @@ class MLPipeline(AnalysisPipeline):
             'lime_explanations': lime_explanations,
             'shap_explanations': shap_explanations,
             'global_shap_importance': global_shap,
+            'modality_attributions': modality_attributions,
+            'modality_attribution_summary': modality_attribution_summary,
             'n_anomalies_explained': len(lime_explanations)
         }
 
-        # Save checkpoint
-        self._save_stage_checkpoint('stage4_interpretability', {
-            'lime_explainer': self.lime_explainer,
-            'shap_explainer': self.shap_explainer,
-            'ensemble_detector': self.ensemble_detector  # Keep reference
-        }, results)
+        # Save checkpoint (always attempt, even in blind mode)
+        try:
+            self._save_stage_checkpoint('stage4_interpretability', {
+                'lime_explainer': self.lime_explainer,
+                'shap_explainer': self.shap_explainer,
+                'ensemble_detector': self.ensemble_detector,  # Keep reference
+                'modality_attributor': modality_attributor
+            }, results)
+            self.logger.info("✓ Successfully saved stage4_interpretability checkpoint")
+        except Exception as e:
+            self.logger.error(f"✗ Failed to save stage4_interpretability checkpoint: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            # Don't fail the stage if checkpoint save fails, but log the error
         
         return results
 
@@ -940,9 +1032,6 @@ class MLPipeline(AnalysisPipeline):
             self.logger.info("✓ Pattern detection stage prerequisites met")
         except ValueError as e:
             self.logger.error(f"Prerequisite stage not completed: {e}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Unexpected error loading prerequisite stage: {e}")
             raise
         
         # Check for checkpoint
@@ -1086,13 +1175,20 @@ class MLPipeline(AnalysisPipeline):
             'blind_protocol_registered': self.blind_protocol.protocol_registered
         }
         
-        # Save checkpoint
-        self._save_stage_checkpoint('stage5_validation', {
-            'cross_survey_validator': self.cross_survey_validator,
-            'bootstrap_validator': self.bootstrap_validator,
-            'null_hypothesis_tester': self.null_hypothesis_tester,
-            'blind_protocol': self.blind_protocol
-        }, results)
+        # Save checkpoint (always attempt, even in blind mode)
+        try:
+            self._save_stage_checkpoint('stage5_validation', {
+                'cross_survey_validator': self.cross_survey_validator,
+                'bootstrap_validator': self.bootstrap_validator,
+                'null_hypothesis_tester': self.null_hypothesis_tester,
+                'blind_protocol': self.blind_protocol
+            }, results)
+            self.logger.info("✓ Successfully saved stage5_validation checkpoint")
+        except Exception as e:
+            self.logger.error(f"✗ Failed to save stage5_validation checkpoint: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            # Don't fail the stage if checkpoint save fails, but log the error
         
         return results
 
@@ -2021,6 +2117,11 @@ class MLPipeline(AnalysisPipeline):
     def _save_stage_checkpoint(self, stage_name: str, checkpoint_data: Dict[str, Any], 
                                results: Dict[str, Any]) -> None:
         """Delegate to CheckpointManager module."""
+        if self.checkpoint_manager is None:
+            raise RuntimeError(f"CheckpointManager is None - cannot save checkpoint for {stage_name}")
+        if not hasattr(self.checkpoint_manager, 'save_stage_checkpoint'):
+            raise RuntimeError(f"CheckpointManager missing save_stage_checkpoint method - cannot save checkpoint for {stage_name}")
+        self.logger.debug(f"Calling checkpoint_manager.save_stage_checkpoint for {stage_name}")
         return self.checkpoint_manager.save_stage_checkpoint(stage_name, checkpoint_data, results)
     
     def _save_stage_checkpoint_old(self, stage_name: str, checkpoint_data: Dict[str, Any], 
@@ -2165,7 +2266,13 @@ class MLPipeline(AnalysisPipeline):
             return obj
     
     def _ensure_stage_completed(self, stage_name: str, checkpoint_name: str) -> None:
-        """Ensure stage is completed, loading checkpoint if needed."""
+        """
+        Ensure stage is completed, loading checkpoint if needed.
+        
+        Raises ValueError if checkpoint doesn't exist - this forces the prerequisite
+        stage to be run first. This is the correct behavior: if a later stage
+        needs a prerequisite, the prerequisite MUST have a checkpoint.
+        """
         if self.stage_completed[stage_name]:
             return
         
@@ -2176,6 +2283,19 @@ class MLPipeline(AnalysisPipeline):
             if stage_name == 'ssl_training':
                 self.ssl_learner = checkpoint.get('ssl_learner')
                 self.cosmological_data = checkpoint.get('cosmological_data')
+                # Move SSL learner to device
+                if self.ssl_learner:
+                    self.ssl_learner.device = self.device
+                    if hasattr(self.ssl_learner, 'encoders'):
+                        for encoder in self.ssl_learner.encoders.values():
+                            encoder.to(self.device)
+                    if hasattr(self.ssl_learner, 'momentum_encoders'):
+                        for encoder in self.ssl_learner.momentum_encoders.values():
+                            encoder.to(self.device)
+                    if hasattr(self.ssl_learner, 'projector'):
+                        self.ssl_learner.projector.to(self.device)
+                    if hasattr(self.ssl_learner, 'momentum_projector'):
+                        self.ssl_learner.momentum_projector.to(self.device)
             elif stage_name == 'domain_adaptation':
                 self.domain_adapter = checkpoint.get('domain_adapter')
                 if not self.ssl_learner:
@@ -2186,9 +2306,11 @@ class MLPipeline(AnalysisPipeline):
                 self.extracted_features_cache = checkpoint.get('extracted_features_cache')
             
             self.stage_completed[stage_name] = True
-            self.logger.info(f"✓ Loaded checkpoint for {stage_name}")
+            self.logger.info(f"✓ Loaded checkpoint for prerequisite {stage_name}")
         else:
-            raise ValueError(f"{stage_name} must be completed before proceeding")
+            # Checkpoint doesn't exist - raise error to force prerequisite to run first
+            raise ValueError(f"{stage_name} must be completed before proceeding. "
+                           f"Checkpoint not found at {self.checkpoint_dir}/{checkpoint_name}.pkl")
     
     def _ensure_stage_completed_old(self, stage_name: str, checkpoint_name: str) -> None:
         """
@@ -2313,6 +2435,106 @@ class MLPipeline(AnalysisPipeline):
             self.cosmological_data = self._load_all_cosmological_data()
         
         return self.cosmological_data
+
+    def _summarize_modality_attributions(self, attributions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Summarize modality attribution results across all samples.
+
+        Parameters:
+            attributions: List of attribution dictionaries
+
+        Returns:
+            dict: Summary statistics
+        """
+        if not attributions:
+            return {}
+
+        summary = {
+            'n_samples': len(attributions),
+            'modality_statistics': {}
+        }
+
+        # Collect statistics per modality
+        modality_stats = {}
+        successful_attributions = [a for a in attributions if 'error' not in a]
+
+        if not successful_attributions:
+            summary['error'] = 'No successful attributions'
+            return summary
+
+        # Aggregate single modality scores
+        all_single_scores = {}
+        all_contribution_ratios = {}
+        all_attention_weights = {}
+
+        for attr in successful_attributions:
+            # Single modality scores
+            if 'single_modality_scores' in attr:
+                for modality, score in attr['single_modality_scores'].items():
+                    if modality not in all_single_scores:
+                        all_single_scores[modality] = []
+                    all_single_scores[modality].append(score)
+
+            # Contribution ratios
+            if 'modality_residuals' in attr:
+                for modality, residual_data in attr['modality_residuals'].items():
+                    if modality not in all_contribution_ratios:
+                        all_contribution_ratios[modality] = []
+                    all_contribution_ratios[modality].append(
+                        residual_data.get('contribution_ratio', 0.0)
+                    )
+
+            # Attention weights
+            if 'attention_attribution' in attr:
+                for modality, weight in attr['attention_attribution'].items():
+                    if modality not in all_attention_weights:
+                        all_attention_weights[modality] = []
+                    all_attention_weights[modality].append(weight)
+
+        # Compute statistics
+        for modality in set(list(all_single_scores.keys()) + 
+                           list(all_contribution_ratios.keys()) + 
+                           list(all_attention_weights.keys())):
+            stats = {}
+
+            if modality in all_single_scores:
+                scores = all_single_scores[modality]
+                stats['single_modality_score'] = {
+                    'mean': float(np.mean(scores)),
+                    'std': float(np.std(scores)),
+                    'median': float(np.median(scores))
+                }
+
+            if modality in all_contribution_ratios:
+                ratios = all_contribution_ratios[modality]
+                stats['contribution_ratio'] = {
+                    'mean': float(np.mean(ratios)),
+                    'std': float(np.std(ratios)),
+                    'median': float(np.median(ratios))
+                }
+
+            if modality in all_attention_weights:
+                weights = all_attention_weights[modality]
+                stats['attention_weight'] = {
+                    'mean': float(np.mean(weights)),
+                    'std': float(np.std(weights)),
+                    'median': float(np.median(weights))
+                }
+
+            if stats:
+                modality_stats[modality] = stats
+
+        summary['modality_statistics'] = modality_stats
+
+        # Find top contributors
+        if all_contribution_ratios:
+            mean_ratios = {mod: np.mean(ratios) for mod, ratios in all_contribution_ratios.items()}
+            if mean_ratios:
+                summary['top_contributors'] = sorted(
+                    mean_ratios.items(), key=lambda x: x[1], reverse=True
+                )[:5]
+
+        return summary
 
     def _extract_features_with_ssl(self, data: Dict[str, Any]) -> np.ndarray:
         """

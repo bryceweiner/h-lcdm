@@ -57,8 +57,13 @@ class CMBDataProcessor(BaseDataProcessor):
 
         print("Processing ACT DR6 E-mode data...")
 
-        # Load raw data
-        ell, C_ell, C_ell_err = self.loader.load_act_dr6()
+        # Load raw data (returns dict with 'TT', 'TE', 'EE' keys)
+        act_data = self.loader.load_act_dr6()
+        
+        # Extract EE spectrum for E-mode analysis
+        if 'EE' not in act_data:
+            raise ValueError("ACT DR6 data does not contain EE spectrum")
+        ell, C_ell, C_ell_err = act_data['EE']
 
         # Process the data
         processed_data = self._process_power_spectrum(ell, C_ell, C_ell_err, "ACT DR6")

@@ -104,7 +104,9 @@ class MultimodalFusion(nn.Module):
         # Handle missing modalities
         available_modalities = list(modality_encodings.keys())
         if len(available_modalities) == 0:
-            return {'fused': torch.zeros(1, self.fusion_dim, device=self.device)}
+            # Get device from first encoding tensor if available
+            device = next(iter(modality_encodings.values())).device if modality_encodings else torch.device('cpu')
+            return {'fused': torch.zeros(1, self.fusion_dim, device=device)}
 
         # Stack encodings
         encodings_list = []
