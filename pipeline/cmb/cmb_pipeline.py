@@ -477,6 +477,7 @@ class CMBPipeline(AnalysisPipeline):
         """
         # Import HLCDM cosmology for gamma calculation
         from hlcdm.cosmology import HLCDMCosmology
+        from hlcdm.parameters import HLCDM_PARAMS
 
         # Information processing rate at redshift z
         gamma_z = HLCDMCosmology.gamma_at_redshift(z)
@@ -1031,7 +1032,14 @@ class CMBPipeline(AnalysisPipeline):
         loaded_cmb_data = {}
         for dataset in datasets:
             if dataset == 'act_dr6':
-                ell, C_ell, C_ell_err = self.data_loader.load_act_dr6()
+                # load_act_dr6() returns dict with 'TT', 'TE', 'EE' keys
+                act_data = self.data_loader.load_act_dr6()
+                # Use TT spectrum for temperature analysis (fallback to first available)
+                if 'TT' in act_data:
+                    ell, C_ell, C_ell_err = act_data['TT']
+                else:
+                    # Fallback to first available spectrum
+                    ell, C_ell, C_ell_err = next(iter(act_data.values()))
             elif dataset == 'planck_2018':
                 ell, C_ell, C_ell_err = self.data_loader.load_planck_2018()
             else:

@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch, MagicMock
 
 from pipeline.ml.interpretability.lime_explainer import LIMEExplainer
 from pipeline.ml.interpretability.shap_explainer import SHAPExplainer
+from pipeline.ml.interpretability.modality_attribution import ModalityAttributor
 
 
 class TestLIMEExplainer:
@@ -330,4 +331,144 @@ class TestSHAPExplainer:
         assert 'global_features' in importance or 'feature_importance' in importance
         assert 'summary' in importance
         assert 'computation_details' in importance
+
+
+class TestModalityAttributor:
+    """Test ModalityAttributor functionality."""
+
+    def test_initialization(self):
+        """Test attributor initialization."""
+        # Mock SSL learner
+        mock_ssl = Mock()
+        mock_ssl.encoders = {'cmb': Mock(), 'bao': Mock()}
+        mock_ssl.eval = Mock()
+        mock_ssl.encode = Mock(return_value={'cmb': np.random.randn(1, 512), 'bao': np.random.randn(1, 512)})
+        mock_ssl.encode_with_grad = Mock(return_value={'cmb': np.random.randn(1, 512), 'bao': np.random.randn(1, 512)})
+
+        attributor = ModalityAttributor(
+            ssl_learner=mock_ssl,
+            fusion_module=None,
+            anomaly_detector=None,
+            device='cpu'
+        )
+
+        assert attributor.ssl_learner == mock_ssl
+        assert attributor.device == 'cpu'
+
+    def test_compute_single_modality_scores(self):
+        """Test single modality score computation."""
+        import torch
+
+        # Mock SSL learner
+        mock_ssl = Mock()
+        mock_encoder_cmb = Mock()
+        mock_encoder_cmb.return_value = torch.randn(1, 512)
+        mock_encoder_bao = Mock()
+        mock_encoder_bao.return_value = torch.randn(1, 512)
+        mock_ssl.encoders = {'cmb': mock_encoder_cmb, 'bao': mock_encoder_bao}
+        mock_ssl.eval = Mock()
+
+        # Mock anomaly detector
+        mock_detector = Mock()
+        mock_detector.predict = Mock(return_value={'ensemble_scores': np.array([0.5])})
+
+        attributor = ModalityAttributor(
+            ssl_learner=mock_ssl,
+            anomaly_detector=mock_detector,
+            device='cpu'
+        )
+
+        sample_data = {
+            'cmb': torch.randn(1, 100),
+            'bao': torch.randn(1, 50)
+        }
+
+        scores = attributor._compute_single_modality_scores(sample_data)
+        assert 'cmb' in scores
+        assert 'bao' in scores
+        assert isinstance(scores['cmb'], float)
+
+    def test_compute_modality_residuals(self):
+        """Test modality residual computation."""
+        import torch
+
+        # Mock SSL learner
+        mock_ssl = Mock()
+        mock_encoder_cmb = Mock()
+        mock_encoder_cmb.return_value = torch.randn(1, 512)
+        mock_ssl.encoders = {'cmb': mock_encoder_cmb}
+        mock_ssl.eval = Mock()
+        mock_ssl.encode = Mock(return_value={'cmb': torch.randn(1, 512)})
+
+        # Mock anomaly detector
+        mock_detector = Mock()
+        mock_detector.predict = Mock(return_value={'ensemble_scores': np.array([0.3])})
+
+        attributor = ModalityAttributor(
+            ssl_learner=mock_ssl,
+            anomaly_detector=mock_detector,
+            device='cpu'
+        )
+
+        sample_data = {
+            'cmb': torch.randn(1, 100)
+        }
+
+        residuals = attributor._compute_modality_residuals(sample_data, anomaly_score_full=0.5)
+        assert 'cmb' in residuals
+        assert 'single_score' in residuals['cmb']
+        assert 'contribution_ratio' in residuals['cmb']
+        assert 'residual' in residuals['cmb']
+
+    def test_compute_modality_contributions(self):
+        """Test full modality contribution computation."""
+        import torch
+
+        # Mock SSL learner
+        mock_ssl = Mock()
+        mock_encoder_cmb = Mock()
+        mock_encoder_cmb.return_value = torch.randn(1, 512)
+        mock_ssl.encoders = {'cmb': mock_encoder_cmb}
+        mock_ssl.eval = Mock()
+        mock_ssl.encode = Mock(return_value={'cmb': torch.randn(1, 512)})
+
+        # Mock anomaly detector
+        mock_detector = Mock()
+        mock_detector.predict = Mock(return_value={'ensemble_scores': np.array([0.3])})
+
+        attributor = ModalityAttributor(
+            ssl_learner=mock_ssl,
+            anomaly_detector=mock_detector,
+            device='cpu'
+        )
+
+        sample_data = {
+            'cmb': torch.randn(1, 100)
+        }
+
+        contributions = attributor.compute_modality_contributions(
+            sample_data, anomaly_score_full=0.5
+        )
+
+        assert 'single_modality_scores' in contributions
+        assert 'modality_residuals' in contributions
+        assert 'summary' in contributions
+
+    def test_summarize_contributions(self):
+        """Test contribution summarization."""
+        import torch
+
+        mock_ssl = Mock()
+        attributor = ModalityAttributor(mock_ssl, device='cpu')
+
+        results = {
+            'single_modality_scores': {'cmb': 0.5, 'bao': 0.3},
+            'modality_residuals': {
+                'cmb': {'contribution_ratio': 0.8},
+                'bao': {'contribution_ratio': 0.2}
+            }
+        }
+
+        summary = attributor._summarize_contributions(results)
+        assert 'single_modality' in summary or 'residuals' in summary
 

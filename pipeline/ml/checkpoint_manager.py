@@ -7,6 +7,7 @@ Handles saving and loading checkpoints for pipeline stages.
 
 import pickle
 import json
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 import torch
@@ -44,6 +45,17 @@ class CheckpointManager:
         """
         checkpoint_file = self.checkpoint_dir / f"{stage_name}.pkl"
         results_file = self.checkpoint_dir / f"{stage_name}_results.json"
+        
+        # Ensure checkpoint directory exists and is writable
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        if not self.checkpoint_dir.exists():
+            raise RuntimeError(f"Checkpoint directory does not exist and could not be created: {self.checkpoint_dir}")
+        if not os.access(self.checkpoint_dir, os.W_OK):
+            raise RuntimeError(f"Checkpoint directory is not writable: {self.checkpoint_dir}")
+        
+        self.logger.info(f"Attempting to save checkpoint for {stage_name} to {checkpoint_file}")
+        self.logger.debug(f"Checkpoint data keys: {list(checkpoint_data.keys())}")
+        self.logger.debug(f"Results keys: {list(results.keys()) if isinstance(results, dict) else 'N/A'}")
         
         try:
             # Save checkpoint (models, state)
@@ -85,10 +97,21 @@ class CheckpointManager:
                 results_json = self._convert_to_json_serializable(results)
                 json.dump(results_json, f, indent=2)
             
-            self.logger.info(f"Saved checkpoint for {stage_name}")
+            # Verify files were created
+            if checkpoint_file.exists() and results_file.exists():
+                checkpoint_size = checkpoint_file.stat().st_size
+                results_size = results_file.stat().st_size
+                self.logger.info(f"✓ Successfully saved checkpoint for {stage_name}: "
+                               f"checkpoint={checkpoint_size} bytes, results={results_size} bytes")
+            else:
+                raise RuntimeError(f"Checkpoint files were not created: "
+                                 f"checkpoint exists={checkpoint_file.exists()}, "
+                                 f"results exists={results_file.exists()}")
             
         except Exception as e:
-            self.logger.error(f"Failed to save checkpoint for {stage_name}: {e}")
+            self.logger.error(f"✗ Failed to save checkpoint for {stage_name}: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
             raise
     
     def load_stage_checkpoint(self, stage_name: str) -> Optional[Dict[str, Any]]:

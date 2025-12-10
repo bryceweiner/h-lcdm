@@ -46,6 +46,7 @@ from pipeline.voidfinder import VoidFinderPipeline
 from pipeline.hlcdm import HLCDMPipeline
 from pipeline.ml import MLPipeline
 from pipeline.tmdc import TMDCPipeline
+from pipeline.recommendation import RecommendationPipeline
 from pipeline.common.reporting import HLambdaDMReporter
 from pipeline.common.visualization import HLambdaDMVisualizer
 
@@ -314,6 +315,15 @@ def parse_arguments():
              'Example: --tmdc validate'
     )
 
+    parser.add_argument(
+        '--recommendation',
+        nargs='+',
+        metavar='REC_OR_VALIDATION',
+        help='Run recommendation pipeline. First argument is integer ID (e.g., 1); '
+             'optional second argument: validate (and extended). '
+             'Examples: --recommendation 1  |  --recommendation 1 validate'
+    )
+
     # Analysis parameters
     parser.add_argument(
         '--z-min',
@@ -449,8 +459,12 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
         'voidfinder': args.voidfinder,
         'hlcdm': args.hlcdm,
         'ml': args.ml,
-        'tmdc': args.tmdc
+        'tmdc': args.tmdc,
+        'recommendation': args.recommendation  # legacy, remove once deprecated
     }
+    # Support new spelling with integer IDs
+    if args.recommendation is not None:
+        pipeline_flags['recommendation'] = args.recommendation
 
     # Handle ML subcommands
     ml_subcommands = []
@@ -592,6 +606,34 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
                 pipeline_config[pipeline_name]['context'].update({
                     'datasets': args.cmb_datasets
                 })
+            elif pipeline_name == 'recommendation':
+                tokens = list(validation_level) if validation_level else []
+                rec_ids = []
+                validation_tokens = []
+
+                if tokens:
+                    # First token must be rec id
+                    first = tokens[0]
+                    if str(first).lstrip('+-').isdigit():
+                        rec_ids.append(int(first))
+                        validation_tokens = tokens[1:]
+                    else:
+                        rec_ids.append(1)
+                        validation_tokens = tokens
+                else:
+                    rec_ids.append(1)
+
+                validate_basic = 'validate' in validation_tokens
+                validate_extended = 'extended' in validation_tokens
+
+                pipeline_config[pipeline_name].update({
+                    'validate_basic': validate_basic,
+                    'validate_extended': validate_extended,
+                })
+
+                pipeline_config[pipeline_name]['context'].update({
+                    'rec_ids': rec_ids
+                })
 
     return {
         'pipelines_to_run': pipelines_to_run,
@@ -623,7 +665,8 @@ def initialize_pipelines(output_dir: str) -> Dict[str, Any]:
         'voidfinder': VoidFinderPipeline(output_dir),
         'hlcdm': HLCDMPipeline(output_dir),
         'ml': MLPipeline(output_dir),
-        'tmdc': TMDCPipeline(output_dir)
+        'tmdc': TMDCPipeline(output_dir),
+        'recommendation': RecommendationPipeline(output_dir)
     }
 
     return pipelines
@@ -791,6 +834,13 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
     need_basic_validation = config.get('validate_basic', False) and not basic_validation_exists
     need_extended_validation = config.get('validate_extended', False) and not extended_validation_exists
     
+    # For recommendation pipeline, always rerun validation when explicitly requested
+    if pipeline_name == 'recommendation':
+        if config.get('validate_basic', False):
+            need_basic_validation = True
+        if config.get('validate_extended', False):
+            need_extended_validation = True
+    
     # Special handling for ML pipeline: if 'validate' is in requested stages, ensure it runs
     if pipeline_name == 'ml':
         requested_stages = config.get('context', {}).get('stages', [])
@@ -901,10 +951,12 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
                     logger.error(f"Could not save extended validation results: {e}")
 
         except Exception as e:
-            logger.error(f"✗ Error in {pipeline_name} pipeline: {e}")
-            results['error'] = str(e)
             import traceback
-            results['traceback'] = traceback.format_exc()
+            error_traceback = traceback.format_exc()
+            logger.error(f"✗ Error in {pipeline_name} pipeline: {e}")
+            logger.error(f"Full traceback:\n{error_traceback}")
+            results['error'] = str(e)
+            results['traceback'] = error_traceback
 
     return results
 

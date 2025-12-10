@@ -81,6 +81,16 @@ class GrokAnalysisClient:
         except Exception as e:
             self.logger.error(f"Failed to generate Grok analysis after retries: {e}")
             return f"Qualitative analysis unavailable: {e}"
+
+    def generate_custom_report(self, prompt: str, max_retries: int = 3, initial_timeout: int = 120) -> str:
+        """
+        Generate a custom Grok report using an arbitrary prompt.
+        """
+        try:
+            return self._call_grok_api(prompt, max_retries=max_retries, initial_timeout=initial_timeout)
+        except Exception as e:
+            self.logger.error(f"Failed to generate custom Grok report: {e}")
+            return f"Grok interpretation unavailable: {e}"
     
     def _generate_detailed_analysis(self, 
                                    anomalies: List[Dict[str, Any]], 
@@ -143,49 +153,57 @@ class GrokAnalysisClient:
         if len(detailed_analysis) > 6000:
             analysis_excerpt += "\n\n[... detailed analysis continues with individual anomaly discussions ...]"
         
-        narrative_prompt = f"""
-You are a senior theoretical physicist synthesizing cosmological anomaly detection results into an accessible academic narrative about early universe physics.
+            # Extract which modalities are actually present
+            modality_list = sorted(list(modalities)) if modalities else []
+            modality_categories = {
+                'cmb': [m for m in modality_list if m.startswith('cmb_')],
+                'bao': [m for m in modality_list if m.startswith('bao_')],
+                'voids': [m for m in modality_list if m.startswith('void_')],
+                'other': [m for m in modality_list if not any(m.startswith(p) for p in ['cmb_', 'bao_', 'void_'])]
+            }
+            
+            narrative_prompt = f"""
+You are a data scientist summarizing unsupervised ML anomaly detection results. Your task is to describe what the ML found WITHOUT imposing theoretical bias.
 
-CONTEXT:
-{context}
+## METHODOLOGY
+- 5-stage unsupervised pipeline: SSL → Domain Adaptation → Ensemble Anomaly Detection → Interpretability → Validation
+- Anomalies represent distributional deviations in a fused 512-D latent space
+- The ML is theory-agnostic: it identifies statistical outliers, not physical mechanisms
 
-KEY RESULTS SUMMARY:
-- {score_summary}
-- Redshift regimes: {', '.join(sorted(redshift_regimes)) if redshift_regimes else 'various'}
-- Modalities involved: {len(modalities)} different observational probes (CMB, BAO, voids, galaxies, FRBs, GW, JWST, Lyman-α)
+## RESULTS SUMMARY
+{score_summary}
+- Total samples analyzed: {len(anomalies)}
+- Score distribution: ≥0.70 flagged as candidates, ≤0.55 as consistent with baseline
+- Redshift regimes present: {', '.join(sorted(redshift_regimes)) if redshift_regimes else 'various'}
 
-DETAILED ANALYSIS EXCERPT (for synthesis):
-{analysis_excerpt}
+## MODALITIES ANALYZED ({len(modality_list)} total)
+- CMB ({len(modality_categories['cmb'])}): {', '.join(modality_categories['cmb']) if modality_categories['cmb'] else 'none'}
+- BAO ({len(modality_categories['bao'])}): {', '.join(modality_categories['bao']) if modality_categories['bao'] else 'none'}
+- Voids ({len(modality_categories['voids'])}): {', '.join(modality_categories['voids']) if modality_categories['voids'] else 'none'}
+- Other ({len(modality_categories['other'])}): {', '.join(modality_categories['other']) if modality_categories['other'] else 'none'}
 
-TASK:
-Generate a high-level academic narrative that:
-1. **Sets the scientific context**: Explain what these unsupervised ML anomaly detections reveal about early universe physics
-2. **Draws connections**: Connect the detected anomalies to fundamental physics principles (QTEP ≈ 2.257, γ = H/π², holographic information theory, quantum thermodynamics)
-3. **Early universe focus**: Emphasize implications for:
-   - Primordial structure formation
-   - Information-theoretic constraints on cosmic evolution
-   - Quantum-to-classical transitions in cosmology
-   - Holographic corrections to standard cosmology
-   - The relationship between information entropy and spacetime geometry
-4. **Accessible language**: Use clear, precise language that connects technical results to physical intuition
-5. **Academic tone**: Formal, third-person, dispassionate style appropriate for a high-impact letters journal
-6. **Narrative flow**: Create a coherent story that guides the reader from detection → interpretation → implications → conclusions
+## TASK: Write 300-400 words addressing
 
-STRUCTURE:
-- Opening: What the pipeline detected and why it matters for early universe physics
-- Middle: How these anomalies connect to fundamental information-theoretic principles and early universe dynamics
-- Closing: Implications for our understanding of cosmic evolution and information constraints
+1. **Primary pattern**: What modality combinations appear in high-score anomalies? Report which data types show joint deviations without pre-assuming physical cause.
 
-CRITICAL REQUIREMENTS:
-- NEVER use first person ("I", "we", "our", "my")
-- Use phrases like "The analysis reveals...", "These detections indicate...", "The framework suggests..."
-- Connect anomalies to early universe physics explicitly
-- Make the narrative accessible while maintaining rigor
-- Focus on drawing conclusions about information-theoretic constraints on cosmic evolution
+2. **Cross-modal structure**: Do anomalies cluster in specific modality combinations, or appear uniformly across data types? Be specific about which modalities correlate.
 
-Generate a narrative that sets the tone for understanding these results in the context of early universe physics and information theory.
+3. **Redshift distribution**: At what redshifts do anomalies concentrate? Is there clustering, or uniform distribution?
+
+4. **Score distribution**: Is there bimodality, continuous spread, or clustering? What does the gap (if any) between high and low scores suggest?
+
+5. **What baseline-consistent samples show**: Which modalities appear "normal"? This bounds where deviations occur.
+
+6. **Statistical robustness**: Bootstrap stability, cross-survey agreement, false positive assessment.
+
+CRITICAL RULES:
+- DO NOT assume CMB TT/TE/EE correlations are the primary signal unless the data shows it
+- DO NOT privilege any single modality category—report what the ML found across ALL data types
+- If voids, galaxies, FRBs, Lyman-α, JWST, or GW data contribute to anomalies, say so
+- Describe patterns agnostically; let the data speak
+
+TONE: Empirical, dispassionate. Report findings, not theory confirmation.
 """
-        
         self.logger.info("Generating high-level narrative synthesis from detailed analysis")
         narrative = self._call_grok_api(narrative_prompt, max_retries=3, initial_timeout=120)
         
@@ -239,53 +257,86 @@ Generate a narrative that sets the tone for understanding these results in the c
         if len(detailed_analysis) > 8000:
             analysis_excerpt += "\n\n[... analysis continues ...]"
         
-        recommendations_prompt = f"""
-You are a senior theoretical physicist proposing specific analytical tests to reveal the physical features detected by unsupervised ML anomaly detection.
+            # Build modality summary from actual anomalies
+            modality_counts = {}
+            for mod in modalities_mentioned:
+                modality_counts[mod] = modality_counts.get(mod, 0) + 1
+            modality_summary = ", ".join([f"{k}" for k in sorted(modality_counts.keys())])
+        
+            recommendations_prompt = f"""
+You are a data scientist designing follow-up analyses for ML-detected anomalies in cosmological data.
 
-CONTEXT:
-{context}
+## CONTEXT: What the ML Found
 
-ANOMALY SUMMARY:
+The unsupervised ML pipeline (SSL + Domain Adaptation + Ensemble Detection) flagged anomalies across multiple cosmological datasets. Your task is to design tests that VERIFY whether these anomalies reflect:
+1. Genuine physical deviations from standard cosmology
+2. Unmodeled systematics
+3. Statistical fluctuations
+
+## ANOMALY SUMMARY
+
+Top anomalies detected in:
 {chr(10).join(anomaly_summary[:10])}
 
-KEY DATASETS INVOLVED:
-{', '.join(sorted(datasets_mentioned)) if datasets_mentioned else 'Various cosmological surveys'}
+Datasets with anomalies: {datasets_mentioned}
+Modalities involved: {modality_summary}
+Redshift ranges: {', '.join(set(redshift_ranges[:10])) if redshift_ranges else 'various'}
 
-REDSHIFT REGIMES:
-{', '.join(set(redshift_ranges[:10])) if redshift_ranges else 'Various'}
+## MODALITY CATEGORIES IN THE DATA
 
-MODALITIES:
-{', '.join(sorted(modalities_mentioned)[:15]) if modalities_mentioned else 'CMB, BAO, voids, galaxies, FRBs, GW, JWST, Lyman-α'}
+The ML analyzed 23 modalities across multiple physical probes:
 
-DETAILED ANALYSIS (for reference):
-{analysis_excerpt}
+**CMB (Cosmic Microwave Background)**
+- Temperature (TT): ACT DR6, Planck 2018, SPT-3G, COBE, WMAP
+- Polarization (TE, EE): ACT DR6, Planck 2018, SPT-3G, WMAP
 
-TASK:
-Generate specific, actionable analytical test recommendations that would reveal the physical features being detected. For each recommendation, provide:
+**BAO (Baryon Acoustic Oscillations)**
+- Galaxy surveys: BOSS DR12, DESI, eBOSS
 
-1. **Specific Dataset**: Which exact dataset/survey to analyze (e.g., "Planck 2018 CMB TT power spectrum", "DESI BAO measurements at z=0.5-1.0", "SDSS DR16 void catalog")
-2. **Specific Test**: What exact analytical test to perform (e.g., "Cross-correlation analysis between CMB TT and EE modes", "BAO scale measurement at z=0.8", "Void size distribution power-law fit")
-3. **Expected Feature**: What specific feature should be revealed (e.g., "2.18% shift in sound horizon scale", "QTEP ratio ≈ 2.257 in decoherence patterns", "γ = H/π² scaling in void geometry")
-4. **Physical Interpretation**: Why this test would reveal H-ΛCDM signatures vs ΛCDM
-5. **Feasibility**: Whether this test can be performed with existing data or requires new observations
+**Large-Scale Structure**
+- Void catalogs: SDSS DR7, SDSS DR16
+- Galaxy clustering: combined surveys
 
-STRUCTURE:
-- Group recommendations by dataset/modality
-- Prioritize tests that can be performed immediately with existing data
-- Include both direct tests (measuring predicted quantities) and indirect tests (cross-correlations, consistency checks)
-- Specify exact redshift ranges, multipole ranges, or other parameter ranges where applicable
+**Multi-messenger / High-z**
+- Fast Radio Bursts (FRBs): dispersion measure catalog
+- Lyman-α forest: high-z intergalactic medium
+- JWST: high-z galaxy population
+- Gravitational waves: LIGO, Virgo
 
-CRITICAL REQUIREMENTS:
-- NEVER use first person ("I", "we", "our", "my")
-- Be SPECIFIC: name exact datasets, exact tests, exact parameter ranges
-- Connect each test to the detected anomalies and H-ΛCDM predictions
-- Focus on tests that would reveal information-theoretic signatures (QTEP, γ, holographic corrections)
-- Prioritize tests with existing data over future observations
-- Use formal, third-person academic tone
+## TASK: Design Tests Based on ML Findings
 
-Generate 5-10 specific analytical test recommendations, organized by dataset/modality, that would reveal the features being detected.
-"""
-        
+For EACH modality category where anomalies were detected, propose a specific follow-up test.
+
+**CRITICAL: Let the data guide the tests.**
+- If the ML found correlated anomalies in CMB + BAO, test that correlation specifically
+- If voids or galaxy clustering show anomalies, design void/clustering tests
+- If high-z probes (JWST, Lyman-α) are flagged, design high-z tests
+- If GW or FRB data contribute, design multi-messenger tests
+
+## OUTPUT FORMAT
+
+For each recommendation:
+
+### Recommendation N: [Descriptive Title Based on Actual Anomaly Pattern]
+- **Dataset**: [Specific survey/data product where ML found anomalies]
+- **Test**: [Methodology to verify whether anomaly is physical or systematic]
+- **ΛCDM Null**: [What standard cosmology predicts, with uncertainties]
+- **Alternative Hypothesis**: [What a deviation would imply—be agnostic about mechanism]
+- **Discriminating Power**: [What makes this test conclusive]
+- **Connection to Anomalies**: [Which specific ML-flagged samples this addresses]
+- **Feasibility**: [Data availability, computational cost]
+- **Potential Confounds**: [Systematics, selection effects, contamination]
+
+## REQUIREMENTS
+
+1. **Cover ALL modality categories** where anomalies appear—not just CMB
+2. **Be empirical**: Describe what the ML found, not what theory predicts
+3. **Include multi-probe tests**: If anomalies appear in both CMB and BAO (or voids, or galaxies), test their correlation
+4. **Include null tests**: Some recommendations should test whether "anomalies" are consistent with noise
+5. **Address under-explored probes**: If GW, FRB, JWST, or Lyman-α data show anomalies, these deserve dedicated tests
+
+Generate 6-10 recommendations covering the full range of anomalous modalities.
+"""   
         self.logger.info("Generating analytical test recommendations from detailed analysis")
         recommendations = self._call_grok_api(recommendations_prompt, max_retries=3, initial_timeout=120)
         
@@ -349,98 +400,218 @@ Generate 5-10 specific analytical test recommendations, organized by dataset/mod
         model_summary = ", ".join([f"{k}: {v}" for k, v in model_counts.items()])
 
         prompt = f"""
-You are a senior theoretical physicist analyzing unsupervised ML anomaly detection results in {context}.
+You are analyzing unsupervised ML anomaly detection results in {context}.
 
-CRITICAL METHODOLOGICAL CONTEXT:
+## PART I: METHODOLOGICAL CONTEXT
 
-1. **Pipeline Architecture**: The analysis uses a 5-stage unsupervised ML pipeline:
-   - Stage 1: Self-supervised contrastive learning (SimCLR) on multi-modal cosmological data
-   - Stage 2: Domain adaptation via Maximum Mean Discrepancy (MMD) to ensure survey-invariant features
-   - Stage 3: Ensemble anomaly detection (Isolation Forest + HDBSCAN + VAE) on fused 512-dimensional latent space
-   - Stage 4: Interpretability (LIME/SHAP) to map anomalies back to physical observables
-   - Stage 5: Statistical validation (bootstrap stability, null hypothesis testing, cross-survey validation)
+### Pipeline Architecture
+The analysis uses a 5-stage unsupervised ML pipeline:
+- **Stage 1**: Self-supervised contrastive learning (SimCLR) on multi-modal cosmological data
+- **Stage 2**: Domain adaptation via Maximum Mean Discrepancy (MMD) for survey-invariant features
+- **Stage 3**: Ensemble anomaly detection (Isolation Forest + HDBSCAN + VAE) on fused 512-dimensional latent space
+- **Stage 4**: Interpretability (LIME/SHAP) mapping anomalies to physical observables
+- **Stage 5**: Statistical validation (bootstrap stability, null hypothesis testing, cross-survey validation)
 
-2. **Anomaly Detection Method**: Anomalies are detected in a **fused latent space** after SSL and domain adaptation. This means:
-   - Raw observations (CMB power spectra, BAO measurements, void catalogs, etc.) are encoded into a shared 512-dimensional latent space
-   - Domain adaptation ensures features are survey-invariant (ACT, Planck, SPT-3G for CMB; BOSS, DESI, eBOSS for BAO)
-   - Ensemble methods identify samples that deviate from the learned normal distribution in this latent space
-   - Anomalies represent **distributional deviations**, not direct physical measurements
+### Anomaly Detection Method
+Anomalies are detected in a **fused latent space** after SSL and domain adaptation:
+- Raw observations encoded into shared 512-D space
+- Domain adaptation ensures survey invariance across datasets
+- Ensemble methods identify distributional deviations from learned normal patterns
+- Anomalies represent **distributional deviations**, not direct physical measurements
 
-3. **Scoring System**: 
-   - Anomaly scores range from 0.0 to 1.0 (higher = more anomalous)
-   - Scores ≥ 0.7: Classified as H_LCDM_candidate (strong deviation from ΛCDM expectations)
-   - Scores ≤ 0.55: Classified as LCDM_consistent (consistent with standard cosmology)
-   - Scores 0.55-0.7: Classified as INDETERMINATE (requires further investigation)
+### Scoring System
+- Scores range 0.0–1.0 (higher = more anomalous)
+- ≥ 0.70: Strong deviation from baseline expectations
+- ≤ 0.55: Consistent with standard cosmology
+- 0.55–0.70: INDETERMINATE (requires further investigation)
 
-4. **Unsupervised Nature**: No labeled data was used. The pipeline learns normal patterns from data structure alone, then identifies deviations.
+---
 
-KEY DEFINITIONS:
-- QTEP (Quantum Thermodynamic Entropy Partition): The ratio S_coh / |S_decoh| ≈ ln(2)/(1-ln(2)) ≈ 2.257, representing the fundamental information partition in quantum measurement.
-- Gamma (γ): The holographic information processing rate (γ = H/π² in fundamental units) that serves as the affine parameter across all timelike worldlines.
+## PART II: DATA MODALITIES ANALYZED
 
-ANOMALY DATA:
+The ML fuses 23 modalities across distinct physical probes:
+
+### CMB (Cosmic Microwave Background)
+| Modality | Survey | Observable |
+|----------|--------|------------|
+| cmb_act_dr6_tt, _te, _ee | ACT DR6 | Temperature/Polarization power spectra |
+| cmb_planck_2018_tt, _te, _ee | Planck 2018 | Temperature/Polarization power spectra |
+| cmb_spt3g_tt, _te, _ee | SPT-3G | Temperature/Polarization power spectra |
+| cmb_cobe_tt | COBE DMR | Low-ℓ temperature |
+| cmb_wmap_tt, _te | WMAP | Temperature/Polarization |
+
+### BAO (Baryon Acoustic Oscillations)
+| Modality | Survey | Observable |
+|----------|--------|------------|
+| bao_boss_dr12 | BOSS DR12 | Galaxy clustering, D_V/r_s |
+| bao_desi | DESI Year 1 | Galaxy/quasar BAO |
+| bao_eboss | eBOSS DR16 | Extended galaxy BAO |
+
+### Large-Scale Structure
+| Modality | Survey | Observable |
+|----------|--------|------------|
+| void_sdss_dr7 | SDSS DR7 | Void catalog, size distribution |
+| void_sdss_dr16 | SDSS DR16 | Void catalog, clustering |
+| galaxy | Combined | Galaxy clustering statistics |
+
+### Multi-Messenger / High-z Probes
+| Modality | Data | Observable |
+|----------|------|------------|
+| frb | FRB catalog | Dispersion measures, host galaxies |
+| lyman_alpha | Lyman-α forest | IGM at z~2-6 |
+| jwst | JWST surveys | High-z (z>8) galaxy population |
+| gw_ligo | LIGO | GW event parameters |
+| gw_virgo | Virgo | GW event parameters |
+
+---
+
+## PART III: ANOMALY DATA
+
 Total anomalies analyzed: {len(anomalies)}
 Model preference distribution: {model_summary}
-Non-indeterminate anomalies (require individual discussion): {len(non_indeterminate_sorted)}
+Non-indeterminate anomalies requiring individual discussion: {len(non_indeterminate_sorted)}
 
-H-ΛCDM CANDIDATE ANOMALIES (scores ≥ 0.7, total: {len(h_lcdm_anomalies)}):
+### High-Score Anomalies (scores ≥ 0.7, total: {len(h_lcdm_anomalies)}):
 {h_lcdm_text}
 
-ΛCDM-CONSISTENT ANOMALIES (scores ≤ 0.55, total: {len(lcdm_anomalies)}):
+### Baseline-Consistent Anomalies (scores ≤ 0.55, total: {len(lcdm_anomalies)}):
 {lcdm_text}
 
-CRITICAL INTERPRETATION REQUIREMENTS:
+---
 
-1. **INDIVIDUAL ANOMALY DISCUSSION (REQUIRED)**: 
-   You MUST provide individual discussion for EACH non-indeterminate anomaly listed above.
-   For each H_LCDM_candidate anomaly, provide:
-   - Sample index and score
-   - Which modalities contribute most significantly (use the provided modalities list)
-   - Redshift regime and its physical implications
-   - Physical interpretation as distributional deviation in latent space
-   - Why this anomaly favors H-ΛCDM over ΛCDM
-   - Potential physical mechanisms (QTEP effects, γ evolution, information-theoretic constraints)
-   
-   For each LCDM_consistent anomaly, provide:
-   - Sample index and score
-   - Why this anomaly is consistent with standard ΛCDM expectations
-   - Which modalities show standard behavior
-   - Implications for the overall analysis
+## PART IV: ANALYSIS REQUIREMENTS
 
-2. **Collective Physical Implications**: After individual discussions, address:
-   - Patterns across H_LCDM_candidate anomalies: common modalities, redshift regimes, score distributions
-   - What do high scores (≥ 0.7) collectively imply? Consider: (a) new physics signatures consistent with H-ΛCDM predictions, (b) unmodeled systematics, (c) rare astrophysical objects, (d) statistical fluctuations
-   - Emphasize that these are **latent-space anomalies** requiring interpretation through LIME/SHAP to map to physical observables
-   - Ensemble consensus (agreement across Isolation Forest, HDBSCAN, VAE) strengthens confidence
+### 1. Individual Anomaly Discussions (REQUIRED for each non-indeterminate anomaly)
 
-3. **Model Comparison**: Explain:
-   - How the favored_model classification influences interpretation
-   - Why H-ΛCDM predicts stronger deviations than ΛCDM for certain redshift regimes/modalities
-   - The role of QTEP ≈ 2.257 and γ = H/π² in explaining H_LCDM_candidate anomalies
-   - Why LCDM_consistent anomalies support standard cosmology
+**For each high-score anomaly, address:**
 
-4. **Validation and Next Steps**: Discuss:
-   - The importance of statistical validation (bootstrap stability, null hypothesis testing, cross-survey consistency)
-   - Which modalities/redshift regimes should be prioritized for cross-validation
-   - Recommended follow-up analyses (supervised classification, targeted observations, etc.)
+a) **Basic identification**: Sample index, score, redshift
 
-5. **Reporting Style**: 
-   - Use formal, dispassionate tone appropriate for a high-impact letters journal
-   - Write in third person or passive voice; NEVER use first person ("I", "we", "our", "my")
-   - Use phrases like "The analysis reveals...", "These results indicate...", "The pipeline detects..." instead of "I present...", "We find...", "Our analysis..."
-   - Avoid speculative hedging; use definitive logical connectors ("this implies", "it follows", "the framework necessitates")
-   - Distinguish between derivation, ansatz, and conjecture
-   - Focus on scaling relations, symmetry arguments, and thermodynamic constraints
+b) **Modality analysis**: 
+   - Which modalities contribute? List ALL that appear (CMB, BAO, voids, galaxy, FRB, Lyman-α, JWST, GW)
+   - Do multiple modalities show joint deviation, or is it isolated?
+   - Which surveys agree vs disagree?
 
-STRUCTURE YOUR RESPONSE AS:
-1. Individual Anomaly Discussions (one subsection per non-indeterminate anomaly)
-2. Collective Patterns and Physical Implications
-3. Model Comparison Analysis
-4. Validation Status and Recommended Next Steps
+c) **Cross-modal patterns**:
+   - Are deviations correlated ACROSS different physical probes?
+   - Example: CMB + BAO together? Voids + galaxies together? CMB + GW?
+   - Report what you see, not what theory predicts
 
-Be rigorous, precise, and ensure every non-indeterminate anomaly receives individual discussion.
-"""
-        
+d) **Redshift distribution**:
+   - At what z does this anomaly appear?
+   - Is it localized or spread across redshift bins?
+
+e) **Alternative explanations**:
+   - Could this be unmodeled systematics?
+   - Statistical fluctuation probability?
+   - Survey-specific artifacts vs cross-survey agreement?
+
+**For each baseline-consistent anomaly, address:**
+- Which modalities appear normal
+- What constraints this places on deviations
+
+### 2. Collective Pattern Analysis
+
+After individual discussions, synthesize:
+
+a) **Cross-modal clustering**: 
+   - How many H-ΛCDM candidates show TT+TE+EE joint elevation?
+   - This count is the primary evidence metric for H-ΛCDM
+
+b) **Redshift distribution**:
+   - Do anomalies cluster at z ~ 2 (structure formation) or z ~ 1100 (recombination)?
+   - Clustering at specific physically-motivated redshifts strengthens interpretation
+
+c) **Modality consensus**:
+   - Which survey combinations (ACT+Planck, BOSS+DESI) show consistent anomalies?
+   - Cross-survey agreement reduces systematic contamination probability
+
+d) **Score distribution**:
+   - Gap between highest H-ΛCDM candidate and LCDM-consistent scores?
+   - Bimodal distribution suggests real physical distinction; continuous distribution suggests noise
+
+### 3. Model Comparison Analysis
+
+Explicitly address:
+
+a) **Quantitative consistency check**:
+   - Are anomaly amplitudes consistent with α ≈ -5.7?
+   - Do BAO anomalies imply r_s ~ 150.7 Mpc or r_s ~ 147.5 Mpc?
+
+b) **QTEP manifestation**:
+   - Does the ratio of coherent-to-decoherent features in the anomaly pattern approximate 2.257?
+   - This is speculative but worth noting if apparent
+
+c) **γ/H scaling**:
+   - Do anomaly strengths scale with expected γ(z)/H(z) across redshift bins?
+   - Stronger anomalies at z ~ 1100 vs z ~ 0.5 would support this
+
+### 4. Validation Status and Next Steps
+
+a) **Current validation**:
+   - Bootstrap stability: Do H-ΛCDM candidates persist across resampling?
+   - Null hypothesis: What is the probability of this many high-score anomalies by chance?
+   - Cross-survey: Do ACT and Planck flag the same physical scales?
+
+b) **Recommended follow-up**:
+   - Explicit cross-correlation measurement: Compute ρ(ΔC_ℓ^TT, ΔC_ℓ^TE) directly
+   - α extraction: Fit α as free parameter to CMB damping tail
+   - r_s consistency: Compare CMB-derived vs BAO-derived sound horizon
+
+c) **Priority ranking**:
+   - Which anomalies are most robust to systematic variation?
+   - Which would be most constraining if confirmed?
+
+---
+
+## PART V: OUTPUT STRUCTURE
+
+Organize response as:
+
+### Section 1: Individual Anomaly Discussions
+- Subsection H-1, H-2, ... for each high-score anomaly
+- Subsection Λ-1, Λ-2, ... for each baseline-consistent
+- Each subsection: ~100-150 words covering points (a)-(e) above
+
+### Section 2: Collective Patterns and Cross-Modal Coherence
+- Which modality combinations appear together in high-score anomalies?
+- Report ALL cross-modal patterns: CMB×CMB, CMB×BAO, CMB×voids, BAO×voids, galaxy×voids, etc.
+- Do FRB, Lyman-α, JWST, or GW data contribute? If so, report those patterns too
+- Redshift and survey patterns
+- ~200-300 words
+
+### Section 3: Model Comparison
+- Do anomalies cluster in ways consistent with deviations from ΛCDM?
+- What the baseline-consistent samples constrain
+- Be agnostic about mechanism—describe patterns, not theory
+- ~150-200 words
+
+### Section 4: Validation and Recommendations
+- Current statistical confidence
+- Prioritized follow-up analyses across ALL relevant modalities
+- ~150 words
+
+---
+
+## WRITING REQUIREMENTS
+
+**Empirical Focus:**
+- Report what the ML found, not what theory predicts
+- Specify which modalities contribute to each anomaly (ALL of them)
+- Do not privilege CMB over other probes unless data warrants it
+
+**Tone:**
+- Third person throughout ("The analysis reveals...", "Sample 86 exhibits...")
+- Formal, dispassionate, appropriate for high-impact letters journal
+- Definitive logical connectors ("this implies", "it follows") where warranted
+- Appropriate hedging for speculative connections
+
+**Critical Check:**
+- Did you report on ALL modality categories with anomalies (CMB, BAO, voids, galaxy, FRB, Lyman-α, JWST, GW)?
+- For multi-modal anomalies: Which combinations appear? Are they correlated across probes?
+- If only CMB shows anomalies: Say so explicitly
+- If non-CMB probes (voids, GW, FRB, etc.) show anomalies: These deserve equal attention
+"""  
         return prompt
 
     def _call_grok_api(self, prompt: str, max_retries: int = 3, initial_timeout: int = 120) -> str:
@@ -464,7 +635,7 @@ Be rigorous, precise, and ensure every non-indeterminate anomaly receives indivi
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a senior theoretical physicist analyzing cosmological data."
+                    "content": "You are a data scientist analyzing ML anomaly detection results on multi-modal cosmological data. Report patterns empirically without bias toward any specific theoretical interpretation."
                 },
                 {
                     "role": "user",
@@ -523,13 +694,28 @@ Be rigorous, precise, and ensure every non-indeterminate anomaly receives indivi
                 self.logger.warning(
                     f"Grok API error on attempt {attempt + 1}/{max_retries}: {e}"
                 )
-                if attempt < max_retries - 1:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                # Log response body for 4xx diagnostics
+                if e.response is not None:
+                    try:
+                        self.logger.error(f"Grok response body: {e.response.text}")
+                    except Exception:
+                        pass
+
+                # On explicit auth/argument errors, stop immediately and return a clear message
+                if status in (400, 401, 403):
+                    return f"Grok interpretation unavailable: {e.response.text if e.response is not None else str(e)}"
+
+                # Retry only for server errors (>=500); on other 4xx, stop immediately
+                if attempt < max_retries - 1 and (status is None or status >= 500):
                     wait_time = 2 ** attempt
                     self.logger.info(f"Retrying after {wait_time}s...")
                     time.sleep(wait_time)
                 else:
-                    raise
+                    break
         
-        # Should not reach here, but handle it anyway
-        raise last_exception or Exception("Grok API call failed for unknown reason")
+        # Fallback: return a descriptive message instead of raising
+        if last_exception:
+            return f"Grok interpretation unavailable: {last_exception}"
+        return "Grok interpretation unavailable: unknown error"
 
