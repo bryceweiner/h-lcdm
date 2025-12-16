@@ -431,6 +431,479 @@ class DataLoader:
         
         return results
 
+    def load_planck_temperature_map(self, component: str = 'smica', nside: int = 2048) -> Optional[np.ndarray]:
+        """
+        Load Planck 2018 full-sky temperature map (actual observations, not power spectrum).
+        
+        Downloads and loads the actual CMB temperature map from Planck Legacy Archive.
+        This contains the REAL Cold Spot and all observed temperature fluctuations.
+        
+        Parameters:
+            component (str): Component separation method ('smica', 'nilc', 'sevem', 'commander')
+            nside (int): HEALPix resolution (2048 for full resolution, can downsample)
+            
+        Returns:
+            np.ndarray: HEALPix temperature map in μK (or None if unavailable)
+        """
+        try:
+            import healpy as hp
+        except ImportError:
+            self.log_message("healpy required for CMB map loading")
+            return None
+        
+        # Planck 2018 SMICA temperature map from Zenodo
+        # Source: https://zenodo.org/records/16283859
+        # Contains REAL observed CMB temperatures including the Cold Spot!
+        
+        # Full resolution (nside=2048) from Zenodo
+        if nside == 2048:
+            url = "https://zenodo.org/records/16283859/files/COM_CMB_IQU-smica-nosz_2048_R3.00_full.fits?download=1"
+            filename = "COM_CMB_IQU-smica-nosz_2048_R3.00_full.fits"
+        else:
+            # For lower resolutions, download full map and downsample
+            url = "https://zenodo.org/records/16283859/files/COM_CMB_IQU-smica-nosz_2048_R3.00_full.fits?download=1"
+            filename = "COM_CMB_IQU-smica-nosz_2048_R3.00_full.fits"
+            self.log_message(f"Will downsample from nside=2048 to nside={nside}")
+        
+        if component != 'smica':
+            self.log_message(f"Only SMICA available from Zenodo, using smica")
+            component = 'smica'
+        
+        cached_dir = self.downloaded_data_dir / "planck_2018" / "maps"
+        cached_dir.mkdir(parents=True, exist_ok=True)
+        cached_file = cached_dir / filename
+        
+        # Download if not cached
+        if not cached_file.exists() or not self.use_cache:
+            self.log_message(f"Downloading Planck SMICA map from Zenodo...")
+            self.log_message(f"This is a large file (402.7 MB), please wait...")
+            self.log_message(f"Source: https://zenodo.org/records/16283859")
+            
+            try:
+                response = requests.get(url, stream=True, timeout=600)
+                response.raise_for_status()
+                
+                # Show download progress
+                total_size = int(response.headers.get('content-length', 0))
+                downloaded = 0
+                
+                with open(cached_file, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=1024*1024):  # 1MB chunks
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            pct = (downloaded / total_size) * 100
+                            if downloaded % (50*1024*1024) == 0:  # Progress every 50MB
+                                self.log_message(f"  Downloaded {downloaded/(1024*1024):.0f}/{total_size/(1024*1024):.0f} MB ({pct:.0f}%)")
+                
+                self.log_message(f"✓ Downloaded {filename}")
+            except Exception as e:
+                self.log_message(f"Failed to download: {e}")
+                return None
+        else:
+            self.log_message(f"Using cached {filename}")
+        
+        # Load the FITS file
+        try:
+            # Planck maps have I, Q, U in extensions 0, 1, 2
+            # We want temperature (I, Stokes I parameter)
+            temperature_map = hp.read_map(str(cached_file), field=0, verbose=False)
+            
+            # Planck SMICA maps are already in μK_CMB, no conversion needed
+            # (Check units in FITS header to confirm)
+            
+            # Optionally downsample if requested nside doesn't match file
+            map_nside = hp.npix2nside(len(temperature_map))
+            if nside != map_nside and nside < map_nside:
+                self.log_message(f"Downsampling from nside={map_nside} to nside={nside}")
+                temperature_map = hp.ud_grade(temperature_map, nside)
+            
+            self.log_message(f"✓ Loaded Planck {component} map: {len(temperature_map)} pixels, RMS={np.std(temperature_map):.1f} μK")
+            return temperature_map
+            
+        except Exception as e:
+            self.log_message(f"Failed to load map: {e}")
+            return None
+    
+    def load_wmap_temperature_map(self, nside: int = 512) -> Optional[np.ndarray]:
+        """
+        Load WMAP 9-year ILC temperature map.
+        
+        Downloads and loads the Internal Linear Combination (ILC) temperature map
+        from WMAP 9-year data release.
+        
+        Parameters:
+            nside (int): HEALPix resolution (512 for WMAP native resolution)
+            
+        Returns:
+            np.ndarray: HEALPix temperature map in μK (or None if unavailable)
+        """
+        try:
+            import healpy as hp
+        except ImportError:
+            self.log_message("healpy required for CMB map loading")
+            return None
+        
+        # WMAP 9-year ILC map - try alternative URL structure
+        # NASA LAMBDA reorganized, try legacy archive
+        url = "https://lambda.gsfc.nasa.gov/product/map/dr5/ilc_map_get.html"
+        
+        # Alternative: use direct FITS file if available
+        alt_url = "https://lambda.gsfc.nasa.gov/data/map/dr5/skymaps/9yr/raw/wmap_iqusmap_r9_9yr_K1_v5.fits"
+        filename = "wmap_ilc_9yr_v5.fits"
+        
+        cached_dir = self.downloaded_data_dir / "wmap"
+        cached_dir.mkdir(parents=True, exist_ok=True)
+        cached_file = cached_dir / filename
+        
+        # Download if not cached (correct direct FITS file URL from LAMBDA)
+        # WMAP ILC 9-year full sky map, nside=512
+        # Source: https://lambda.gsfc.nasa.gov/product/map/dr5/m_products.cfm
+        url = "https://lambda.gsfc.nasa.gov/data/map/dr5/dfp/ilc/wmap_ilc_9yr_v5.fits"
+        
+        if not cached_file.exists() or not self.use_cache:
+            self.log_message(f"Downloading WMAP ILC map from NASA LAMBDA...")
+            
+            try:
+                response = requests.get(url, timeout=180)
+                response.raise_for_status()
+                
+                with open(cached_file, 'wb') as f:
+                    f.write(response.content)
+                
+                self.log_message(f"✓ Downloaded {filename}")
+            except Exception as e:
+                self.log_message(f"Failed to download: {e}")
+                return None
+        else:
+            self.log_message(f"Using cached {filename}")
+        
+        # Load the FITS file
+        try:
+            temperature_map = hp.read_map(str(cached_file), field=0, verbose=False)
+            
+            # WMAP maps are already in mK, convert to μK
+            temperature_map = temperature_map * 1e3
+            
+            # Downsample if needed
+            map_nside = hp.npix2nside(len(temperature_map))
+            if nside != map_nside and nside < map_nside:
+                self.log_message(f"Downsampling from nside={map_nside} to nside={nside}")
+                temperature_map = hp.ud_grade(temperature_map, nside)
+            
+            self.log_message(f"✓ Loaded WMAP ILC map: {len(temperature_map)} pixels, RMS={np.std(temperature_map):.1f} μK")
+            return temperature_map
+            
+        except Exception as e:
+            self.log_message(f"Failed to load map: {e}")
+            return None
+    
+    def load_act_temperature_map(self, nside: int = 512, season: str = 'dr5_coadd') -> Optional[np.ndarray]:
+        """
+        Load ACT temperature map from NASA LAMBDA.
+        
+        ACT provides partial-sky temperature maps from multiple observing seasons.
+        Source: https://lambda.gsfc.nasa.gov/product/act/actadv_prod_table.html
+        
+        Parameters:
+            nside (int): HEALPix resolution for output
+            season (str): ACT data release/season
+            
+        Returns:
+            np.ndarray: HEALPix temperature map in μK (or None if unavailable)
+        """
+        try:
+            import healpy as hp
+        except ImportError:
+            self.log_message("healpy required for CMB map loading")
+            return None
+        
+        # ACT DR5 nighttime coadd map (cleanest for large scales)
+        # These are equatorial maps that need to be converted to HEALPix
+        # For simplicity, use the deep56 map (good coverage of southern hemisphere)
+        base_url = "https://lambda.gsfc.nasa.gov/data/suborbital/ACT/ACT_dr5/maps/"
+        
+        # ACT provides maps in multiple frequencies, use 150 GHz (closest to CMB)
+        # Format: act_planck_dr5.01_s08s18_AA_f150_night_map.fits
+        filename = "act_planck_dr5.01_s08s18_AA_f150_night_map.fits"
+        url = base_url + filename
+        
+        cached_dir = self.downloaded_data_dir / "act_dr6" / "maps"
+        cached_dir.mkdir(parents=True, exist_ok=True)
+        cached_file = cached_dir / filename
+        
+        # Download if not cached
+        if not cached_file.exists() or not self.use_cache:
+            self.log_message(f"Downloading ACT temperature map from {url}")
+            self.log_message(f"This may be a large file, please wait...")
+            
+            try:
+                response = requests.get(url, stream=True, timeout=300)
+                response.raise_for_status()
+                
+                with open(cached_file, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=1024*1024):
+                        f.write(chunk)
+                
+                self.log_message(f"✓ Downloaded {filename}")
+            except Exception as e:
+                self.log_message(f"Failed to download ACT map: {e}")
+                return None
+        else:
+            self.log_message(f"Using cached {filename}")
+        
+        # Load the FITS file and convert to HEALPix
+        try:
+            # ACT maps are in CAR (Plate Carrée) projection, need conversion
+            # For now, use healpy to read if it's HEALPix format
+            # If not, we'll need to reproject from CAR to HEALPix
+            if ASTROPY_AVAILABLE:
+                from astropy.io import fits
+                with fits.open(cached_file) as hdul:
+                    # Check if this is HEALPix or CAR
+                    header = hdul[0].header
+                    if 'PIXTYPE' in header and header['PIXTYPE'] == 'HEALPIX':
+                        temperature_map = hdul[0].data
+                    else:
+                        # CAR projection - would need reprojection
+                        self.log_message("ACT map is in CAR projection, reprojection needed")
+                        return None
+            else:
+                temperature_map = hp.read_map(str(cached_file), field=0, verbose=False)
+            
+            # ACT maps are typically in μK already
+            # Resample to requested nside if needed
+            map_nside = hp.npix2nside(len(temperature_map))
+            if nside != map_nside:
+                self.log_message(f"Resampling from nside={map_nside} to nside={nside}")
+                temperature_map = hp.ud_grade(temperature_map, nside)
+            
+            self.log_message(f"✓ Loaded ACT map: {len(temperature_map)} pixels, RMS={np.std(temperature_map):.1f} μK")
+            return temperature_map
+            
+        except Exception as e:
+            self.log_message(f"Failed to load ACT map: {e}")
+            return None
+    
+    def load_spt_temperature_map(self, nside: int = 512, resolution: str = 'hires') -> Optional[np.ndarray]:
+        """
+        Load SPT-3G temperature map from SPT public data.
+        
+        SPT provides high-resolution T/Q/U maps of the 500d field.
+        Source: https://pole.uchicago.edu/public/data/chou25/
+        
+        Parameters:
+            nside (int): HEALPix resolution for output
+            resolution (str): 'hires' (0.5 arcmin) or 'lowres' (3 arcmin)
+            
+        Returns:
+            np.ndarray: HEALPix temperature map in μK (or None if unavailable)
+        """
+        try:
+            import healpy as hp
+        except ImportError:
+            self.log_message("healpy required for CMB map loading")
+            return None
+        
+        # SPT high-resolution 150 GHz map (best for CMB)
+        base_url = "https://pole.uchicago.edu/public/data/chou25/"
+        
+        if resolution == 'hires':
+            filename = "sptpol_iqumaps_500d_hires_150ghz.fits"
+        else:
+            filename = "sptpol_iqumaps_500d_lowres_150ghz.fits"
+        
+        url = base_url + filename
+        
+        cached_dir = self.downloaded_data_dir / "spt_3g_d1" / "maps"
+        cached_dir.mkdir(parents=True, exist_ok=True)
+        cached_file = cached_dir / filename
+        
+        # Download if not cached
+        if not cached_file.exists() or not self.use_cache:
+            self.log_message(f"Downloading SPT temperature map from {url}")
+            self.log_message(f"This may take a while...")
+            
+            try:
+                response = requests.get(url, stream=True, timeout=300)
+                response.raise_for_status()
+                
+                with open(cached_file, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=1024*1024):
+                        f.write(chunk)
+                
+                self.log_message(f"✓ Downloaded {filename}")
+            except Exception as e:
+                self.log_message(f"Failed to download SPT map: {e}")
+                return None
+        else:
+            self.log_message(f"Using cached {filename}")
+        
+        # Load the FITS file
+        # NOTE: SPT maps are in Lambert projection, not HEALPix
+        # They are also partial-sky (500 sq deg field)
+        # For full-sky analysis, we'd need to reproject or pad
+        try:
+            if ASTROPY_AVAILABLE:
+                from astropy.io import fits
+                with fits.open(cached_file) as hdul:
+                    # SPT maps have T, Q, U in separate extensions or fields
+                    # Get temperature (Stokes I)
+                    temperature_data = hdul[0].data
+                    
+                    # Check if this is HEALPix or needs reprojection
+                    header = hdul[0].header
+                    if 'PIXTYPE' in header and header['PIXTYPE'] == 'HEALPIX':
+                        temperature_map = temperature_data
+                    else:
+                        # Lambert projection - needs reprojection to HEALPix for full-sky
+                        self.log_message("SPT map is in Lambert projection (partial-sky)")
+                        self.log_message("Reprojection to HEALPix not yet implemented")
+                        return None
+            else:
+                # Try healpy direct read
+                temperature_map = hp.read_map(str(cached_file), field=0, verbose=False)
+            
+            # SPT maps should be in μK
+            # Resample to requested nside if needed
+            map_nside = hp.npix2nside(len(temperature_map))
+            if nside != map_nside:
+                self.log_message(f"Resampling from nside={map_nside} to nside={nside}")
+                temperature_map = hp.ud_grade(temperature_map, nside)
+            
+            self.log_message(f"✓ Loaded SPT map: {len(temperature_map)} pixels, RMS={np.std(temperature_map):.1f} μK")
+            return temperature_map
+            
+        except Exception as e:
+            self.log_message(f"Failed to load SPT map: {e}")
+            import traceback
+            self.log_message(traceback.format_exc())
+            return None
+    
+    def load_cobe_temperature_map(self, nside: int = 256) -> Optional[np.ndarray]:
+        """
+        Load COBE DMR 4-year temperature map.
+        
+        Downloads and loads the COBE DMR 4-year coadded map.
+        
+        Parameters:
+            nside (int): HEALPix resolution (will be created from COBE pixelization)
+            
+        Returns:
+            np.ndarray: HEALPix temperature map in μK (or None if unavailable)
+        """
+        try:
+            import healpy as hp
+        except ImportError:
+            self.log_message("healpy required for CMB map loading")
+            return None
+        
+        # COBE DMR 4-year map (53A channel) - CHECK IF ALREADY DOWNLOADED
+        # File is DMR_SKYMAP_53A_4YR.FITS in cobe_dmr directory
+        existing_file = self.downloaded_data_dir / "cobe_dmr" / "DMR_SKYMAP_53A_4YR.FITS"
+        
+        if existing_file.exists():
+            self.log_message(f"Using existing COBE map: {existing_file}")
+            cached_file = existing_file
+        else:
+            # Download if not present
+            url = "https://lambda.gsfc.nasa.gov/data/cobe/dmr/skymaps/4yr/DMR_SKYMAP_53A_4YR.FITS"
+            filename = "DMR_SKYMAP_53A_4YR.FITS"
+            
+            cached_dir = self.downloaded_data_dir / "cobe_dmr"
+            cached_dir.mkdir(parents=True, exist_ok=True)
+            cached_file = cached_dir / filename
+        
+            # Download if not cached
+            if not cached_file.exists() or not self.use_cache:
+                self.log_message(f"Downloading COBE DMR map from {url}")
+                
+                try:
+                    response = requests.get(url, timeout=180)
+                    response.raise_for_status()
+                    
+                    with open(cached_file, 'wb') as f:
+                        f.write(response.content)
+                    
+                    self.log_message(f"✓ Downloaded {filename}")
+                except Exception as e:
+                    self.log_message(f"Failed to download: {e}")
+                    return None
+            else:
+                self.log_message(f"Using cached {filename}")
+        
+        # Load COBE map
+        try:
+            # COBE DMR uses quad-cube pixelization (6144 pixels)
+            # Reproject to HEALPix using pixel coordinates from FITS table
+            from astropy.io import fits as astropy_fits
+            
+            with astropy_fits.open(cached_file) as hdul:
+                # COBE DMR data is in extension 1 as a binary table
+                # Contains: SIGNAL (mK), GALON, GALAT (galactic coords)
+                dmr_data = hdul[1].data
+                
+                # Extract temperature signal (in mK)
+                signal_mK = dmr_data['SIGNAL']
+                
+                # Extract galactic coordinates for each COBE pixel
+                galon = dmr_data['GALON']  # Galactic longitude (degrees)
+                galat = dmr_data['GALAT']  # Galactic latitude (degrees)
+                
+                # Convert to μK
+                signal_uK = signal_mK * 1e3
+                
+                self.log_message(f"COBE DMR: {len(signal_uK)} quad-cube pixels")
+                self.log_message(f"COBE DMR: RMS = {np.std(signal_uK):.1f} μK (before reprojection)")
+                
+                # Reproject from COBE quad-cube to HEALPix using interpolation
+                # Convert galactic coords to colatitude (theta) and longitude (phi)
+                theta = np.radians(90.0 - galat)  # colatitude: 0 at north pole
+                phi = np.radians(galon)            # longitude: 0 at galactic center
+                
+                # Create HEALPix map at requested resolution
+                npix = hp.nside2npix(nside)
+                healpix_map = np.zeros(npix)
+                
+                # Convert COBE pixel directions to unit vectors for fast lookup
+                cobe_vecs = hp.ang2vec(theta, phi)
+                
+                # For each HEALPix pixel, find nearest COBE pixels and interpolate
+                for ipix in range(npix):
+                    # Get HEALPix pixel direction
+                    theta_hp, phi_hp = hp.pix2ang(nside, ipix)
+                    vec_hp = hp.ang2vec(theta_hp, phi_hp)
+                    
+                    # Calculate angular distances to all COBE pixels
+                    # Use dot product: cos(angle) = vec1 · vec2
+                    cos_angles = np.dot(cobe_vecs, vec_hp)
+                    cos_angles = np.clip(cos_angles, -1, 1)
+                    ang_dist = np.arccos(cos_angles)
+                    
+                    # Find COBE pixels within search radius (~7 deg, typical COBE beam)
+                    search_radius = np.radians(7.0)
+                    nearby = ang_dist < search_radius
+                    
+                    if np.any(nearby):
+                        # Inverse distance weighted interpolation
+                        weights = 1.0 / (ang_dist[nearby] + 1e-10)  # Avoid division by zero
+                        weighted_sum = np.sum(signal_uK[nearby] * weights)
+                        weight_sum = np.sum(weights)
+                        healpix_map[ipix] = weighted_sum / weight_sum
+                    else:
+                        # No nearby pixels (rare), use global mean
+                        healpix_map[ipix] = np.mean(signal_uK)
+                
+                temperature_map = healpix_map
+                rms = np.std(temperature_map)
+                self.log_message(f"✓ Reprojected COBE to HEALPix nside={nside}: {len(temperature_map)} pixels, RMS={rms:.1f} μK")
+                
+                return temperature_map
+            
+        except Exception as e:
+            self.log_message(f"Failed to load map: {e}")
+            return None
+
     def load_spt3g(self) -> Optional[Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]]:
         """
         Load SPT-3G D1 TT/TE/EE Bandpowers from LAMBDA archive.
