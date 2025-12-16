@@ -41,12 +41,17 @@ from hlcdm.parameters import HLCDM_PARAMS
 from pipeline.gamma import GammaPipeline
 from pipeline.bao import BAOPipeline
 from pipeline.cmb import CMBPipeline
+from pipeline.cmb_cold_spot import CMBColdSpotPipeline
 from pipeline.void import VoidPipeline
 from pipeline.voidfinder import VoidFinderPipeline
 from pipeline.hlcdm import HLCDMPipeline
 from pipeline.ml import MLPipeline
 from pipeline.tmdc import TMDCPipeline
 from pipeline.recommendation import RecommendationPipeline
+from pipeline.cmb_gw import CMBGWPipeline
+from pipeline.cosmo_const import CosmoConstPipeline
+from pipeline.fine_structure import FineStructurePipeline
+from pipeline.gravitational_constant import GravitationalConstantPipeline
 from pipeline.common.reporting import HLambdaDMReporter
 from pipeline.common.visualization import HLambdaDMVisualizer
 
@@ -110,6 +115,52 @@ def parse_arguments():
         help='Run CMB analysis (E-mode signatures). '
              'Optional arguments: validate, extended. '
              'Example: --cmb validate extended'
+    )
+
+    parser.add_argument(
+        '--cmb-cold-spot',
+        nargs='*',
+        metavar='VALIDATION',
+        dest='cmb_cold_spot',
+        help='Run CMB Cold Spot QTEP analysis (tests QTEP hypothesis for Cold Spot origin). '
+             'Optional arguments: validate, extended. '
+             'Example: --cmb-cold-spot validate'
+    )
+
+    parser.add_argument(
+        '--cmb-gw',
+        nargs='*',
+        metavar='VALIDATION',
+        help='Run evolving G(z) analysis (sound horizon, voids, sirens, CMB peaks). '
+             'Optional arguments: validate, extended. '
+             'Example: --cmb-gw validate'
+    )
+
+    parser.add_argument(
+        '--cosmo-const',
+        nargs='*',
+        metavar='VALIDATION',
+        help='Run cosmological constant analysis (causal diamond triality). '
+             'Optional arguments: validate, extended. '
+             'Example: --cosmo-const validate extended'
+    )
+
+    parser.add_argument(
+        '--fine-structure',
+        nargs='*',
+        metavar='VALIDATION',
+        help='Run fine structure constant analysis (information processing principles). '
+             'Optional arguments: validate, extended. '
+             'Example: --fine-structure validate extended'
+    )
+
+    parser.add_argument(
+        '--gravitational-constant',
+        nargs='*',
+        metavar='VALIDATION',
+        help='Run gravitational constant analysis (information processing principles). '
+             'Optional arguments: validate, extended. '
+             'Example: --gravitational-constant validate extended'
     )
 
     parser.add_argument(
@@ -443,7 +494,7 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
 
     # Handle --all flag
     if args.all:
-        pipelines_to_run = ['gamma', 'bao', 'cmb', 'void', 'hlcdm', 'tmdc']
+        pipelines_to_run = ['gamma', 'bao', 'cmb', 'cmb_gw', 'void', 'hlcdm', 'tmdc', 'cosmo_const', 'fine_structure', 'gravitational_constant']
         default_validation = ['validate'] if args.validation_level == 'extended' else []
         if args.validation_level == 'extended':
             default_validation.append('extended')
@@ -455,6 +506,11 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
         'gamma': args.gamma,
         'bao': args.bao,
         'cmb': args.cmb,
+        'cmb_cold_spot': getattr(args, 'cmb_cold_spot', None),
+        'cmb_gw': args.cmb_gw,
+        'cosmo_const': args.cosmo_const,
+        'fine_structure': args.fine_structure,
+        'gravitational_constant': args.gravitational_constant,
         'void': args.void,
         'voidfinder': args.voidfinder,
         'hlcdm': args.hlcdm,
@@ -661,6 +717,11 @@ def initialize_pipelines(output_dir: str) -> Dict[str, Any]:
         'gamma': GammaPipeline(output_dir),
         'bao': BAOPipeline(output_dir),
         'cmb': CMBPipeline(output_dir),
+        'cmb_cold_spot': CMBColdSpotPipeline(output_dir),
+        'cmb_gw': CMBGWPipeline(output_dir),
+        'cosmo_const': CosmoConstPipeline(output_dir),
+        'fine_structure': FineStructurePipeline(output_dir),
+        'gravitational_constant': GravitationalConstantPipeline(output_dir),
         'void': VoidPipeline(output_dir),
         'voidfinder': VoidFinderPipeline(output_dir),
         'hlcdm': HLCDMPipeline(output_dir),

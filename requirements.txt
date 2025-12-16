@@ -20,10 +20,6 @@ hdbscan>=0.8.33
 shap>=0.43.0
 lime>=0.2.0.1
 
-# Deep learning (required for ML pipeline)
-torch>=2.0.0
-torchvision>=0.15.0
-
 # Graph theory and networks
 networkx>=2.5
 
@@ -51,7 +47,7 @@ statsmodels>=0.13.0
 tqdm>=4.64.0
 
 # Deep learning (optional)
-torch>=2.0.0
+torch 
 
 # Jupyter support (optional)
 jupyter>=1.0.0

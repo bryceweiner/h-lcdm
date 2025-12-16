@@ -21,6 +21,11 @@ import requests
 from . import (
     bao_reporter,
     cmb_reporter,
+    cmb_cold_spot_reporter,
+    cmb_gw_reporter,
+    cosmo_const_reporter,
+    fine_structure_reporter,
+    gravitational_constant_reporter,
     gamma_reporter,
     hlcdm_reporter,
     ml_reporter,
@@ -128,6 +133,12 @@ class HLambdaDMReporter:
             return hlcdm_reporter.generate_individual_reports(self, results, metadata)
 
         actual_results = results.get("results", results)
+        # If results dict itself has validation/validation_extended at top level, merge them
+        if "validation" in results and "validation" not in actual_results:
+            actual_results["validation"] = results["validation"]
+        if "validation_extended" in results and "validation_extended" not in actual_results:
+            actual_results["validation_extended"] = results["validation_extended"]
+        
         main_results = actual_results.get("main", {})
         if not main_results or len(main_results) == 0:
             main_results = {k: v for k, v in actual_results.items() if k not in ["validation", "validation_extended"]}
@@ -143,6 +154,11 @@ class HLambdaDMReporter:
             "gamma": gamma_reporter,
             "bao": bao_reporter,
             "cmb": cmb_reporter,
+            "cmb_cold_spot": cmb_cold_spot_reporter,
+            "cmb_gw": cmb_gw_reporter,
+            "cosmo_const": cosmo_const_reporter,
+            "fine_structure": fine_structure_reporter,
+            "gravitational_constant": gravitational_constant_reporter,
             "void": void_reporter,
             "ml": ml_reporter,
             "tmdc": tmdc_reporter,
@@ -156,9 +172,24 @@ class HLambdaDMReporter:
             if pipeline_name == "ml":
                 ml_content = builder.results(actual_results, self.grok_client) if builder else self._fallback_results(main_results)
                 f.write(ml_content)
+            elif pipeline_name == "cmb_cold_spot":
+                cold_spot_content = builder.results(main_results, self.grok_client) if builder else self._fallback_results(main_results)
+                f.write(cold_spot_content)
             elif pipeline_name == "recommendation":
                 rec_content = builder.results(main_results, self.grok_client) if builder else self._fallback_results(main_results)
                 f.write(rec_content)
+            elif pipeline_name == "cosmo_const":
+                cosmo_const_content = builder.results(main_results) if builder and hasattr(builder, "results") else self._fallback_results(main_results)
+                f.write("## Analysis Results\n\n")
+                f.write(cosmo_const_content)
+            elif pipeline_name == "fine_structure":
+                fine_structure_content = builder.results(main_results) if builder and hasattr(builder, "results") else self._fallback_results(main_results)
+                f.write("## Analysis Results\n\n")
+                f.write(fine_structure_content)
+            elif pipeline_name == "gravitational_constant":
+                gravitational_constant_content = builder.results(main_results) if builder and hasattr(builder, "results") else self._fallback_results(main_results)
+                f.write("## Analysis Results\n\n")
+                f.write(gravitational_constant_content)
             else:
                 results_body = builder.results(main_results) if builder and hasattr(builder, "results") else self._fallback_results(main_results)
                 f.write("## Analysis Results\n\n")
@@ -495,6 +526,26 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
                 'question': 'Do high-redshift observations (JWST, Lyman-alpha, FRB) support H-ΛCDM predictions?',
                 'looking_for': 'Evidence for H-ΛCDM predictions in early galaxy formation, Lyman-alpha phase transitions, FRB timing patterns, and E8 chiral signatures',
                 'prediction': 'H-ΛCDM predicts specific signatures in early universe observations including anti-viscosity effects, phase transitions, and information saturation patterns'
+            },
+            'cmb_gw': {
+                'question': 'Does the effective gravitational constant G_eff(z) evolve with redshift?',
+                'looking_for': 'Consistent β parameter across independent probes: sound horizon enhancement, void size distribution, standard siren distances, CMB peak ratios, and cross-modal coherence',
+                'prediction': 'G_eff(z) = G_0 × [1 - β × f(z)] where f(z) = Ω_r(z) / [Ω_r(z) + Ω_m(z)]. Weaker early G → enhanced sound horizon, larger voids, modified distances, altered CMB peaks'
+            },
+            'cosmo_const': {
+                'question': 'Can the cosmological constant be derived from first principles?',
+                'looking_for': 'Parameter-free prediction of Ω_Λ from causal diamond triality matching Planck 2018 observation',
+                'prediction': 'H-ΛCDM predicts Ω_Λ = (1-e^{-1})(11\ln 2 - 3\ln 3)/4 = 0.6841 from geometric entropy and irreversibility fraction'
+            },
+            'fine_structure': {
+                'question': 'Can the fine structure constant be derived from first principles?',
+                'looking_for': 'Parameter-free prediction of α⁻¹ from information processing principles matching CODATA 2018 observation',
+                'prediction': 'H-ΛCDM predicts α⁻¹ = (1/2)ln(S_H) - ln(4π²) - 1/(2π) = 137.032 from Bekenstein-Hawking entropy and geometric phase space'
+            },
+            'gravitational_constant': {
+                'question': 'Can Newton\'s gravitational constant be derived from first principles?',
+                'looking_for': 'Prediction of G from fine structure constant via information processing principles matching CODATA 2018 observation',
+                'prediction': 'H-ΛCDM predicts G = πc⁵/(ℏH²·N_P·ln(3)·f_quantum) = 6.67 × 10⁻¹¹ m³/(kg·s²) from information capacity and geometric corrections'
             }
         }
 
@@ -537,6 +588,10 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
             "gamma": gamma_reporter,
             "bao": bao_reporter,
             "cmb": cmb_reporter,
+            "cmb_cold_spot": cmb_cold_spot_reporter,
+            "cosmo_const": cosmo_const_reporter,
+            "fine_structure": fine_structure_reporter,
+            "gravitational_constant": gravitational_constant_reporter,
             "void": void_reporter,
             "ml": ml_reporter,
             "tmdc": tmdc_reporter,
@@ -549,6 +604,11 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
 
         if pipeline_name == "ml" and builder:
             return builder.results(actual_results, self.grok_client)
+        elif pipeline_name == "cmb_cold_spot" and builder:
+            return builder.results(main_results, self.grok_client)
+        
+        if pipeline_name == "cosmo_const" and builder:
+            return builder.results(main_results) if hasattr(builder, "results") else self._fallback_results(main_results)
 
         body = builder.results(main_results) if builder and hasattr(builder, "results") else self._fallback_results(main_results)
         return "## Analysis Results\n\n" + body
@@ -567,6 +627,21 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
 
         if pipeline_name == "recommendation" and builder:
             return builder.validation(actual_results)
+        
+        # For constant derivation pipelines, the run() method stores all validation
+        # results (including monte_carlo, model_comparison, sensitivity) in 'validation'.
+        # Pass this as extended_val when validation_extended is not present.
+        if pipeline_name == "cosmo_const" and builder and hasattr(builder, "validation"):
+            ext = extended_val if extended_val else basic_val
+            return builder.validation(basic_val, ext)
+        
+        if pipeline_name == "fine_structure" and builder and hasattr(builder, "validation"):
+            ext = extended_val if extended_val else basic_val
+            return builder.validation(basic_val, ext)
+        
+        if pipeline_name == "gravitational_constant" and builder and hasattr(builder, "validation"):
+            ext = extended_val if extended_val else basic_val
+            return builder.validation(basic_val, ext)
 
         validation = "## Validation\n\n"
         if basic_val:
@@ -587,7 +662,7 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
         else:
             validation += "No validation results available.\n\n"
         
-        if extended_val and pipeline_name not in ["ml", "void"]:
+        if extended_val and pipeline_name not in ["ml", "void", "cosmo_const", "fine_structure", "gravitational_constant"]:
             ext_status = extended_val.get("overall_status", "UNKNOWN")
             validation += "### Extended Validation\n\n"
             validation += f"**Overall Status:** {ext_status}\n\n"
@@ -605,7 +680,8 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
         overall_status = basic_val.get("overall_status", "UNKNOWN")
 
         if builder and hasattr(builder, "conclusion"):
-            return "## Conclusion\n\n" + builder.conclusion(main_results, overall_status)
+            # Reporter provides its own conclusion (includes header)
+            return builder.conclusion(main_results, overall_status)
 
         conclusion = "## Conclusion\n\n"
         conclusion += f"Analysis completed for {pipeline_name} pipeline. Validation status: **{overall_status}**.\n\n"
