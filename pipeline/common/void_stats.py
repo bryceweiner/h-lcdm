@@ -155,11 +155,9 @@ def calculate_mean_separation(
     # FAIL HARD if any NaN/inf values found
     if not np.isfinite(positions).all():
         n_invalid = (~np.isfinite(positions).all(axis=1)).sum()
-        invalid_positions = positions[~np.isfinite(positions).all(axis=1)][:10]
         raise ValueError(
             f"CRITICAL ERROR: Found {n_invalid} positions with NaN/inf values in mean separation calculation. "
-            f"First invalid positions:\n{invalid_positions}\n"
-            f"This indicates corrupted coordinate data. Fix the data source before proceeding."
+            f"Fix the data source before proceeding."
         )
         
     n_objects = len(positions)

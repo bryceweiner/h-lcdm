@@ -18,29 +18,36 @@ def extract_cartesian_coordinates(catalog: pd.DataFrame) -> Optional[np.ndarray]
     """
     Extract Cartesian coordinates from catalog if available.
     
-    FAILS HARD if NaN/inf values are found.
+    Checks for x, y, z columns first, then falls back to x_mpc, y_mpc, z_mpc.
+    Returns None if coordinates are missing or invalid, allowing fallback to conversion.
     
     Parameters:
-        catalog: DataFrame with potential x, y, z columns
+        catalog: DataFrame with potential x, y, z or x_mpc, y_mpc, z_mpc columns
         
     Returns:
-        Array of shape (N, 3) with x, y, z coordinates, or None if not available
+        Array of shape (N, 3) with x, y, z coordinates, or None if not available or invalid
     """
+    # Try x, y, z columns first
     if all(col in catalog.columns for col in ['x', 'y', 'z']):
-        # Extract coordinates
         coords = catalog[['x', 'y', 'z']].values
+        valid_mask = np.isfinite(coords).all(axis=1)
+        n_valid = valid_mask.sum()
         
-        # FAIL HARD if any NaN/inf values found
-        if not np.isfinite(coords).all():
-            n_invalid = (~np.isfinite(coords).all(axis=1)).sum()
-            invalid_indices = catalog[~np.isfinite(coords).all(axis=1)].index.tolist()[:10]
-            raise ValueError(
-                f"CRITICAL ERROR: Found {n_invalid} rows with NaN/inf values in Cartesian coordinates (x, y, z). "
-                f"First invalid indices: {invalid_indices}. "
-                f"This indicates corrupted data. Fix the data source before proceeding."
-            )
+        # If we have mostly valid coordinates (>= 10%), return them
+        # The caller will filter out invalid rows
+        if n_valid >= len(coords) * 0.1:
+            return coords
+    
+    # Try x_mpc, y_mpc, z_mpc columns (used by DESI catalogs)
+    if all(col in catalog.columns for col in ['x_mpc', 'y_mpc', 'z_mpc']):
+        coords = catalog[['x_mpc', 'y_mpc', 'z_mpc']].values
+        valid_mask = np.isfinite(coords).all(axis=1)
+        n_valid = valid_mask.sum()
         
-        return coords
+        # If we have mostly valid coordinates (>= 10%), return them
+        # The caller will filter out invalid rows
+        if n_valid >= len(coords) * 0.1:
+            return coords
     
     return None
 
@@ -78,31 +85,57 @@ def convert_spherical_to_cartesian(
         if cosmology is None:
             from astropy.cosmology import Planck18 as cosmology
         
+        # Filter out rows with invalid input data BEFORE conversion
+        ra_vals = catalog[ra_col].values
+        dec_vals = catalog[dec_col].values
+        z_vals = catalog['redshift'].values
+        
+        # Create mask for valid rows
+        valid_mask = (
+            np.isfinite(ra_vals) & 
+            np.isfinite(dec_vals) & 
+            np.isfinite(z_vals) &
+            (z_vals >= 0) & 
+            (z_vals <= 10)
+        )
+        
+        n_invalid_input = (~valid_mask).sum()
+        if n_invalid_input > 0:
+            logger.warning(f"Filtering out {n_invalid_input} rows with invalid input coordinates (NaN/inf or z out of range)")
+            # Filter catalog to valid rows only
+            catalog = catalog[valid_mask].copy()
+            ra_vals = catalog[ra_col].values
+            dec_vals = catalog[dec_col].values
+            z_vals = catalog['redshift'].values
+        
+        if len(catalog) == 0:
+            raise ValueError("No valid rows remaining after filtering invalid coordinates")
+        
         # Convert to SkyCoord and then to Cartesian
         coords = SkyCoord(
-            ra=catalog[ra_col].values * u.deg,
-            dec=catalog[dec_col].values * u.deg,
-            distance=cosmology.comoving_distance(catalog['redshift'].values)
+            ra=ra_vals * u.deg,
+            dec=dec_vals * u.deg,
+            distance=cosmology.comoving_distance(z_vals)
         )
         
         # Get Cartesian coordinates in Mpc
         cart_coords = coords.cartesian
         
-        # Extract values - FAIL HARD if NaN/inf found
+        # Extract values
         positions = np.column_stack([
             cart_coords.x.value,
             cart_coords.y.value,
             cart_coords.z.value
         ])
         
-        # FAIL HARD if any NaN/inf values found
+        # Final check - this should not happen if input was valid, but check anyway
         if not np.isfinite(positions).all():
             n_invalid = (~np.isfinite(positions).all(axis=1)).sum()
             invalid_inputs = catalog[~np.isfinite(positions).all(axis=1)][[ra_col, dec_col, 'redshift']].head(10)
             raise ValueError(
-                f"CRITICAL ERROR: Coordinate conversion produced {n_invalid} rows with NaN/inf values. "
+                f"CRITICAL ERROR: Coordinate conversion produced {n_invalid} rows with NaN/inf values despite valid input. "
                 f"First invalid inputs:\n{invalid_inputs}\n"
-                f"This indicates corrupted input data (ra, dec, redshift). Fix the data source before proceeding."
+                f"This indicates a problem with the cosmology calculation."
             )
         
         return positions

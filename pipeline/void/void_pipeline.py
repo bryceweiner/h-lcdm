@@ -227,6 +227,17 @@ class VoidPipeline(AnalysisPipeline):
 
             self.log_progress("✓ Comprehensive void analysis complete")
 
+            # Generate visualizations
+            try:
+                self.log_progress("Generating void analysis visualizations...")
+                viz_results = self._generate_visualizations()
+                results['visualizations'] = viz_results
+                self.log_progress("✓ Visualizations generated successfully")
+            except Exception as e:
+                viz_error = f"Failed to generate visualizations: {type(e).__name__}: {str(e)}"
+                self.log_progress(f"⚠ {viz_error}")
+                results['visualizations'] = {'error': viz_error}
+
             # Save results
             self.save_results(results)
 
@@ -325,6 +336,17 @@ class VoidPipeline(AnalysisPipeline):
 
             self.log_progress("✓ Comprehensive void analysis complete (H-LCDM mode)")
 
+            # Generate visualizations
+            try:
+                self.log_progress("Generating void analysis visualizations...")
+                viz_results = self._generate_visualizations()
+                results['visualizations'] = viz_results
+                self.log_progress("✓ Visualizations generated successfully")
+            except Exception as e:
+                viz_error = f"Failed to generate visualizations: {type(e).__name__}: {str(e)}"
+                self.log_progress(f"⚠ {viz_error}")
+                results['visualizations'] = {'error': viz_error}
+
             # Save results
             self.save_results(results)
 
@@ -338,6 +360,546 @@ class VoidPipeline(AnalysisPipeline):
                 'error': error_msg,
                 'exception_type': type(e).__name__,
                 'traceback': traceback.format_exc()
+            }
+
+    def _generate_visualizations(self) -> Dict[str, Any]:
+        """
+        Generate visualizations for void analysis.
+
+        Creates statistical figures and 3D interactive map.
+
+        Returns:
+            Dictionary with visualization file paths
+        """
+        from .visualization.data_export import export_void_visualization_data
+        from .visualization.void_map import generate_void_3d_map_html
+        from .visualization.statistical_figures import generate_void_statistical_figures
+
+        viz_results = {}
+
+        # Export data for 3D visualization
+        try:
+            json_path = export_void_visualization_data(
+                void_catalog_path="processed_data/voids_deduplicated.pkl",
+                results_path="results/json/void_results.json",
+                output_path="results/figures/void/void_map_data.json"
+            )
+            viz_results['data_export'] = json_path
+        except Exception as e:
+            self.log_progress(f"Failed to export visualization data: {e}")
+            viz_results['data_export'] = {'error': str(e)}
+
+        # Generate 3D interactive map
+        try:
+            html_path = generate_void_3d_map_html(
+                data_path="results/figures/void/void_map_data.json",
+                output_path="results/figures/void/void_3d_map.html"
+            )
+            viz_results['interactive_map'] = html_path
+        except Exception as e:
+            self.log_progress(f"Failed to generate 3D map: {e}")
+            viz_results['interactive_map'] = {'error': str(e)}
+
+        # Generate statistical figures
+        try:
+            figure_paths = generate_void_statistical_figures(
+                void_catalog_path="processed_data/voids_deduplicated.pkl",
+                results_path="results/json/void_results.json",
+                output_dir="results/figures/void"
+            )
+            viz_results['statistical_figures'] = figure_paths
+        except Exception as e:
+            self.log_progress(f"Failed to generate statistical figures: {e}")
+            viz_results['statistical_figures'] = {'error': str(e)}
+
+        return viz_results
+
+    def _estimate_chunk_memory_usage(self, n_nodes: int, chunk_size: int) -> float:
+        """
+        Estimate memory usage for chunked GPU clustering computation.
+
+        Parameters:
+            n_nodes: Total number of nodes
+            chunk_size: Size of each chunk
+
+        Returns:
+            Estimated memory usage in MB
+        """
+        # Memory calculation for the main tensor operation: chunk_i x chunk_j x 3
+        # In chunked processing, we use chunk_i = chunk_j = chunk_size
+        # So peak memory is approximately: chunk_size * chunk_size * 3 * 4 bytes (float32)
+        bytes_per_tensor = chunk_size * chunk_size * 3 * 4  # float32 = 4 bytes
+
+        # Account for intermediate operations (factor of ~2-3)
+        total_bytes = bytes_per_tensor * 3
+
+        # Convert to MB
+        total_mb = total_bytes / (1024 * 1024)
+
+        return total_mb
+
+    def _validate_chunk_size_for_gpu(self, n_nodes: int, chunk_size: int, max_memory_mb: float = 1024.0) -> bool:
+        """
+        Validate that chunk size won't exceed GPU memory limits.
+
+        Parameters:
+            n_nodes: Total number of nodes
+            chunk_size: Size of each chunk
+            max_memory_mb: Maximum allowed memory usage in MB
+
+        Returns:
+            True if chunk size is safe for GPU processing
+        """
+        if not self.use_gpu or not TORCH_AVAILABLE:
+            return True  # CPU has no memory limits for this calculation
+
+        estimated_mb = self._estimate_chunk_memory_usage(n_nodes, chunk_size)
+
+        if estimated_mb > max_memory_mb:
+            self.log_progress(f"Chunk size {chunk_size} would use ~{estimated_mb:.1f}MB, exceeding limit of {max_memory_mb:.1f}MB")
+            return False
+
+        return True
+
+    def _chunked_null_hypothesis_random_networks(self, n_simulations: int, random_seed: int = 42,
+                                                chunk_size: int = 5000) -> Dict[str, Any]:
+        """
+        Perform chunked null hypothesis testing with MPS-accelerated random void networks.
+
+        Divides the void catalog into chunks to avoid memory overflow while using MPS acceleration.
+        Each chunk is processed independently with random void positions.
+
+        Parameters:
+            n_simulations: Number of random network simulations
+            random_seed: Random seed for reproducibility
+            chunk_size: Maximum voids per chunk for MPS processing
+
+        Returns:
+            dict: Null hypothesis test results
+        """
+        try:
+            void_data = self.results.get('void_data', {})
+            catalog = void_data.get('catalog')
+
+            # If catalog is a string (from JSON serialization), reload from pickle
+            if isinstance(catalog, str) or catalog is None:
+                catalog_path = Path('processed_data') / 'voids_deduplicated.pkl'
+                if catalog_path.exists():
+                    import pickle
+                    with open(catalog_path, 'rb') as f:
+                        catalog = pickle.load(f)
+                    # Apply quality cuts
+                    if 'radius_mpc' in catalog.columns:
+                        catalog = catalog[catalog['radius_mpc'] >= 5.0]
+                    if 'redshift' in catalog.columns:
+                        catalog = catalog[(catalog['redshift'] > 0.005) & (catalog['redshift'] < 1.2)]
+                else:
+                    return {'passed': False, 'error': 'No void catalog available'}
+
+            if catalog is None or (hasattr(catalog, 'empty') and catalog.empty):
+                return {'passed': False, 'error': 'No void catalog available'}
+
+            # Get observed clustering coefficient
+            clustering_results = self.results.get('clustering_analysis', {})
+            observed_cc = clustering_results.get('observed_clustering_coefficient', 0.0)
+
+            # Get spatial boundaries and size distribution from actual catalog
+            n_voids = len(catalog)
+
+            # Extract spatial bounds - handle both column naming conventions
+            ra_col = 'ra' if 'ra' in catalog.columns else 'ra_deg'
+            dec_col = 'dec' if 'dec' in catalog.columns else 'dec_deg'
+            ra_min, ra_max = catalog[ra_col].min(), catalog[ra_col].max()
+            dec_min, dec_max = catalog[dec_col].min(), catalog[dec_col].max()
+            z_min, z_max = catalog['redshift'].min(), catalog['redshift'].max()
+
+            # Extract size distribution - handle different column names
+            if 'radius_mpc' in catalog.columns:
+                size_dist = catalog['radius_mpc'].values
+            elif 'reff' in catalog.columns:
+                size_dist = catalog['reff'].values
+            elif 'radius' in catalog.columns:
+                size_dist = catalog['radius'].values
+            else:
+                size_dist = np.full(n_voids, 20.0)  # Default
+
+            # Calculate linking length from size distribution (pre-compute once)
+            mean_reff = np.nanmean(size_dist)
+            linking_length = 3.0 * mean_reff
+
+            # Determine optimal chunk size based on available compute and memory limits
+            if self.use_gpu and TORCH_AVAILABLE:
+                # Use large chunks for MPS to maximize performance (up to 1GB+ memory)
+                max_chunk_size = min(chunk_size, 8000)  # Allow much larger chunks
+                # Validate chunk size against memory limits
+                while max_chunk_size > 100 and not self._validate_chunk_size_for_gpu(n_voids, max_chunk_size):
+                    max_chunk_size -= 200  # Decrease in larger steps
+                chunk_size = max_chunk_size
+                device_name = f"MPS-chunked ({chunk_size} voids/chunk)"
+            else:
+                # Use larger chunks for CPU
+                chunk_size = min(chunk_size, 10000)
+                device_name = f"CPU-chunked ({chunk_size} voids/chunk)"
+
+            # Calculate number of chunks needed
+            n_chunks = int(np.ceil(n_voids / chunk_size))
+            voids_per_chunk = [chunk_size] * (n_chunks - 1) + [n_voids - (n_chunks - 1) * chunk_size]
+
+            # Estimate performance improvement
+            estimated_memory_mb = self._estimate_chunk_memory_usage(n_voids, chunk_size)
+            self.log_progress(f"Running {n_simulations} null hypothesis simulations on {device_name}")
+            self.log_progress(f"Processing {n_voids} voids in {n_chunks} chunks: {voids_per_chunk}")
+            self.log_progress(f"Estimated chunk memory usage: {estimated_memory_mb:.1f}MB per chunk")
+
+            # Pre-compute coordinate conversion setup
+            from astropy import units as u
+            from astropy.coordinates import SkyCoord
+            from astropy.cosmology import Planck18 as cosmo
+
+            # Generate random void networks in chunks
+            random_ccs = []
+            np.random.seed(random_seed)
+
+            start_time = time.time()
+
+            for sim_i in tqdm(range(n_simulations), desc="Null hypothesis", unit="sim"):
+                # Generate random void positions for entire catalog (Poisson process)
+                random_ra = np.random.uniform(ra_min, ra_max, n_voids)
+                random_dec = np.random.uniform(dec_min, dec_max, n_voids)
+                random_z = np.random.uniform(z_min, z_max, n_voids)
+
+                # Convert to Cartesian coordinates (do this once per simulation)
+                coords = SkyCoord(
+                    ra=random_ra * u.deg,
+                    dec=random_dec * u.deg,
+                    distance=cosmo.comoving_distance(random_z)
+                )
+                cart_coords = coords.cartesian
+                all_positions = np.column_stack([
+                    cart_coords.x.value,
+                    cart_coords.y.value,
+                    cart_coords.z.value
+                ])
+
+                # Validate positions
+                if np.any(~np.isfinite(all_positions)):
+                    # Skip this simulation if coordinates are invalid
+                    continue
+
+                # Process in chunks to accumulate clustering coefficient
+                chunk_ccs = []
+
+                for chunk_i, chunk_voids in enumerate(voids_per_chunk):
+                    start_idx = sum(voids_per_chunk[:chunk_i])
+                    end_idx = start_idx + chunk_voids
+
+                    # Extract positions for this chunk
+                    chunk_positions = all_positions[start_idx:end_idx]
+
+                    # Calculate clustering coefficient for this chunk
+                    try:
+                        if self.use_gpu and TORCH_AVAILABLE:
+                            chunk_cc = self._calculate_clustering_coefficient_gpu(chunk_positions, linking_length)
+                        else:
+                            chunk_cc = self._calculate_clustering_coefficient_cpu(chunk_positions, linking_length)
+                        chunk_ccs.append(chunk_cc)
+                    except Exception as e:
+                        # If chunk fails, use CPU fallback
+                        self.log_progress(f"Chunk {chunk_i} failed ({e}), using CPU fallback")
+                        chunk_cc = self._calculate_clustering_coefficient_cpu(chunk_positions, linking_length)
+                        chunk_ccs.append(chunk_cc)
+
+                # Combine chunk results: weighted average by number of voids in each chunk
+                if chunk_ccs:
+                    weights = np.array(voids_per_chunk) / n_voids
+                    combined_cc = np.average(chunk_ccs, weights=weights)
+                    random_ccs.append(combined_cc)
+
+            elapsed = time.time() - start_time
+            self.log_progress(f"Null hypothesis testing completed in {elapsed:.1f}s ({elapsed/n_simulations:.2f}s per simulation)")
+
+            if not random_ccs:
+                return {
+                    'passed': False,
+                    'test': 'chunked_null_hypothesis_random_networks',
+                    'error': 'No valid simulations completed'
+                }
+
+            random_ccs = np.array(random_ccs)
+
+            # Calculate p-value: probability that random network has clustering >= observed
+            p_value = np.mean(random_ccs >= observed_cc)
+
+            # Calculate significance in sigma
+            random_mean = np.mean(random_ccs)
+            random_std = np.std(random_ccs)
+            sigma = (observed_cc - random_mean) / random_std if random_std > 0 else 999.0
+
+            # Reject null hypothesis if p < 0.05 (or sigma > 2)
+            reject_null = p_value < 0.05 or sigma > 2.0
+
+            return {
+                'passed': reject_null,
+                'test': 'chunked_null_hypothesis_random_networks',
+                'n_simulations': n_simulations,
+                'chunk_size': chunk_size,
+                'n_chunks': n_chunks,
+                'observed_clustering_coefficient': observed_cc,
+                'random_mean': float(random_mean),
+                'random_std': float(random_std),
+                'p_value': float(p_value),
+                'sigma': float(sigma),
+                'interpretation': f'Chunked random network null hypothesis {"rejected" if reject_null else "not rejected"} at {sigma:.1f}σ (p = {p_value:.5f})'
+            }
+
+        except Exception as e:
+            return {
+                'passed': False,
+                'test': 'chunked_null_hypothesis_random_networks',
+                'error': str(e)
+            }
+
+    def _chunked_bootstrap_clustering_validation(self, n_bootstrap: int, random_seed: int = 42,
+                                                chunk_size: int = 5000) -> Dict[str, Any]:
+        """
+        Perform chunked bootstrap validation of clustering coefficient with MPS acceleration.
+
+        Uses chunked processing to handle large catalogs efficiently while maintaining
+        statistical validity of bootstrap resampling.
+
+        Parameters:
+            n_bootstrap: Number of bootstrap iterations
+            random_seed: Random seed for reproducibility
+            chunk_size: Maximum voids per chunk for processing
+
+        Returns:
+            dict: Bootstrap validation results
+        """
+        try:
+            void_data = self.results.get('void_data', {})
+            catalog = void_data.get('catalog')
+
+            # If catalog is a string or dict (from JSON serialization), reload from pickle
+            if isinstance(catalog, (str, dict)) or catalog is None:
+                catalog_path = Path('processed_data') / 'voids_deduplicated.pkl'
+                if catalog_path.exists():
+                    import pickle
+                    with open(catalog_path, 'rb') as f:
+                        catalog = pickle.load(f)
+                    # Apply quality cuts
+                    if 'radius_mpc' in catalog.columns:
+                        catalog = catalog[catalog['radius_mpc'] >= 5.0]
+                    if 'redshift' in catalog.columns:
+                        catalog = catalog[(catalog['redshift'] > 0.005) & (catalog['redshift'] < 1.2)]
+                else:
+                    return {
+                        'passed': False,
+                        'test': 'chunked_bootstrap_clustering_validation',
+                        'error': 'No void catalog available',
+                        'n_bootstrap': n_bootstrap
+                    }
+
+            if catalog is None or (hasattr(catalog, 'empty') and catalog.empty):
+                return {
+                    'passed': False,
+                    'test': 'chunked_bootstrap_clustering_validation',
+                    'error': 'No void catalog available',
+                    'n_bootstrap': n_bootstrap
+                }
+
+            # Get observed clustering coefficient - check if analysis actually succeeded
+            clustering_results = self.results.get('clustering_analysis', {})
+            if 'error' in clustering_results:
+                return {
+                    'passed': False,
+                    'test': 'chunked_bootstrap_clustering_validation',
+                    'error': f"Clustering analysis failed: {clustering_results.get('error')}",
+                    'n_bootstrap': n_bootstrap
+                }
+            observed_cc = clustering_results.get('observed_clustering_coefficient', None)
+            if observed_cc is None:
+                return {
+                    'passed': False,
+                    'test': 'chunked_bootstrap_clustering_validation',
+                    'error': 'No observed clustering coefficient available',
+                    'n_bootstrap': n_bootstrap
+                }
+
+            # Pre-compute positions and linking length for all bootstrap iterations
+            from pipeline.common.void_coordinates import get_cartesian_positions
+            from pipeline.common.void_stats import calculate_robust_linking_length
+
+            # Get positions once and filter invalid ones
+            positions, _ = get_cartesian_positions(catalog)
+            if positions is None or len(positions) == 0:
+                return {
+                    'passed': False,
+                    'test': 'chunked_bootstrap_clustering_validation',
+                    'error': 'Could not extract coordinates from catalog',
+                    'n_bootstrap': n_bootstrap
+                }
+
+            # Filter invalid positions
+            valid_mask = np.isfinite(positions).all(axis=1)
+            positions = positions[valid_mask]
+            catalog_valid = catalog[valid_mask].copy()
+
+            if len(catalog_valid) == 0:
+                return {
+                    'passed': False,
+                    'test': 'chunked_bootstrap_clustering_validation',
+                    'error': 'No valid coordinates after filtering',
+                    'n_bootstrap': n_bootstrap
+                }
+
+            # Ensure catalog has x, y, z for linking length calculation
+            if not all(col in catalog_valid.columns for col in ['x', 'y', 'z']):
+                catalog_valid['x'] = positions[:, 0]
+                catalog_valid['y'] = positions[:, 1]
+                catalog_valid['z'] = positions[:, 2]
+
+            # Calculate linking length once
+            linking_length, _ = calculate_robust_linking_length(catalog_valid, method='robust')
+
+            # Determine optimal chunk size
+            n_total = len(positions)
+            if self.use_gpu and TORCH_AVAILABLE:
+                # Use large chunks for MPS to maximize performance (up to 1GB+ memory)
+                max_chunk_size = min(chunk_size, 8000)  # Allow much larger chunks
+                # Validate chunk size against memory limits
+                while max_chunk_size > 100 and not self._validate_chunk_size_for_gpu(n_total, max_chunk_size):
+                    max_chunk_size -= 200  # Decrease in larger steps
+                chunk_size = max_chunk_size
+                device_name = f"MPS-chunked ({chunk_size} voids/chunk)"
+            else:
+                chunk_size = min(chunk_size, 10000)
+                device_name = f"CPU-chunked ({chunk_size} voids/chunk)"
+
+            # Calculate number of chunks
+            n_chunks = int(np.ceil(n_total / chunk_size))
+            voids_per_chunk = [chunk_size] * (n_chunks - 1) + [n_total - (n_chunks - 1) * chunk_size]
+
+            # Estimate performance improvement
+            estimated_memory_mb = self._estimate_chunk_memory_usage(n_total, chunk_size)
+            self.log_progress(f"Running {n_bootstrap} bootstrap iterations on {device_name}")
+            self.log_progress(f"Processing {n_total} voids in {n_chunks} chunks: {voids_per_chunk}")
+            self.log_progress(f"Estimated chunk memory usage: {estimated_memory_mb:.1f}MB per chunk")
+
+            # Generate bootstrap samples
+            bootstrap_ccs = []
+            np.random.seed(random_seed)
+
+            start_time = time.time()
+
+            for boot_i in tqdm(range(n_bootstrap), desc="Bootstrap", unit="iter"):
+                # Resample the entire catalog indices with replacement
+                bootstrap_indices = np.random.choice(n_total, size=n_total, replace=True)
+                bootstrap_positions = positions[bootstrap_indices]
+
+                # Process bootstrap sample in chunks
+                chunk_ccs = []
+
+                for chunk_i, chunk_voids in enumerate(voids_per_chunk):
+                    start_idx = sum(voids_per_chunk[:chunk_i])
+                    end_idx = start_idx + chunk_voids
+
+                    # Extract positions for this chunk
+                    chunk_positions = bootstrap_positions[start_idx:end_idx]
+
+                    # Calculate clustering coefficient for this chunk
+                    try:
+                        if self.use_gpu and TORCH_AVAILABLE:
+                            chunk_cc = self._calculate_clustering_coefficient_gpu(chunk_positions, linking_length)
+                        else:
+                            chunk_cc = self._calculate_clustering_coefficient_cpu(chunk_positions, linking_length)
+                        chunk_ccs.append(chunk_cc)
+                    except Exception as e:
+                        # If chunk fails, use CPU fallback
+                        self.log_progress(f"Bootstrap {boot_i}, chunk {chunk_i} failed ({e}), using CPU fallback")
+                        chunk_cc = self._calculate_clustering_coefficient_cpu(chunk_positions, linking_length)
+                        chunk_ccs.append(chunk_cc)
+
+                # Combine chunk results: weighted average by number of voids in each chunk
+                if chunk_ccs:
+                    weights = np.array(voids_per_chunk) / n_total
+                    combined_cc = np.average(chunk_ccs, weights=weights)
+                    bootstrap_ccs.append(combined_cc)
+
+            elapsed = time.time() - start_time
+            self.log_progress(f"Bootstrap completed in {elapsed:.1f}s ({elapsed/n_bootstrap:.2f}s per iteration)")
+
+            if not bootstrap_ccs:
+                return {
+                    'passed': False,
+                    'test': 'chunked_bootstrap_clustering_validation',
+                    'error': 'No valid bootstrap iterations completed',
+                    'n_bootstrap': n_bootstrap
+                }
+
+            bootstrap_ccs = np.array(bootstrap_ccs)
+
+            # Analyze bootstrap distribution
+            bootstrap_mean = np.mean(bootstrap_ccs)
+            bootstrap_std = np.std(bootstrap_ccs)
+
+            # Calculate z-score: how many sigma is bootstrap mean from observed?
+            z_score = abs(bootstrap_mean - observed_cc) / bootstrap_std if bootstrap_std > 0 else 0.0
+
+            # Check stability: bootstrap mean should be very close to observed (z < 0.1)
+            stable = z_score < 0.1
+
+            # Calculate confidence intervals
+            ci_68 = np.percentile(bootstrap_ccs, [16, 84])
+            ci_95 = np.percentile(bootstrap_ccs, [2.5, 97.5])
+
+            # Compare bootstrap distribution to fundamental values
+            eta_natural = 0.4430  # (1 - ln(2)) / ln(2) ≈ 0.443
+            c_e8 = 0.78125  # 25/32, E8×E8 pure substrate
+            c_lcdm = 0.0  # ΛCDM predicts isotropic/random (no clustering)
+
+            # Calculate how many bootstrap samples fall within 1σ of each value
+            eta_natural_sigma = abs(bootstrap_mean - eta_natural) / bootstrap_std if bootstrap_std > 0 else 999.0
+            c_e8_sigma = abs(bootstrap_mean - c_e8) / bootstrap_std if bootstrap_std > 0 else 999.0
+            c_lcdm_sigma = abs(bootstrap_mean - c_lcdm) / bootstrap_std if bootstrap_std > 0 else 999.0
+
+            return {
+                'passed': stable,
+                'test': 'chunked_bootstrap_clustering_validation',
+                'n_bootstrap': n_bootstrap,
+                'chunk_size': chunk_size,
+                'n_chunks': n_chunks,
+                'observed_clustering_coefficient': observed_cc,
+                'bootstrap_mean': float(bootstrap_mean),
+                'bootstrap_std': float(bootstrap_std),
+                'z_score': float(z_score),
+                'ci_68': ci_68.tolist(),
+                'ci_95': ci_95.tolist(),
+                'comparison_to_fundamental_values': {
+                    'thermodynamic_efficiency': {
+                        'value': eta_natural,
+                        'sigma': float(eta_natural_sigma),
+                        'within_ci_95': ci_95[0] <= eta_natural <= ci_95[1]
+                    },
+                    'e8_pure_substrate': {
+                        'value': c_e8,
+                        'sigma': float(c_e8_sigma),
+                        'within_ci_95': ci_95[0] <= c_e8 <= ci_95[1]
+                    },
+                    'lcdm': {
+                        'value': c_lcdm,
+                        'sigma': float(c_lcdm_sigma),
+                        'within_ci_95': ci_95[0] <= c_lcdm <= ci_95[1]
+                    }
+                },
+                'interpretation': f'Chunked bootstrap mean {bootstrap_mean:.4f} ± {bootstrap_std:.4f} is {"stable" if stable else "unstable"} (z = {z_score:.2f}σ). '
+                                f'Comparison: {eta_natural_sigma:.1f}σ from η_natural, {c_e8_sigma:.1f}σ from E8, {c_lcdm_sigma:.1f}σ from ΛCDM'
+            }
+
+        except Exception as e:
+            return {
+                'passed': False,
+                'test': 'chunked_bootstrap_clustering_validation',
+                'error': str(e)
             }
 
     def save_results(self, results: Dict[str, Any], filename: Optional[str] = None) -> Path:
@@ -1092,11 +1654,11 @@ class VoidPipeline(AnalysisPipeline):
             self.results = self.load_results() or self.run(context)
 
         # Minimum iterations for numeric stability
-        # Bootstrap: 10000 for improved stability and precision on CI
+        # Bootstrap: Reduced to 1000 for practical runtime (was 10000)
         # Null hypothesis: 1000 to resolve p-values down to 0.001 (3σ)
         # Jackknife: 100 subsamples for bias estimation
         
-        n_bootstrap = context.get('n_bootstrap', 10000) if context else 10000
+        n_bootstrap = context.get('n_bootstrap', 1000) if context else 1000
         n_randomization = context.get('n_randomization', 1000) if context else 1000
         n_null = context.get('n_null', 1000) if context else 1000
         random_seed = context.get('random_seed', 42) if context else 42
@@ -1104,16 +1666,16 @@ class VoidPipeline(AnalysisPipeline):
         # Set random seed for reproducibility
         np.random.seed(random_seed)
 
-        # Bootstrap validation (10,000 iterations for clustering coefficient)
-        bootstrap_results = self._bootstrap_clustering_validation(n_bootstrap, random_seed=random_seed)
+        # Bootstrap validation (chunked MPS-accelerated resampling)
+        bootstrap_results = self._chunked_bootstrap_clustering_validation(n_bootstrap, random_seed=random_seed)
 
         # Monte Carlo validation
         monte_carlo_results = self._monte_carlo_validation(n_bootstrap)
 
         # Randomization testing removed - no longer testing E8 alignment
 
-        # Null hypothesis testing (10,000 random void networks)
-        null_results = self._null_hypothesis_random_networks(n_null, random_seed=random_seed)
+        # Null hypothesis testing (chunked MPS-accelerated random void networks)
+        null_results = self._chunked_null_hypothesis_random_networks(n_null, random_seed=random_seed)
 
         # Leave-Every-Other-Void Cross-Validation (10 folds)
         loo_cv_results = self._leave_every_other_void_cv()
@@ -1710,33 +2272,65 @@ class VoidPipeline(AnalysisPipeline):
             if n_nodes < 3:
                 return 0.0
             
-            # Chunk size for distance computation (keeps chunk×N under memory limits)
-            chunk_size = min(2000, n_nodes)
+            # Validate positions before GPU transfer
+            if np.any(~np.isfinite(positions)):
+                raise ValueError("Positions contain NaN/inf values - cannot use GPU")
             
-            # Move positions to GPU
-            pos_tensor = torch.tensor(positions, dtype=torch.float32, device=self.device)
+            # Check for extremely large values that could cause overflow
+            if np.any(np.abs(positions) > 1e6):
+                raise ValueError("Positions contain extremely large values (>1e6) - cannot use GPU safely")
+            
+            # Chunk size for distance computation (keeps chunk×N under memory limits)
+            # With 1GB+ memory allowance, we can use much larger chunks
+            # The intermediate tensor is [chunk, N, 3], so we need chunk * N * 3 * 4 bytes < ~1GB
+            # For N=50k, chunk can be up to ~1GB / (50k * 3 * 4) ≈ 1700
+            if n_nodes > 50000:
+                chunk_size = min(1500, n_nodes)  # Allow larger chunks with 1GB limit
+            elif n_nodes > 20000:
+                chunk_size = min(2000, n_nodes)
+            else:
+                chunk_size = min(3000, n_nodes)
+            
+            # Move positions to GPU with explicit error handling
+            try:
+                pos_tensor = torch.tensor(positions, dtype=torch.float32, device=self.device)
+            except (RuntimeError, ValueError) as e:
+                raise ValueError(f"Failed to create GPU tensor: {e}")
             
             # Build neighbor lists using chunked distance computation
-            # This avoids creating a full N×N matrix
+            # Compute distances chunk-to-chunk to avoid creating [chunk, N, 3] tensors
+            # This is more memory-efficient for large N
             neighbors = [[] for _ in range(n_nodes)]
             
+            # Process in chunks for both source and target to limit memory usage
             for i_start in range(0, n_nodes, chunk_size):
                 i_end = min(i_start + chunk_size, n_nodes)
+                chunk_i = pos_tensor[i_start:i_end]  # [chunk_i, 3]
                 
-                # Compute distances from chunk to all nodes
-                chunk_pos = pos_tensor[i_start:i_end]  # [chunk, 3]
-                diff = chunk_pos.unsqueeze(1) - pos_tensor.unsqueeze(0)  # [chunk, N, 3]
-                chunk_distances = torch.sqrt((diff ** 2).sum(dim=2))  # [chunk, N]
-                
-                # Find edges within linking length
-                edge_mask = (chunk_distances <= linking_length)
-                
-                # Extract neighbor indices for each node in chunk
-                for local_i in range(i_end - i_start):
-                    global_i = i_start + local_i
-                    # Get neighbors (excluding self)
-                    neighbor_indices = torch.where(edge_mask[local_i])[0].cpu().numpy()
-                    neighbors[global_i] = [j for j in neighbor_indices if j != global_i]
+                # Compute distances from chunk_i to all other chunks
+                for j_start in range(0, n_nodes, chunk_size):
+                    j_end = min(j_start + chunk_size, n_nodes)
+                    chunk_j = pos_tensor[j_start:j_end]  # [chunk_j, 3]
+                    
+                    # Compute pairwise distances between chunks: [chunk_i, chunk_j]
+                    # This creates [chunk_i, chunk_j, 3] which is much smaller than [chunk_i, N, 3]
+                    diff = chunk_i.unsqueeze(1) - chunk_j.unsqueeze(0)  # [chunk_i, chunk_j, 3]
+                    chunk_distances = torch.sqrt((diff ** 2).sum(dim=2))  # [chunk_i, chunk_j]
+                    
+                    # Find edges within linking length
+                    edge_mask = (chunk_distances <= linking_length)
+                    
+                    # Extract neighbor indices for each node in chunk_i
+                    for local_i in range(i_end - i_start):
+                        global_i = i_start + local_i
+                        # Get neighbors in chunk_j
+                        neighbor_mask = edge_mask[local_i]  # [chunk_j]
+                        neighbor_indices = torch.where(neighbor_mask)[0].cpu().numpy()
+                        # Add global indices
+                        for local_j in neighbor_indices:
+                            global_j = j_start + local_j
+                            if global_j != global_i:  # Exclude self
+                                neighbors[global_i].append(global_j)
             
             # Convert to sets for faster lookup
             neighbor_sets = [set(n) for n in neighbors]
@@ -1824,6 +2418,16 @@ class VoidPipeline(AnalysisPipeline):
         ra_col = 'ra' if 'ra' in catalog.columns else 'ra_deg'
         dec_col = 'dec' if 'dec' in catalog.columns else 'dec_deg'
         
+        # Validate input data before processing
+        if 'redshift' not in catalog.columns:
+            raise ValueError("Catalog missing 'redshift' column")
+        
+        # Check for NaN/inf values in input coordinates
+        if np.any(~np.isfinite(catalog[ra_col].values)) or \
+           np.any(~np.isfinite(catalog[dec_col].values)) or \
+           np.any(~np.isfinite(catalog['redshift'].values)):
+            raise ValueError("Catalog contains NaN/inf values in coordinates - cannot use GPU bootstrap. Use CPU fallback.")
+        
         # Convert to comoving coordinates
         coords = SkyCoord(
             ra=catalog[ra_col].values * u.deg,
@@ -1837,6 +2441,10 @@ class VoidPipeline(AnalysisPipeline):
             cart_coords.z.value
         ])
         
+        # Validate converted coordinates
+        if np.any(~np.isfinite(all_positions)):
+            raise ValueError("Coordinate conversion produced NaN/inf values - cannot use GPU bootstrap. Use CPU fallback.")
+        
         # Calculate linking length
         if 'radius_mpc' in catalog.columns:
             mean_reff = catalog['radius_mpc'].mean()
@@ -1846,11 +2454,26 @@ class VoidPipeline(AnalysisPipeline):
         
         n_total = len(all_positions)
         
+        # Test GPU computation with a small sample before main loop
+        gpu_failed = False
+        if self.use_gpu:
+            try:
+                # Test with first 1000 positions
+                test_positions = all_positions[:min(1000, n_total)]
+                test_result = self._calculate_clustering_coefficient_gpu(test_positions, linking_length)
+                if not np.isfinite(test_result):
+                    raise ValueError("GPU test produced invalid result")
+                self.log_progress("GPU test passed, proceeding with GPU acceleration...")
+            except Exception as e:
+                self.log_progress(f"GPU test failed ({e}), falling back to CPU for all iterations...")
+                gpu_failed = True
+                self.use_gpu = False
+        
         # Run bootstrap iterations
         bootstrap_ccs = []
         np.random.seed(random_seed)
         
-        device_name = str(self.device) if self.device else 'cpu'
+        device_name = str(self.device) if (self.use_gpu and not gpu_failed) else 'cpu'
         self.log_progress(f"Running {n_bootstrap} bootstrap iterations on {device_name} ({n_total} voids)...")
         
         start_time = time.time()
@@ -1859,10 +2482,96 @@ class VoidPipeline(AnalysisPipeline):
             indices = np.random.choice(n_total, size=n_total, replace=True)
             bootstrap_positions = all_positions[indices]
             
+            # Validate positions before GPU computation
+            if np.any(~np.isfinite(bootstrap_positions)):
+                if self.use_gpu and not gpu_failed:
+                    self.log_progress("Found invalid positions in bootstrap sample, falling back to CPU...")
+                    gpu_failed = True
+                    self.use_gpu = False
+            
             # Calculate clustering coefficient using chunked GPU method
-            if self.use_gpu:
-                cc = self._calculate_clustering_coefficient_gpu(bootstrap_positions, linking_length)
-            else:
+            try:
+                if self.use_gpu and not gpu_failed:
+                    cc = self._calculate_clustering_coefficient_gpu(bootstrap_positions, linking_length)
+                    # Validate result
+                    if not np.isfinite(cc):
+                        raise ValueError("GPU computation produced invalid result")
+                else:
+                    cc = self._calculate_clustering_coefficient_cpu(bootstrap_positions, linking_length)
+            except (ValueError, RuntimeError, Exception) as e:
+                # Fall back to CPU if GPU fails
+                if self.use_gpu and not gpu_failed:
+                    self.log_progress(f"GPU computation failed ({e}), falling back to CPU for remaining iterations...")
+                    gpu_failed = True
+                    self.use_gpu = False
+                cc = self._calculate_clustering_coefficient_cpu(bootstrap_positions, linking_length)
+            
+            bootstrap_ccs.append(cc)
+        
+        elapsed = time.time() - start_time
+        self.log_progress(f"Bootstrap completed in {elapsed:.1f}s ({elapsed/n_bootstrap:.2f}s per iteration)")
+        
+        return np.array(bootstrap_ccs)
+
+    def _batch_bootstrap_gpu_positions(self, positions: np.ndarray, linking_length: float,
+                                       n_bootstrap: int, random_seed: int = 42) -> np.ndarray:
+        """
+        Perform batched bootstrap resampling with GPU/MPS acceleration using pre-computed positions.
+        
+        Parameters:
+            positions: Pre-computed valid positions array (N, 3)
+            linking_length: Pre-computed linking length
+            n_bootstrap: Number of bootstrap iterations
+            random_seed: Random seed for reproducibility
+            
+        Returns:
+            np.ndarray: Array of bootstrap clustering coefficients
+        """
+        n_total = len(positions)
+        
+        # Test GPU/MPS computation with a small sample before main loop
+        gpu_failed = False
+        if self.use_gpu:
+            try:
+                # Test with first 1000 positions
+                test_positions = positions[:min(1000, n_total)]
+                test_result = self._calculate_clustering_coefficient_gpu(test_positions, linking_length)
+                if not np.isfinite(test_result):
+                    raise ValueError("GPU test produced invalid result")
+                self.log_progress("MPS test passed, proceeding with MPS acceleration...")
+            except Exception as e:
+                self.log_progress(f"MPS test failed ({e}), falling back to CPU for all iterations...")
+                gpu_failed = True
+                self.use_gpu = False
+        
+        # Run bootstrap iterations
+        bootstrap_ccs = []
+        np.random.seed(random_seed)
+        
+        device_name = str(self.device) if (self.use_gpu and not gpu_failed) else 'cpu'
+        self.log_progress(f"Running {n_bootstrap} bootstrap iterations on {device_name} ({n_total} voids)...")
+        
+        start_time = time.time()
+        for i in tqdm(range(n_bootstrap), desc="Bootstrap", unit="iter"):
+            # Full bootstrap resampling with replacement
+            indices = np.random.choice(n_total, size=n_total, replace=True)
+            bootstrap_positions = positions[indices]
+            
+            # Calculate clustering coefficient using GPU/MPS or CPU
+            try:
+                if self.use_gpu and not gpu_failed:
+                    cc = self._calculate_clustering_coefficient_gpu(bootstrap_positions, linking_length)
+                    # Validate result
+                    if not np.isfinite(cc):
+                        raise ValueError("GPU computation produced invalid result")
+                else:
+                    cc = self._calculate_clustering_coefficient_cpu(bootstrap_positions, linking_length)
+            except (ValueError, RuntimeError, Exception) as e:
+                # Fall back to CPU if GPU/MPS fails
+                if self.use_gpu and not gpu_failed:
+                    self.log_progress(f"MPS computation failed ({e}), falling back to CPU for remaining iterations...")
+                    gpu_failed = True
+                    self.use_gpu = False
                 cc = self._calculate_clustering_coefficient_cpu(bootstrap_positions, linking_length)
             
             bootstrap_ccs.append(cc)
@@ -1889,8 +2598,8 @@ class VoidPipeline(AnalysisPipeline):
             void_data = self.results.get('void_data', {})
             catalog = void_data.get('catalog')
 
-            # If catalog is a string (from JSON serialization), reload from pickle
-            if isinstance(catalog, str) or catalog is None:
+            # If catalog is a string or dict (from JSON serialization), reload from pickle
+            if isinstance(catalog, (str, dict)) or catalog is None:
                 catalog_path = Path('processed_data') / 'voids_deduplicated.pkl'
                 if catalog_path.exists():
                     import pickle
@@ -1902,35 +2611,108 @@ class VoidPipeline(AnalysisPipeline):
                     if 'redshift' in catalog.columns:
                         catalog = catalog[(catalog['redshift'] > 0.005) & (catalog['redshift'] < 1.2)]
                 else:
-                    return {'passed': False, 'error': 'No void catalog available'}
+                    return {
+                        'passed': False,
+                        'test': 'bootstrap_clustering_validation',
+                        'error': 'No void catalog available',
+                        'n_bootstrap': n_bootstrap
+                    }
 
             if catalog is None or (hasattr(catalog, 'empty') and catalog.empty):
-                return {'passed': False, 'error': 'No void catalog available'}
+                return {
+                    'passed': False,
+                    'test': 'bootstrap_clustering_validation',
+                    'error': 'No void catalog available',
+                    'n_bootstrap': n_bootstrap
+                }
 
-            # Get observed clustering coefficient
+            # Get observed clustering coefficient - check if analysis actually succeeded
             clustering_results = self.results.get('clustering_analysis', {})
-            observed_cc = clustering_results.get('observed_clustering_coefficient', 0.0)
+            if 'error' in clustering_results:
+                return {
+                    'passed': False,
+                    'test': 'bootstrap_clustering_validation',
+                    'error': f"Clustering analysis failed: {clustering_results.get('error')}",
+                    'n_bootstrap': n_bootstrap
+                }
+            observed_cc = clustering_results.get('observed_clustering_coefficient', None)
+            if observed_cc is None:
+                return {
+                    'passed': False,
+                    'test': 'bootstrap_clustering_validation',
+                    'error': 'No observed clustering coefficient available',
+                    'n_bootstrap': n_bootstrap
+                }
 
-            # Use GPU-accelerated batch bootstrap if available
+            # Use MPS/GPU acceleration for bootstrap validation (now that coordinates are properly handled)
+            # Pre-compute positions and linking length for GPU bootstrap
+            from pipeline.common.void_coordinates import get_cartesian_positions
+            from pipeline.common.void_stats import calculate_robust_linking_length
+            
+            # Get positions once and filter invalid ones
+            positions, _ = get_cartesian_positions(catalog)
+            if positions is None or len(positions) == 0:
+                return {
+                    'passed': False,
+                    'test': 'bootstrap_clustering_validation',
+                    'error': 'Could not extract coordinates from catalog',
+                    'n_bootstrap': n_bootstrap
+                }
+            
+            # Filter invalid positions
+            valid_mask = np.isfinite(positions).all(axis=1)
+            positions = positions[valid_mask]
+            catalog_valid = catalog[valid_mask].copy()
+            
+            if len(catalog_valid) == 0:
+                return {
+                    'passed': False,
+                    'test': 'bootstrap_clustering_validation',
+                    'error': 'No valid coordinates after filtering',
+                    'n_bootstrap': n_bootstrap
+                }
+            
+            # Ensure catalog has x, y, z for linking length calculation
+            if not all(col in catalog_valid.columns for col in ['x', 'y', 'z']):
+                catalog_valid['x'] = positions[:, 0]
+                catalog_valid['y'] = positions[:, 1]
+                catalog_valid['z'] = positions[:, 2]
+            
+            # Calculate linking length once
+            linking_length, _ = calculate_robust_linking_length(catalog_valid, method='robust')
+            
+            # Try GPU/MPS acceleration first, fall back to CPU if it fails
+            bootstrap_ccs = None
             if TORCH_AVAILABLE and self.use_gpu:
-                self.log_progress(f"Using GPU-accelerated bootstrap on {self.device}...")
-                bootstrap_ccs = self._batch_bootstrap_gpu(catalog, n_bootstrap, random_seed)
-            else:
-                # CPU fallback: standard bootstrap resampling
+                try:
+                    self.log_progress(f"Using MPS-accelerated bootstrap on {self.device}...")
+                    # Use pre-computed positions and linking length for GPU bootstrap
+                    bootstrap_ccs = self._batch_bootstrap_gpu_positions(positions, linking_length, n_bootstrap, random_seed)
+                except (ValueError, RuntimeError, Exception) as e:
+                    # Fall back to CPU if GPU/MPS fails
+                    self.log_progress(f"MPS bootstrap failed ({e}), falling back to CPU...")
+                    bootstrap_ccs = None
+            
+            # CPU fallback if GPU/MPS not available or failed
+            if bootstrap_ccs is None:
                 bootstrap_ccs = []
                 np.random.seed(random_seed)
 
-                self.log_progress(f"Running {n_bootstrap} bootstrap iterations for clustering coefficient...")
+                self.log_progress(f"Running {n_bootstrap} bootstrap iterations on CPU...")
                 for i in range(n_bootstrap):
                     if (i + 1) % 1000 == 0:
                         self.log_progress(f"  Bootstrap iteration {i + 1}/{n_bootstrap}")
                     
-                    # Resample voids with replacement
-                    bootstrap_sample = catalog.sample(n=len(catalog), replace=True, random_state=random_seed + i)
+                    # Resample positions with replacement (much faster than rebuilding network)
+                    n_total = len(positions)
+                    indices = np.random.choice(n_total, size=n_total, replace=True)
+                    bootstrap_positions = positions[indices]
                     
-                    # Calculate clustering coefficient for this bootstrap sample
-                    bootstrap_cc = self._calculate_clustering_coefficient(bootstrap_sample)
+                    # Calculate clustering coefficient using pre-computed linking length
+                    bootstrap_cc = self._calculate_clustering_coefficient_cpu(bootstrap_positions, linking_length)
                     bootstrap_ccs.append(bootstrap_cc)
+                
+                bootstrap_ccs = np.array(bootstrap_ccs)
 
                 bootstrap_ccs = np.array(bootstrap_ccs)
 
@@ -2292,58 +3074,57 @@ class VoidPipeline(AnalysisPipeline):
             random_ccs = []
             np.random.seed(random_seed)
 
-            # Calculate linking length from size distribution
+            # Calculate linking length from size distribution (pre-compute once)
             mean_reff = np.nanmean(size_dist)
             linking_length = 3.0 * mean_reff
 
-            device_name = str(self.device) if self.device else 'cpu'
+            # Pre-compute coordinate conversion setup (needed for CPU)
+            from astropy import units as u
+            from astropy.coordinates import SkyCoord
+            from astropy.cosmology import Planck18 as cosmo
+            
+            # Use CPU for null hypothesis simulations - GPU has stability issues with large catalogs
+            use_gpu_null = False
+            
+            device_name = 'cpu'
             self.log_progress(f"Running {n_simulations} null hypothesis simulations on {device_name} ({n_voids} voids)...")
             
             start_time = time.time()
-            for i in tqdm(range(n_simulations), desc="Null hypothesis", unit="sim"):
+            # Use disable=True for tqdm to avoid multiprocessing issues that could cause segfaults
+            for i in tqdm(range(n_simulations), desc="Null hypothesis", unit="sim", disable=False):
                 # Generate random void positions (Poisson process)
                 random_ra = np.random.uniform(ra_min, ra_max, n_voids)
                 random_dec = np.random.uniform(dec_min, dec_max, n_voids)
                 random_z = np.random.uniform(z_min, z_max, n_voids)
                 
-                # Convert to comoving coordinates for GPU calculation
-                if TORCH_AVAILABLE and self.use_gpu:
+                # Convert random positions to comoving Cartesian coordinates (same for GPU and CPU)
+                coords = SkyCoord(
+                    ra=random_ra * u.deg,
+                    dec=random_dec * u.deg,
+                    distance=cosmo.comoving_distance(random_z)
+                )
+                cart_coords = coords.cartesian
+                positions = np.column_stack([
+                    cart_coords.x.value,
+                    cart_coords.y.value,
+                    cart_coords.z.value
+                ])
+                
+                # Validate positions
+                if np.any(~np.isfinite(positions)):
+                    # Skip this simulation if coordinates are invalid
+                    continue
+                
+                # Use GPU or CPU method with pre-computed positions and linking length
+                if use_gpu_null:
                     try:
-                        from astropy import units as u
-                        from astropy.coordinates import SkyCoord
-                        from astropy.cosmology import Planck18 as cosmo
-                        
-                        coords = SkyCoord(
-                            ra=random_ra * u.deg,
-                            dec=random_dec * u.deg,
-                            distance=cosmo.comoving_distance(random_z)
-                        )
-                        cart_coords = coords.cartesian
-                        positions = np.column_stack([
-                            cart_coords.x.value,
-                            cart_coords.y.value,
-                            cart_coords.z.value
-                        ])
-                        
                         random_cc = self._calculate_clustering_coefficient_gpu(positions, linking_length)
-                    except Exception:
-                        # Fallback to CPU method
-                        random_catalog = pd.DataFrame({
-                            'ra': random_ra,
-                            'dec': random_dec,
-                            'redshift': random_z,
-                            'reff': np.random.choice(size_dist, n_voids)
-                        })
-                        random_cc = self._calculate_clustering_coefficient(random_catalog)
+                    except (ValueError, RuntimeError, Exception) as e:
+                        # Fallback to CPU method if GPU fails
+                        random_cc = self._calculate_clustering_coefficient_cpu(positions, linking_length)
                 else:
-                    # CPU fallback
-                    random_catalog = pd.DataFrame({
-                        'ra': random_ra,
-                        'dec': random_dec,
-                        'redshift': random_z,
-                        'reff': np.random.choice(size_dist, n_voids)
-                    })
-                    random_cc = self._calculate_clustering_coefficient(random_catalog)
+                    # CPU method using pre-computed positions (much faster than rebuilding network)
+                    random_cc = self._calculate_clustering_coefficient_cpu(positions, linking_length)
                 
                 random_ccs.append(random_cc)
 

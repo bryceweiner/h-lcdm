@@ -190,6 +190,17 @@ class HLambdaDMReporter:
                 gravitational_constant_content = builder.results(main_results) if builder and hasattr(builder, "results") else self._fallback_results(main_results)
                 f.write("## Analysis Results\n\n")
                 f.write(gravitational_constant_content)
+            elif pipeline_name == "void":
+                # Void pipeline supports Grok interpretation
+                basic_val = actual_results.get("validation", {})
+                extended_val = actual_results.get("validation_extended", {})
+                if self.grok_client and builder and hasattr(builder, "grok_results"):
+                    void_content = builder.grok_results(main_results, basic_val, extended_val, self.grok_client)
+                    f.write(void_content)
+                else:
+                    results_body = builder.results(main_results) if builder and hasattr(builder, "results") else self._fallback_results(main_results)
+                    f.write("## Analysis Results\n\n")
+                    f.write(results_body)
             else:
                 results_body = builder.results(main_results) if builder and hasattr(builder, "results") else self._fallback_results(main_results)
                 f.write("## Analysis Results\n\n")

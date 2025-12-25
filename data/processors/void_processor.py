@@ -583,7 +583,16 @@ class VoidDataProcessor(BaseDataProcessor):
         except ValueError as e:
             # Handle invalid linking length or other network construction errors
             error_msg = str(e)
-            logger.error(f"Failed to construct void network: {error_msg}")
+            # Extract concise error message (remove verbose details)
+            if "CRITICAL ERROR" in error_msg:
+                # Extract just the core issue
+                if "NaN/inf values" in error_msg:
+                    concise_msg = "Invalid coordinates (NaN/inf) in catalog"
+                else:
+                    concise_msg = error_msg.split("CRITICAL ERROR:")[-1].split(".")[0].strip()
+            else:
+                concise_msg = error_msg.split(".")[0] if "." in error_msg else error_msg
+            logger.error(f"Failed to construct void network: {concise_msg}")
             return {
                 'error': f'Network construction failed: {error_msg}',
                 'clustering_coefficient': 0.0,
@@ -817,170 +826,18 @@ class VoidDataProcessor(BaseDataProcessor):
         """
         Convert catalog to Cartesian coordinates in Mpc units.
         
-        Handles multiple coordinate systems:
-        1. Direct Cartesian (x, y, z) from Douglass catalogs
-        2. Spherical (ra, dec, redshift)
-        3. Comoving distance (ra, dec, r_los_mpc)
+        Uses the centralized coordinate conversion functions from pipeline.common.void_coordinates
+        which handle x_mpc/y_mpc/z_mpc columns from DESI catalogs.
         """
-        try:
-            from astropy import units as u
-            from astropy.coordinates import SkyCoord
-            from astropy.cosmology import Planck18 as cosmo_model
-        except ImportError:
-            logger.warning("astropy not available, using simplified coordinate conversion")
-            # Fallback: simple conversion
-            if all(col in catalog.columns for col in ['ra_deg', 'dec_deg', 'redshift']):
-                ra_rad = np.radians(catalog['ra_deg'].values)
-                dec_rad = np.radians(catalog['dec_deg'].values)
-                z = catalog['redshift'].values
-                # Simple comoving distance approximation
-                c = 299792.458  # km/s
-                H0 = 67.0  # km/s/Mpc
-                dc = (c / H0) * z  # Mpc
-                x = dc * np.cos(dec_rad) * np.cos(ra_rad)
-                y = dc * np.cos(dec_rad) * np.sin(ra_rad)
-                z_coord = dc * np.sin(dec_rad)
-                return np.column_stack([x, y, z_coord])
-            else:
-                return np.array([])
-
-        positions = []
-        catalog_indices = []  # Track which catalog rows correspond to which positions
-
-        for idx, row in catalog.iterrows():
-            position_found = False
-            
-            # 1. Direct Cartesian coordinates (Douglass catalogs)
-            if all(col in catalog.columns for col in ['x', 'y', 'z']):
-                x = float(row['x'])
-                y = float(row['y'])
-                z = float(row['z'])
-                # FAIL HARD if any coordinate is NaN/inf
-                if not (np.isfinite(x) and np.isfinite(y) and np.isfinite(z)):
-                    raise ValueError(
-                        f"CRITICAL ERROR: Invalid coordinates at row {idx}: x={x}, y={y}, z={z}. "
-                        f"NaN/inf values indicate corrupted data. Fix the data source."
-                    )
-                positions.append([x, y, z])
-                catalog_indices.append(idx)
-                position_found = True
-                continue
-
-            # 2. Spherical coordinates (ra, dec, redshift)
-            if all(col in catalog.columns for col in ['ra_deg', 'dec_deg', 'redshift']):
-                ra_val = row['ra_deg']
-                dec_val = row['dec_deg']
-                redshift = row['redshift']
-                
-                # FAIL HARD if any coordinate is NaN/inf
-                if not (np.isfinite(ra_val) and np.isfinite(dec_val) and np.isfinite(redshift)):
-                    raise ValueError(
-                        f"CRITICAL ERROR: Invalid coordinates at row {idx}: ra={ra_val}, dec={dec_val}, z={redshift}. "
-                        f"NaN/inf values indicate corrupted data. Fix the data source."
-                    )
-                
-                # FAIL HARD on invalid redshifts
-                if redshift < 0 or redshift > 10:
-                    raise ValueError(
-                        f"CRITICAL ERROR: Invalid redshift at row {idx}: z={redshift}. "
-                        f"Redshift must be 0 <= z <= 10. Fix the data source."
-                    )
-                
-                ra = float(ra_val) * u.deg
-                dec = float(dec_val) * u.deg
-
-                try:
-                    coord = SkyCoord(ra=ra, dec=dec, distance=cosmo_model.comoving_distance(redshift))
-                    cart = coord.cartesian
-                    x_val, y_val, z_val = cart.x.value, cart.y.value, cart.z.value
-                    
-                    # FAIL HARD if conversion produced invalid values
-                    if not (np.isfinite(x_val) and np.isfinite(y_val) and np.isfinite(z_val)):
-                        raise ValueError(
-                            f"CRITICAL ERROR: Coordinate conversion produced invalid values at row {idx}: "
-                            f"x={x_val}, y={y_val}, z={z_val}. This indicates a problem with the cosmology calculation."
-                        )
-                    positions.append([x_val, y_val, z_val])
-                    catalog_indices.append(idx)
-                    position_found = True
-                    continue  # Skip to next row after processing spherical coordinates
-                except Exception as e:
-                    raise ValueError(
-                        f"CRITICAL ERROR: Coordinate conversion failed at row {idx}: {e}. "
-                        f"Fix the data source or coordinate conversion logic."
-                    ) from e
-
-            # 3. Comoving distance + angular coordinates
-            if all(col in catalog.columns for col in ['ra_deg', 'dec_deg', 'r_los_mpc']):
-                ra_val = row['ra_deg']
-                dec_val = row['dec_deg']
-                r_comov_val = row['r_los_mpc']
-                
-                # FAIL HARD if any coordinate is NaN/inf
-                if not (np.isfinite(ra_val) and np.isfinite(dec_val) and np.isfinite(r_comov_val)):
-                    raise ValueError(
-                        f"CRITICAL ERROR: Invalid coordinates at row {idx}: ra={ra_val}, dec={dec_val}, r={r_comov_val}. "
-                        f"NaN/inf values indicate corrupted data. Fix the data source."
-                    )
-                
-                if r_comov_val <= 0:
-                    raise ValueError(
-                        f"CRITICAL ERROR: Invalid comoving distance at row {idx}: r={r_comov_val}. "
-                        f"Distance must be > 0. Fix the data source."
-                    )
-                
-                ra = float(ra_val) * u.deg
-                dec = float(dec_val) * u.deg
-                r_comov = float(r_comov_val) * u.Mpc
-
-                try:
-                    coord = SkyCoord(ra=ra, dec=dec, distance=r_comov)
-                    cart = coord.cartesian
-                    x_val, y_val, z_val = cart.x.value, cart.y.value, cart.z.value
-                    
-                    # FAIL HARD if conversion produced invalid values
-                    if not (np.isfinite(x_val) and np.isfinite(y_val) and np.isfinite(z_val)):
-                        raise ValueError(
-                            f"CRITICAL ERROR: Coordinate conversion produced invalid values at row {idx}: "
-                            f"x={x_val}, y={y_val}, z={z_val}. This indicates a problem with the coordinate conversion."
-                        )
-                    positions.append([x_val, y_val, z_val])
-                    catalog_indices.append(idx)
-                    position_found = True
-                    continue  # Skip to next row after processing comoving distance coordinates
-                except Exception as e:
-                    raise ValueError(
-                        f"CRITICAL ERROR: Coordinate conversion failed at row {idx}: {e}. "
-                        f"Fix the data source or coordinate conversion logic."
-                    ) from e
-            
-            # If no coordinate system matched for this row, raise an error
-            if not position_found:
-                raise ValueError(
-                    f"CRITICAL ERROR: Row {idx} does not match any supported coordinate system. "
-                    f"Catalog columns: {list(catalog.columns)}. "
-                    f"Expected one of: ['x','y','z'], ['ra_deg','dec_deg','redshift'], or ['ra_deg','dec_deg','r_los_mpc']. "
-                    f"Fix the data source or coordinate conversion logic."
-                )
-
-        if len(positions) == 0:
-            raise ValueError(
-                "CRITICAL ERROR: No valid positions could be extracted from catalog. "
-                "This indicates the catalog format is incorrect or all data is invalid."
-            )
+        from pipeline.common.void_coordinates import get_cartesian_positions
         
-        # Verify we processed all rows
-        if len(positions) != len(catalog):
-            raise ValueError(
-                f"CRITICAL ERROR: Position count ({len(positions)}) does not match catalog length ({len(catalog)}). "
-                f"This indicates rows were skipped during coordinate conversion. "
-                f"Processed indices: {len(catalog_indices)} rows."
-            )
-
-        # Store catalog indices as an attribute for use in deduplication
-        self._catalog_indices_for_positions = catalog_indices
+        # Use centralized coordinate conversion
+        positions, was_converted = get_cartesian_positions(catalog)
         
-        return np.array(positions)
+        if positions is None or len(positions) == 0:
+            raise ValueError("Could not extract or convert coordinates from catalog")
+        
+        return positions
 
     def _remove_spatial_duplicates(self, catalog: pd.DataFrame, min_separation: float = 5.0,
                                    cache_path: Optional[str] = None) -> pd.DataFrame:

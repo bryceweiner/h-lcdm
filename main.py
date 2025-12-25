@@ -1026,6 +1026,7 @@ def _sanitize_for_json(obj):
     """
     Sanitize data for JSON serialization by converting inf/nan to None.
     Also converts numpy types in keys and values to Python native types.
+    Handles pandas DataFrames by replacing with metadata.
     
     Parameters:
         obj: Object to sanitize
@@ -1035,6 +1036,16 @@ def _sanitize_for_json(obj):
     """
     import math
     import numpy as np
+    import pandas as pd
+    
+    # Handle pandas DataFrames - replace with metadata instead of string representation
+    if isinstance(obj, pd.DataFrame):
+        return {
+            '_type': 'DataFrame',
+            'shape': list(obj.shape),
+            'columns': list(obj.columns),
+            'note': 'Full DataFrame available in processed_data/voids_deduplicated.pkl'
+        }
     
     if isinstance(obj, dict):
         # Convert numpy keys to strings/ints, and sanitize values

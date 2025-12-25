@@ -213,18 +213,36 @@ def build_void_network(
     # Get Cartesian positions
     positions, was_converted = get_cartesian_positions(catalog)
     
+    if positions is None or len(positions) == 0:
+        return {'error': 'Could not extract Cartesian positions from catalog'}
+    
+    # Filter out rows with invalid positions (NaN/inf) BEFORE any calculations
+    valid_mask = np.isfinite(positions).all(axis=1)
+    n_invalid = (~valid_mask).sum()
+    if n_invalid > 0:
+        logger.warning(f"  Filtering out {n_invalid} rows with invalid coordinates (NaN/inf)")
+        positions = positions[valid_mask]
+        catalog = catalog[valid_mask].copy()
+        if len(catalog) == 0:
+            return {'error': 'No valid coordinates after filtering'}
+    
+    # Ensure catalog has x, y, z columns with VALID values for linking length calculation
+    # Always overwrite x, y, z with filtered valid positions (even if columns already exist)
+    catalog = catalog.copy()
+    catalog['x'] = positions[:, 0]
+    catalog['y'] = positions[:, 1]
+    catalog['z'] = positions[:, 2]
+    
     if was_converted:
         logger.info(f"  Converted spherical coordinates to Cartesian")
-        # Ensure catalog has x, y, z columns for linking length calculation
-        if not all(col in catalog.columns for col in ['x', 'y', 'z']):
-            catalog = catalog.copy()
-            catalog['x'] = positions[:, 0]
-            catalog['y'] = positions[:, 1]
-            catalog['z'] = positions[:, 2]
     else:
-        logger.info(f"  Using existing Cartesian coordinates (x, y, z)")
+        # Check if we used x_mpc/y_mpc/z_mpc or x/y/z
+        if all(col in catalog.columns for col in ['x_mpc', 'y_mpc', 'z_mpc']):
+            logger.info(f"  Using existing Cartesian coordinates (x_mpc, y_mpc, z_mpc)")
+        else:
+            logger.info(f"  Using existing Cartesian coordinates (x, y, z)")
     
-    # Calculate linking length if not provided
+    # Calculate linking length if not provided (using FILTERED catalog with valid positions)
     if linking_length is None:
         linking_length, linking_meta = calculate_robust_linking_length(
             catalog, method=linking_method
