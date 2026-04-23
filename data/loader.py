@@ -1902,6 +1902,18 @@ class DataLoader:
                             actual_col = [c for c in df.columns if c.lower() == old_col.lower()][0]
                             df = df.rename(columns={actual_col: new_col})
                     
+                    # Handle corrupted redshift values in DESI ZOBOV catalogs
+                    if 'redshift' in df.columns and 'zobov' in catalog_name.lower():
+                        redshift_col = df['redshift']
+                        # Valid redshift range for DESI: 0.01 < z < 2.0
+                        valid_mask = (redshift_col > 0.01) & (redshift_col < 2.0) & redshift_col.notna()
+                        n_corrupted = (~valid_mask).sum()
+
+                        if n_corrupted > 0:
+                            self.log_message(f"    ⚠ DESIVAST {catalog_name}: Found {n_corrupted}/{len(df)} corrupted redshift values, marking as NaN")
+                            # Mark corrupted values as NaN so coordinate filling can handle them
+                            df.loc[~valid_mask, 'redshift'] = np.nan
+                    
                     # Ensure radius_mpc exists
                     if 'radius_mpc' not in df.columns and 'radius_eff' in df.columns:
                         df['radius_mpc'] = df['radius_eff']
@@ -3394,6 +3406,164 @@ class DataLoader:
         
         self.log_message(f"Void catalog not found for {catalog_name} in {self.processed_data_dir}")
         raise ValueError(f"VoidFinder catalog not found: {catalog_name}")
+
+    def download_quijote_gigantes_voids(
+        self,
+        snapshot: str = "z0",
+        cosmology: str = "fiducial",
+        max_realizations: int = 52  # Load multiple realizations for statistical power
+    ) -> Optional[pd.DataFrame]:
+        """
+        Download void catalogs from Quijote simulations.
+
+        Quijote data is distributed via Globus file transfer system.
+        This function downloads void catalogs identified using a spherical-overdensity algorithm.
+
+        Source: https://quijote-simulations.readthedocs.io/en/latest/voids.html
+        Data format: HDF5 with keys: 'pos', 'radius', 'VSF', 'VSF_Rbins', 'parameters'
+        Size: Varies by realization, typically 10k-100k voids per snapshot
+
+        Globus endpoints:
+        - New York (main): f4863854-3819-11eb-b171-0ee0d5d9299f
+        - San Diego: e0eae0aa-5bca-11ea-9683-0e56c063f437
+
+        Parameters:
+            snapshot: Redshift ("z0", "z0.5", "z1", "z2", "z3")
+            cosmology: Simulation set ("fiducial", "Omega_m", "Omega_b", "h", "ns", "s8", etc.)
+            max_realizations: Maximum number of realizations to load and combine (default: 52 for ~120k voids)
+
+        Returns:
+            DataFrame with columns:
+            - x, y, z: comoving Mpc (converted from Mpc/h, h=0.6711)
+            - radius_mpc: effective radius Mpc (converted from Mpc/h)
+            - redshift: dimensionless
+            - void_id: unique identifier
+            - source: 'quijote_gigantes_{cosmology}'
+            - cosmology: cosmology identifier
+            - realization: realization number
+
+        Notes:
+            - Quijote uses Mpc/h units, we convert to Mpc (divide by h=0.6711)
+            - Files are located at: Gigantes/{cosmology}/z{x.x}/sample_Quijote_halos_{cosmology}_{realization}_z{x.xx}/
+            - Loads multiple realizations and combines them (like observational catalog combination)
+            - This function provides Globus download instructions; manual download is required
+        """
+        import h5py
+        import hdf5plugin  # Required for compressed HDF5 files
+
+        # Map snapshot to redshift value for filename and directory
+        z_map = {"z0": "0", "z0.5": "0.5", "z1": "1", "z2": "2", "z3": "3"}
+        z_dir_map = {"z0": "z0.0", "z0.5": "z0.5", "z1": "z1.0", "z2": "z2.0", "z3": "z3.0"}
+        
+        if snapshot not in z_map:
+            logger.error(f"Invalid snapshot: {snapshot}. Must be one of {list(z_map.keys())}")
+            return None
+        
+        z_value = z_map[snapshot]
+        z_dir = z_dir_map[snapshot]
+        
+        # Load and combine multiple realizations (like combining observational catalogs)
+        all_catalogs = []
+        realizations_loaded = 0
+        
+        logger.info(f"Loading Gigantes voids from up to {max_realizations} realizations...")
+        
+        for realization in range(max_realizations):
+            # Gigantes uses z0.00 format in directory names
+            z_file = f"{float(z_value):.2f}"
+            
+            gigantes_base = self.downloaded_data_dir / "vide_public_catalogs" / z_dir / f"sample_Quijote_halos_{cosmology}_{realization}_z{z_file}"
+            
+            # Try loading from Gigantes directory structure
+            if gigantes_base.exists():
+                sample_name = f"Quijote_halos_{cosmology}_{realization}_z{z_file}"
+                
+                # Try centers files
+                centers_files = [
+                    gigantes_base / f"centers_central_{sample_name}.out",
+                    gigantes_base / f"centers_all_{sample_name}.out",
+                ]
+                
+                centers_file = None
+                for cf in centers_files:
+                    if cf.exists():
+                        centers_file = cf
+                        break
+                
+                if centers_file:
+                    try:
+                        # Read VIDE centers file
+                        data = np.loadtxt(centers_file, comments='#')
+                        
+                        if data.shape[1] >= 8:
+                            positions = data[:, 0:3]  # x, y, z in Mpc/h
+                            radii = data[:, 4]        # effective radius in Mpc/h
+                            void_ids = data[:, 7].astype(int)
+                            
+                            # Convert Mpc/h to Mpc (Quijote h = 0.6711)
+                            h_quijote = 0.6711
+                            positions_mpc = positions / h_quijote
+                            radii_mpc = radii / h_quijote
+                            
+                            # Use snapshot redshift
+                            z_val = float(z_value)
+                            redshifts = np.full(len(positions), z_val)
+
+                            catalog = pd.DataFrame({
+                                'x': positions_mpc[:, 0],
+                                'y': positions_mpc[:, 1],
+                                'z': positions_mpc[:, 2],
+                                'radius_mpc': radii_mpc,
+                                'redshift': redshifts,
+                                'void_id': void_ids,
+                                'source': f'quijote_gigantes_{cosmology}_{realization}',
+                                'cosmology': cosmology,
+                                'realization': realization
+                            })
+                            
+                            all_catalogs.append(catalog)
+                            realizations_loaded += 1
+                            
+                            if realizations_loaded == 1 or realizations_loaded % 5 == 0:
+                                total_voids = sum(len(c) for c in all_catalogs)
+                                logger.info(f"  Loaded realization {realization}: {len(catalog):,} voids (cumulative: {total_voids:,})")
+                    
+                    except Exception as e:
+                        logger.warning(f"Failed to load realization {realization}: {e}")
+                        continue
+        
+        if not all_catalogs:
+            # No data found - provide Globus instructions
+            self._log_gigantes_globus_instructions(z_file, cosmology, max_realizations)
+            return None
+        
+        # Combine all realizations
+        combined_catalog = pd.concat(all_catalogs, ignore_index=True)
+        logger.info(f"✓ Combined {realizations_loaded} realizations: {len(combined_catalog):,} total Gigantes voids")
+        
+        return combined_catalog
+    
+    def _log_gigantes_globus_instructions(self, z_file: str, cosmology: str, max_realizations: int):
+        """Log Globus download instructions for Gigantes data."""
+        SD_ENDPOINT = "e0eae0aa-5bca-11ea-9683-0e56c063f437" # San Diego (Quijote_simulations2)
+        
+        logger.info("=" * 70)
+        logger.info("QUIJOTE GIGANTES DATA REQUIRES GLOBUS DOWNLOAD")
+        logger.info("=" * 70)
+        logger.info("")
+        logger.info(f"No Gigantes void catalogs found for {cosmology} at z={z_file}")
+        logger.info(f"Need {max_realizations} realizations to get ~120,000 voids for statistical power")
+        logger.info("")
+        logger.info("Download using Globus CLI:")
+        logger.info("  for i in {0..51}; do")
+        logger.info(f"    globus transfer {SD_ENDPOINT}:/Gigantes/{cosmology}/z{z_file}/sample_Quijote_halos_{cosmology}_${{i}}_z{z_file}/ \\")
+        logger.info(f"      <your-endpoint>:{self.downloaded_data_dir}/vide_public_catalogs/z{z_file}/sample_Quijote_halos_{cosmology}_${{i}}_z{z_file}/ \\")
+        logger.info("      --recursive --label \"Gigantes voids realization $i\"")
+        logger.info("  done")
+        logger.info("")
+        logger.info("Or visit: https://app.globus.org/file-manager?origin_id=e0eae0aa-5bca-11ea-9683-0e56c063f437&origin_path=/Gigantes/")
+        logger.info("")
+        logger.info("=" * 70)
 
     def check_data_availability(self) -> Dict[str, bool]:
         """Check availability of key datasets."""

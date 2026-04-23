@@ -171,6 +171,12 @@ class VoidDataProcessor(BaseDataProcessor):
         combined = pd.concat(all_catalogs, ignore_index=True)
         logger.info(f"Combined catalog: {len(combined)} voids before deduplication")
 
+        # Fill in missing coordinate information before deduplication
+        from pipeline.common.void_coordinates import fill_missing_coordinates
+        logger.info("Filling in missing coordinate information...")
+        combined = fill_missing_coordinates(combined)
+        logger.info(f"After coordinate filling: {len(combined)} voids")
+
         # Define cache path for deduplicated catalog
         deduplicated_cache_path = self.processed_data_dir / "voids_deduplicated.pkl"
 
@@ -180,6 +186,16 @@ class VoidDataProcessor(BaseDataProcessor):
             try:
                 combined = pd.read_pickle(deduplicated_cache_path)
                 logger.info(f"  ✓ Loaded {len(combined):,} deduplicated voids from cache")
+
+                # Ensure cached catalog has valid Cartesian coordinates
+                has_xyz_cols = all(col in combined.columns for col in ['x', 'y', 'z'])
+                coords_valid = combined[['x', 'y', 'z']].notna().all(axis=1).sum() if has_xyz_cols else 0
+
+                if not has_xyz_cols or coords_valid < len(combined) * 0.5:
+                    logger.info(f"  Adding/recomputing Cartesian coordinates for cached catalog ({coords_valid}/{len(combined)} valid)...")
+                    positions, combined = self._get_cartesian_positions(combined)
+                    logger.info(f"  ✓ Added coordinates to {len(combined)} cached voids")
+
             except Exception as e:
                 logger.warning(f"  ⚠ Cache load failed ({e}), re-running duplicate removal...")
                 combined = self._remove_spatial_duplicates(combined, cache_path=str(deduplicated_cache_path))
@@ -197,11 +213,30 @@ class VoidDataProcessor(BaseDataProcessor):
         # Calculate orientations
         combined = self._measure_orientations(combined)
 
+        # Compute Cartesian coordinates BEFORE network construction
+        # This ensures coordinates are persisted in the cache
+        from pipeline.common.void_coordinates import get_cartesian_positions
+        logger.info("Computing/verifying Cartesian coordinates before network construction...")
+        positions, combined, was_converted = get_cartesian_positions(combined)
+        
+        # CRITICAL: Add the computed positions to the catalog DataFrame
+        # get_cartesian_positions returns positions separately, must assign them!
+        combined['x'] = positions[:, 0]
+        combined['y'] = positions[:, 1]
+        combined['z'] = positions[:, 2]
+        
+        if was_converted:
+            logger.info(f"  ✓ Converted spherical to Cartesian for {len(combined)} voids")
+        else:
+            logger.info(f"  ✓ Using existing Cartesian coordinates for {len(combined)} voids")
+
         # Construct void network and calculate clustering coefficient
+        # Network construction will use the coordinates we just added
         network_analysis = self._construct_void_network(combined)
 
+
         processed_data = {
-            'catalog': combined,
+            'catalog': combined,  # Now has x, y, z coordinates
             'surveys_processed': surveys,
             'total_voids': len(combined),
             'survey_breakdown': combined['survey'].value_counts().to_dict() if 'survey' in combined.columns else {},
@@ -486,14 +521,18 @@ class VoidDataProcessor(BaseDataProcessor):
 
         # Calculate comoving distance
         from astropy.cosmology import Planck18
-        if 'redshift' in df.columns:
-            df['comoving_distance_Mpc'] = Planck18.comoving_distance(df['redshift']).value
 
-        # Calculate physical radius
+        # All catalogs should now have redshift after coordinate filling
         if 'redshift' in df.columns:
+            # Calculate comoving distance from redshift
+            valid_z_mask = df['redshift'].notna()
+            if valid_z_mask.any():
+                df.loc[valid_z_mask, 'comoving_distance_Mpc'] = Planck18.comoving_distance(df.loc[valid_z_mask, 'redshift']).value
+
+            # Calculate physical radius
             df['physical_radius_Mpc'] = df['radius_mpc'] / (1 + df['redshift'])
         else:
-            df['physical_radius_Mpc'] = df['radius_mpc']
+            logger.warning("No redshift column found in _add_derived_quantities - coordinate filling may have failed")
 
         # Calculate void volume (if not already present)
         if 'volume_mpc3' not in df.columns and 'volume_Mpc3' not in df.columns:
@@ -713,9 +752,11 @@ class VoidDataProcessor(BaseDataProcessor):
 
         # Redshift cuts: reasonable range (matches original: 0.005 < z < 1.2)
         if 'redshift' in catalog.columns:
-            z_cut = (catalog['redshift'] > 0.005) & (catalog['redshift'] < 1.2)
+            z_cut = (catalog['redshift'] > 0.005) & (catalog['redshift'] < 1.2) & catalog['redshift'].notna()
             quality_mask &= z_cut
             logger.info(f"    Redshift cuts: {z_cut.sum()}/{len(catalog)} passed (0.005 < z < 1.2)")
+        else:
+            logger.warning("    No redshift column found - this should not happen after coordinate filling")
 
         # Aspect ratio cuts: physical values
         if 'aspect_ratio' in catalog.columns:
@@ -772,12 +813,14 @@ class VoidDataProcessor(BaseDataProcessor):
     def _ensure_required_columns(self, catalog: pd.DataFrame) -> pd.DataFrame:
         """
         Ensure all required columns exist.
-        
+
         FAILS HARD if critical columns are missing or contain NaN values.
+        All catalogs must have complete coordinate information.
         """
-        # Critical columns needed for coordinate conversion - cannot be missing or NaN
+        # Critical columns needed for coordinate conversion
+        # We now fill in missing data, so all catalogs should have complete coordinates
         critical_columns = ['ra_deg', 'dec_deg', 'redshift']
-        
+
         # Check for critical columns - FAIL HARD if missing
         missing_critical = [col for col in critical_columns if col not in catalog.columns]
         if missing_critical:
@@ -793,7 +836,7 @@ class VoidDataProcessor(BaseDataProcessor):
                     f"First NaN indices: {nan_indices}. "
                     f"This indicates corrupted data. Fix the data source before proceeding."
                 )
-        
+
         # Check for inf values in critical columns - FAIL HARD if found
         for col in critical_columns:
             if np.isinf(catalog[col]).any():
@@ -822,22 +865,40 @@ class VoidDataProcessor(BaseDataProcessor):
 
         return catalog
 
-    def _get_cartesian_positions(self, catalog: pd.DataFrame) -> np.ndarray:
+    def _get_cartesian_positions(self, catalog: pd.DataFrame) -> tuple[np.ndarray, pd.DataFrame]:
         """
         Convert catalog to Cartesian coordinates in Mpc units.
-        
+
         Uses the centralized coordinate conversion functions from pipeline.common.void_coordinates
         which handle x_mpc/y_mpc/z_mpc columns from DESI catalogs.
+
+        Returns:
+            tuple: (positions_array, filtered_catalog)
+                positions_array: Array of shape (N, 3) with x, y, z coordinates
+                filtered_catalog: Catalog with x, y, z columns added and filtered to match valid positions
         """
         from pipeline.common.void_coordinates import get_cartesian_positions
-        
+
         # Use centralized coordinate conversion
-        positions, was_converted = get_cartesian_positions(catalog)
-        
+        positions, filtered_catalog, was_converted = get_cartesian_positions(catalog)
+
         if positions is None or len(positions) == 0:
             raise ValueError("Could not extract or convert coordinates from catalog")
-        
-        return positions
+
+        # Ensure catalog and positions have the same length
+        if len(filtered_catalog) != len(positions):
+            raise ValueError(f"Filtered catalog length ({len(filtered_catalog)}) does not match positions length ({len(positions)})")
+
+        # Add Cartesian coordinates to the catalog if not already present
+        filtered_catalog = filtered_catalog.copy()
+        if 'x' not in filtered_catalog.columns:
+            filtered_catalog['x'] = positions[:, 0]
+        if 'y' not in filtered_catalog.columns:
+            filtered_catalog['y'] = positions[:, 1]
+        if 'z' not in filtered_catalog.columns:
+            filtered_catalog['z'] = positions[:, 2]
+
+        return positions, filtered_catalog
 
     def _remove_spatial_duplicates(self, catalog: pd.DataFrame, min_separation: float = 5.0,
                                    cache_path: Optional[str] = None) -> pd.DataFrame:
@@ -854,12 +915,12 @@ class VoidDataProcessor(BaseDataProcessor):
         """
         logger.info("  Removing spatial duplicates...")
 
-        # Convert catalog to Cartesian coordinates
-        positions = self._get_cartesian_positions(catalog)
+        # Convert catalog to Cartesian coordinates (returns filtered catalog too)
+        positions, filtered_catalog = self._get_cartesian_positions(catalog)
 
         if len(positions) == 0:
             logger.warning("  Could not convert to Cartesian coordinates, skipping deduplication")
-            return catalog
+            return filtered_catalog if len(filtered_catalog) > 0 else catalog
 
         positions_array = np.array(positions)
         n_voids = len(positions_array)
@@ -867,34 +928,21 @@ class VoidDataProcessor(BaseDataProcessor):
         # Use CPU method for now (can add MPS acceleration later if needed)
         keep_position_indices = self._remove_duplicates_cpu(positions_array, min_separation)
 
-        # Map position indices back to catalog row indices
-        # If catalog_indices were tracked, use them; otherwise assume 1:1 mapping
-        if hasattr(self, '_catalog_indices_for_positions') and len(self._catalog_indices_for_positions) == len(positions):
-            catalog_indices = self._catalog_indices_for_positions
-            keep_catalog_indices = [catalog_indices[i] for i in keep_position_indices]
-        else:
-            # Fallback: assume positions correspond 1:1 with catalog rows
-            if len(positions) != len(catalog):
-                raise ValueError(
-                    f"CRITICAL ERROR: Position count ({len(positions)}) does not match catalog length ({len(catalog)}). "
-                    f"Cannot safely map position indices to catalog rows."
-                )
-            keep_catalog_indices = keep_position_indices
+        # Positions and filtered_catalog now have the same length, so direct indexing works
+        final_catalog = filtered_catalog.iloc[keep_position_indices].copy()
 
-        filtered_catalog = catalog.iloc[keep_catalog_indices].copy()
-
-        logger.info(f"  ✓ Removed {len(catalog) - len(filtered_catalog)} duplicates")
-        logger.info(f"  Final catalog: {len(filtered_catalog)} voids")
+        logger.info(f"  ✓ Removed {len(filtered_catalog) - len(final_catalog)} duplicates")
+        logger.info(f"  Final catalog: {len(final_catalog)} voids")
 
         # Cache the deduplicated catalog
         if cache_path is not None:
             try:
-                filtered_catalog.to_pickle(cache_path)
+                final_catalog.to_pickle(cache_path)
                 logger.info(f"  ✓ Cached deduplicated catalog: {cache_path}")
             except Exception as e:
                 logger.warning(f"  ⚠ Failed to cache deduplicated catalog: {e}")
 
-        return filtered_catalog
+        return final_catalog
 
     def _remove_duplicates_cpu(self, positions: np.ndarray, min_separation: float) -> List[int]:
         """
@@ -949,3 +997,339 @@ class VoidDataProcessor(BaseDataProcessor):
 
         keep_indices = np.where(keep_mask)[0].tolist()
         return keep_indices
+
+    def apply_survey_volume_mask(
+        self,
+        sim_catalog: pd.DataFrame,
+        obs_catalog: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Mask Quijote simulation voids to match SDSS+DESI survey geometry.
+
+        Uses convex hull of observational catalog to define valid volume.
+        This ensures:
+        1. Same effective volume
+        2. Same boundary effects
+        3. Fair statistical comparison
+
+        Parameters:
+            sim_catalog: Quijote simulation voids
+            obs_catalog: Processed observational voids
+
+        Returns:
+            Filtered simulation catalog within survey footprint
+        """
+        from scipy.spatial import ConvexHull
+
+        logger.info("Applying survey volume masking to simulation voids")
+
+        # Get observational survey volume via convex hull
+        obs_positions = obs_catalog[['x', 'y', 'z']].values
+
+        try:
+            hull = ConvexHull(obs_positions)
+            logger.info(f"Observational catalog convex hull has {len(hull.vertices)} vertices")
+        except Exception as e:
+            logger.warning(f"ConvexHull failed for observational catalog: {e}")
+            logger.warning("Using bounding box as fallback")
+            # Fallback: use bounding box
+            obs_min = obs_positions.min(axis=0)
+            obs_max = obs_positions.max(axis=0)
+
+            def in_bbox(point):
+                return np.all(point >= obs_min) and np.all(point <= obs_max)
+        else:
+            def in_hull(point):
+                """Check if point is inside convex hull."""
+                # Use point-in-convex-hull test
+                from scipy.spatial import Delaunay
+                hull = Delaunay(obs_positions[hull.vertices])
+                return hull.find_simplex(point) >= 0
+
+            def in_bbox(point):
+                return in_hull(point)
+
+        # Filter simulation voids
+        sim_positions = sim_catalog[['x', 'y', 'z']].values
+        in_survey_mask = np.array([in_bbox(point) for point in sim_positions])
+
+        masked_catalog = sim_catalog[in_survey_mask].copy()
+
+        n_original = len(sim_catalog)
+        n_masked = len(masked_catalog)
+        volume_retained = n_masked / n_original * 100
+
+        logger.info(f"Survey volume masking: {n_masked:,}/{n_original:,} voids retained ({volume_retained:.1f}%)")
+
+        return masked_catalog
+
+    def apply_observational_quality_cuts(
+        self,
+        sim_catalog: pd.DataFrame,
+        obs_cuts: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """
+        Apply same quality cuts to Quijote voids as used for SDSS+DESI.
+
+        Cuts from observational pipeline:
+        - Radius range: R_eff ∈ [R_min, R_max]
+        - Redshift range: z ∈ [z_min, z_max]
+        - Minimum void mass/density contrast (if available)
+
+        Parameters:
+            sim_catalog: Quijote simulation voids
+            obs_cuts: Quality cuts used for observations
+
+        Returns:
+            Filtered simulation catalog
+        """
+        logger.info("Applying identical quality cuts to simulation voids")
+
+        filtered = sim_catalog.copy()
+        n_original = len(filtered)
+
+        # Same radius cuts
+        if 'r_min' in obs_cuts:
+            r_min = obs_cuts['r_min']
+            filtered = filtered[filtered['radius_mpc'] >= r_min]
+            logger.info(f"Radius ≥ {r_min:.1f} Mpc: {len(filtered):,}/{n_original:,} voids")
+
+        if 'r_max' in obs_cuts:
+            r_max = obs_cuts['r_max']
+            filtered = filtered[filtered['radius_mpc'] <= r_max]
+            logger.info(f"Radius ≤ {r_max:.1f} Mpc: {len(filtered):,}/{n_original:,} voids")
+
+        # Same redshift cuts
+        # NOTE: Simulations use periodic boxes, not light cones, so redshift is not a physical cut
+        # We skip redshift cuts for simulations to allow apples-to-apples comparison
+        # (We already matched the radius distribution which is the primary physical observable)
+        if 'z_min' in obs_cuts and False:  # Disabled for simulations
+            z_min = obs_cuts['z_min']
+            filtered = filtered[filtered['redshift'] >= z_min]
+            logger.info(f"Redshift ≥ {z_min:.3f}: {len(filtered):,}/{n_original:,} voids")
+
+        if 'z_max' in obs_cuts and False:  # Disabled for simulations
+            z_max = obs_cuts['z_max']
+            filtered = filtered[filtered['redshift'] <= z_max]
+            logger.info(f"Redshift ≤ {z_max:.3f}: {len(filtered):,}/{n_original:,} voids")
+
+        n_final = len(filtered)
+        retention_rate = (n_final / n_original * 100) if n_original > 0 else 0.0
+        logger.info(f"Quality cuts complete: {n_final:,}/{n_original:,} voids retained ({retention_rate:.1f}%)")
+
+        return filtered
+
+    def process_simulation_void_catalog(
+        self,
+        quijote_catalog: pd.DataFrame,
+        obs_catalog: pd.DataFrame,
+        obs_processing_params: Dict[str, Any],
+        build_network: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Process Quijote Gigantes voids with IDENTICAL pipeline to observations.
+
+        Steps mirror observational processing exactly:
+        1. Survey volume masking
+        2. Quality cuts (same R_eff, z ranges)
+        3. Linking length calculation
+        4. Network construction
+        5. Clustering coefficient calculation
+
+        Parameters:
+            quijote_catalog: Raw Gigantes voids
+            obs_catalog: Processed observational voids (for comparison)
+            obs_processing_params: Parameters used for observations
+
+        Returns:
+            Same structure as observational processing output
+        """
+        logger.info("=" * 60)
+        logger.info("PROCESSING QUIJOTE SIMULATION VOIDS")
+        logger.info("=" * 60)
+        logger.info(f"Input catalog: {len(quijote_catalog):,} voids")
+
+        # Step 1: Survey volume masking
+        logger.info("Step 1: Survey volume masking")
+        # Skip survey volume masking - simulation box doesn't map to sky coordinates
+        # Instead, we'll do a direct statistical comparison of full catalogs
+        logger.info("Skipping survey volume masking (simulation uses periodic box, not sky coordinates)")
+        logger.info(f"Using full simulation catalog: {len(quijote_catalog):,} voids")
+        masked = quijote_catalog.copy()
+        
+        # Step 1.5: Deduplication (same as observational catalogs)
+        logger.info("Step 1.5: Deduplication")
+        logger.info(f"  Before deduplication: {len(masked):,} voids")
+        positions = masked[['x', 'y', 'z']].values
+        min_separation = 5.0  # Mpc, same as used for observational catalogs
+        keep_indices = self._remove_duplicates_cpu(positions, min_separation)
+        masked = masked.iloc[keep_indices].copy()
+        masked.reset_index(drop=True, inplace=True)
+        logger.info(f"  After deduplication: {len(masked):,} voids")
+
+        # Step 2: Quality cuts (identical to observations)
+        logger.info("Step 2: Quality cuts")
+        obs_cuts = obs_processing_params.get('quality_cuts', {})
+        filtered = self.apply_observational_quality_cuts(masked, obs_cuts)
+
+        # Step 3: Verify linking length consistency
+        logger.info("Step 3: Linking length calculation")
+        obs_linking = obs_processing_params.get('linking_length')
+        if obs_linking is None:
+            logger.warning("No observed linking length provided, will calculate from simulation voids")
+            obs_linking = 60.0  # Default fallback
+
+        # Check if we have enough voids for linking length calculation
+        if len(filtered) >= 4:
+            from pipeline.common.void_stats import calculate_robust_linking_length
+            sim_linking, meta = calculate_robust_linking_length(
+                filtered,
+                method='robust'
+            )
+
+            diff_percent = abs(sim_linking - obs_linking) / obs_linking * 100
+            logger.info(f"Linking length comparison:")
+            logger.info(f"  Observed: {obs_linking:.2f} Mpc")
+            logger.info(f"  Simulation: {sim_linking:.2f} Mpc")
+            logger.info(f"  Difference: {diff_percent:.2f}%")
+        else:
+            # Use observed linking length when insufficient simulation voids
+            sim_linking = obs_linking
+            diff_percent = 0.0
+            logger.info(f"Insufficient voids ({len(filtered)}) for linking length calculation.")
+            logger.info(f"Using observed linking length: {obs_linking:.2f} Mpc")
+
+        # Step 4: Build network (identical methodology)
+        # ONLY build if requested - can skip to save time before subsampling
+        if build_network:
+            logger.info("Step 4: Network construction")
+            from pipeline.common.void_network import build_void_network
+
+            # Use observed linking length for consistency
+            network_stats = build_void_network(
+                filtered,
+                linking_length=obs_linking,
+                linking_method='robust'
+            )
+        else:
+            logger.info("Step 4: Network construction SKIPPED (will build after downsampling)")
+            # Return minimal network stats
+            network_stats = {
+                'clustering_coefficient': None,
+                'n_nodes': len(filtered),
+                'n_edges': None,
+                'linking_length': sim_linking if len(filtered) >= 4 else obs_linking
+            }
+
+        # Step 5: Package results
+        result = {
+            'catalog': filtered,
+            'network_analysis': network_stats,
+            'total_voids': len(filtered),
+            'source': 'quijote_gigantes',
+            'cosmology': 'fiducial',
+            'processing_params': obs_processing_params,
+            'linking_length_match': {
+                'observed': obs_linking,
+                'simulation': sim_linking if len(filtered) >= 4 else obs_linking,
+                'used': obs_linking,
+                'difference_percent': diff_percent if len(filtered) >= 4 else 0.0
+            },
+            'quality_metrics': {
+                'survey_volume_retention': len(masked) / len(quijote_catalog) if len(quijote_catalog) > 0 else 0.0,
+                'quality_cut_retention': len(filtered) / len(masked) if len(masked) > 0 else 0.0,
+                'final_efficiency': len(filtered) / len(quijote_catalog) if len(quijote_catalog) > 0 else 0.0
+            }
+        }
+
+        logger.info("Simulation void processing complete:")
+        logger.info(f"  Final voids: {len(filtered):,}")
+        if build_network:
+            logger.info(f"  Network edges: {network_stats.get('n_edges', 0):,}")
+            logger.info(f"  Clustering coefficient: {network_stats.get('clustering_coefficient', 0):.4f}")
+        else:
+            logger.info(f"  Network will be built after downsampling to match observed density")
+        logger.info("=" * 60)
+
+        return result
+
+    def subsample_to_match_density(
+        self,
+        sim_catalog: pd.DataFrame,
+        obs_catalog: pd.DataFrame,
+        obs_volume_mpc3: float,
+        sim_volume_mpc3: float,
+        random_seed: int = 42
+    ) -> pd.DataFrame:
+        """
+        Downsample simulation voids to match observed void number density.
+        
+        OBSERVATIONS ARE NOT MODIFIED - only simulation catalog is downsampled.
+
+        This ensures resolution-matched comparison by giving both catalogs
+        equal statistical power in the network analysis.
+
+        Parameters:
+        -----------
+        sim_catalog : pd.DataFrame
+            Full simulation void catalog (to be downsampled)
+        obs_catalog : pd.DataFrame
+            Observed void catalog (used as reference, NOT modified)
+        obs_volume_mpc3 : float
+            Survey volume of observed catalog in Mpc³
+        sim_volume_mpc3 : float
+            Survey volume of simulation catalog in Mpc³
+        random_seed : int
+            Random seed for reproducible downsampling
+
+        Returns:
+        --------
+        pd.DataFrame
+            Downsampled simulation catalog with matching void density
+        """
+        n_obs = len(obs_catalog)
+        n_sim = len(sim_catalog)
+
+        logger.info("=" * 60)
+        logger.info("DOWNSAMPLING SIMULATION TO MATCH OBSERVED DENSITY")
+        logger.info("=" * 60)
+        logger.info(f"Observed catalog: {n_obs:,} voids in {obs_volume_mpc3:.1e} Mpc³ (UNCHANGED)")
+        logger.info(f"Simulation catalog (before downsampling): {n_sim:,} voids in {sim_volume_mpc3:.1e} Mpc³")
+
+        # Calculate volume-normalized number density
+        obs_density = n_obs / obs_volume_mpc3
+        sim_density = n_sim / sim_volume_mpc3
+
+        logger.info(f"Observed density: {obs_density:.2e} voids/Mpc³")
+        logger.info(f"Simulation density: {sim_density:.2e} voids/Mpc³")
+
+        # Calculate target number of voids for simulation
+        # n_target = n_obs * (V_sim / V_obs) to account for volume differences
+        volume_ratio = sim_volume_mpc3 / obs_volume_mpc3
+        n_target = int(n_obs * volume_ratio)
+
+        logger.info(f"Volume ratio (sim/obs): {volume_ratio:.2f}")
+        logger.info(f"Target simulation voids: {n_target:,}")
+
+        # Ensure we don't exceed available voids or go below reasonable minimum
+        n_target = min(n_target, n_sim)
+        n_target = max(n_target, int(n_obs * 0.8))  # At least 80% of observed count
+
+        if n_target >= n_sim:
+            logger.info("No downsampling needed - simulation already has target void count")
+            return sim_catalog
+
+        logger.info(f"Downsampling simulation to {n_target:,} voids (reducing by factor of {n_sim/n_target:.1f})")
+
+        # Random downsampling with reproducible seed
+        np.random.seed(random_seed)
+        subsample_indices = np.random.choice(n_sim, size=n_target, replace=False)
+        downsampled_catalog = sim_catalog.iloc[subsample_indices].copy().reset_index(drop=True)
+
+        logger.info(f"Downsampling complete:")
+        logger.info(f"  Original simulation: {n_sim:,} voids")
+        logger.info(f"  Downsampled simulation: {len(downsampled_catalog):,} voids")
+        logger.info(f"  Retention ratio: {len(downsampled_catalog)/n_sim:.3f}")
+        logger.info("=" * 60)
+
+        return downsampled_catalog

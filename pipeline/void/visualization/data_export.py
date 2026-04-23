@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 def export_void_visualization_data(
     void_catalog_path: str = "processed_data/voids_deduplicated.pkl",
     results_path: str = "results/json/void_results.json",
-    output_path: str = "results/figures/void/void_map_data.json"
+    output_path: str = "results/figures/void/void_map_data.json",
+    results_dict: Optional[Dict[str, Any]] = None
 ) -> str:
     """
     Export void data for 3D visualization.
@@ -33,6 +34,7 @@ def export_void_visualization_data(
         void_catalog_path: Path to processed void catalog pickle file
         results_path: Path to void analysis results JSON file
         output_path: Path to output JSON file for 3D visualization
+        results_dict: Optional results dictionary (if provided, results_path is ignored)
 
     Returns:
         str: Path to exported JSON file
@@ -46,13 +48,17 @@ def export_void_visualization_data(
     except Exception as e:
         raise FileNotFoundError(f"Could not load void catalog: {e}")
 
-    # Load analysis results
-    try:
-        with open(results_path, 'r') as f:
-            results = json.load(f)
-        logger.info("Loaded void analysis results")
-    except Exception as e:
-        raise FileNotFoundError(f"Could not load results: {e}")
+    # Load analysis results (either from dict or file)
+    if results_dict is not None:
+        results = results_dict
+        logger.info("Using provided results dictionary")
+    else:
+        try:
+            with open(results_path, 'r') as f:
+                results = json.load(f)
+            logger.info("Loaded void analysis results")
+        except Exception as e:
+            raise FileNotFoundError(f"Could not load results: {e}")
 
     # Extract void data
     voids_data = _extract_void_data(catalog_df, results)
@@ -132,16 +138,30 @@ def _extract_single_void_data(void_row: pd.Series, idx: int,
     """
     try:
         # Extract position (prefer Cartesian coordinates)
-        if pd.notna(void_row.get('x')) and pd.notna(void_row.get('y')) and pd.notna(void_row.get('z')):
-            x, y, z = void_row['x'], void_row['y'], void_row['z']
-        elif pd.notna(void_row.get('x_mpc')) and pd.notna(void_row.get('y_mpc')) and pd.notna(void_row.get('z_mpc')):
+        # Try x_mpc, y_mpc, z_mpc first (from DESI)
+        if pd.notna(void_row.get('x_mpc')) and pd.notna(void_row.get('y_mpc')) and pd.notna(void_row.get('z_mpc')):
             x, y, z = void_row['x_mpc'], void_row['y_mpc'], void_row['z_mpc']
+        elif pd.notna(void_row.get('x')) and pd.notna(void_row.get('y')) and pd.notna(void_row.get('z')):
+            x, y, z = void_row['x'], void_row['y'], void_row['z']
         else:
             # Try to convert from spherical if available
             if pd.notna(void_row.get('ra_deg')) and pd.notna(void_row.get('dec_deg')) and pd.notna(void_row.get('redshift')):
-                # Note: In a real implementation, we'd convert spherical to Cartesian here
-                # For now, skip voids without Cartesian coordinates
-                return None
+                # Convert spherical to Cartesian
+                from astropy.cosmology import Planck18
+                from astropy.coordinates import SkyCoord
+                from astropy import units as u
+                
+                redshift = void_row['redshift']
+                # Only convert if redshift is reasonable
+                if 0 < redshift < 2:
+                    coords = SkyCoord(
+                        ra=void_row['ra_deg'] * u.deg,
+                        dec=void_row['dec_deg'] * u.deg,
+                        distance=Planck18.comoving_distance(redshift)
+                    )
+                    x, y, z = coords.cartesian.x.value, coords.cartesian.y.value, coords.cartesian.z.value
+                else:
+                    return None
             else:
                 return None
 
@@ -155,10 +175,18 @@ def _extract_single_void_data(void_row: pd.Series, idx: int,
         if pd.isna(orientation):
             orientation = 0.0
 
-        # Extract redshift
+        # Extract redshift (filter out corrupted values)
         redshift = void_row.get('redshift', 0.0)
-        if pd.isna(redshift):
-            redshift = 0.0
+        if pd.isna(redshift) or redshift > 10:
+            # If redshift is missing or corrupted, try to compute from position
+            distance = float((x**2 + y**2 + z**2)**0.5)
+            if distance > 0:
+                # Approximate redshift from comoving distance
+                # For small z: d ≈ (c/H0) * z, so z ≈ d * H0 / c
+                # H0 = 67.4 km/s/Mpc, c = 299792 km/s
+                redshift = distance * 67.4 / 299792.0
+            else:
+                redshift = 0.0
 
         # Extract local clustering coefficient
         local_cc = global_cc  # Default to global if local not available
@@ -197,12 +225,16 @@ def _determine_survey_source(void_row: pd.Series) -> str:
     Returns:
         Survey name string
     """
-    # Check for survey-specific columns or naming patterns
+    # Check for survey column directly (added during processing)
+    if 'survey' in void_row.index and pd.notna(void_row.get('survey')):
+        return str(void_row['survey'])
+    
+    # Fallback: Check for survey-specific columns or naming patterns
     if 'clampitt' in str(void_row.get('source', '')).lower():
         return "SDSS_DR7_CLAMPITT"
     elif 'douglass' in str(void_row.get('source', '')).lower():
         return "SDSS_DR7_DOUGLASS"
-    elif 'desi' in str(void_row.get('survey', '')).lower():
+    elif 'desi' in str(void_row.get('source', '')).lower():
         return "DESI_DR1"
     elif pd.notna(void_row.get('ra_deg')) and pd.notna(void_row.get('dec_deg')):
         # Try to infer from coordinate ranges
@@ -221,8 +253,8 @@ def _extract_network_edges(catalog_df: pd.DataFrame, results: Dict[str, Any]) ->
     """
     Extract network edges for visualization.
 
-    For performance, we sample edges rather than including all 540k edges.
-    The 3D viewer will show edges on demand or for hovered voids.
+    Reconstructs the void network using the same linking length from the analysis,
+    then exports all edges for client-side rendering.
 
     Parameters:
         catalog_df: Void catalog DataFrame
@@ -231,16 +263,58 @@ def _extract_network_edges(catalog_df: pd.DataFrame, results: Dict[str, Any]) ->
     Returns:
         List of [source_idx, target_idx] edge pairs
     """
-    # For the 3D visualization, we don't need to export all 540k edges
-    # as this would make the JSON file too large and slow to load.
-    # Instead, we export a smaller sample or implement lazy loading.
-
-    # For now, return an empty list - edges will be computed client-side
-    # or loaded on demand in future implementations
-    logger.info("Skipping network edge export for performance (540k edges would be too large)")
-    logger.info("Edges can be computed client-side or loaded on demand in future versions")
-
-    return []
+    logger.info("Generating network edges for visualization...")
+    
+    # Get linking length from results
+    network_analysis = results.get("results", {}).get("void_data", {}).get("network_analysis", {})
+    linking_length = network_analysis.get("linking_length", 60.0)
+    n_edges_expected = network_analysis.get("n_edges", 0)
+    
+    logger.info(f"  Linking length: {linking_length:.1f} Mpc")
+    logger.info(f"  Expected edges: {n_edges_expected:,}")
+    
+    # Get positions from catalog
+    from pipeline.common.void_coordinates import get_cartesian_positions
+    
+    try:
+        positions, filtered_catalog, _ = get_cartesian_positions(catalog_df)
+        
+        if positions is None or len(positions) == 0:
+            logger.warning("  Could not extract positions for edge generation")
+            return []
+        
+        logger.info(f"  Building network with {len(positions)} voids...")
+        
+        # Build distance matrix efficiently using chunking
+        from scipy.spatial.distance import pdist, squareform
+        
+        # For large networks, compute distances in chunks to avoid memory issues
+        n_voids = len(positions)
+        edges = []
+        
+        if n_voids < 10000:
+            # Small enough to compute all distances at once
+            distances = squareform(pdist(positions))
+            for i in range(n_voids):
+                for j in range(i+1, n_voids):
+                    if distances[i, j] <= linking_length:
+                        edges.append([i, j])
+        else:
+            # Large network: use KDTree for efficient neighbor finding
+            from scipy.spatial import cKDTree
+            
+            tree = cKDTree(positions)
+            pairs = tree.query_pairs(r=linking_length, output_type='ndarray')
+            
+            edges = pairs.tolist()
+        
+        logger.info(f"  ✓ Generated {len(edges):,} edges")
+        
+        return edges
+        
+    except Exception as e:
+        logger.error(f"  Failed to generate edges: {e}")
+        return []
 
 
 def _create_metadata(catalog_df: pd.DataFrame, results: Dict[str, Any],

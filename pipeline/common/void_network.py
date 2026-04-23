@@ -211,7 +211,7 @@ def build_void_network(
         return {'error': 'Empty catalog'}
     
     # Get Cartesian positions
-    positions, was_converted = get_cartesian_positions(catalog)
+    positions, catalog, was_converted = get_cartesian_positions(catalog)
     
     if positions is None or len(positions) == 0:
         return {'error': 'Could not extract Cartesian positions from catalog'}
@@ -239,8 +239,7 @@ def build_void_network(
         # Check if we used x_mpc/y_mpc/z_mpc or x/y/z
         if all(col in catalog.columns for col in ['x_mpc', 'y_mpc', 'z_mpc']):
             logger.info(f"  Using existing Cartesian coordinates (x_mpc, y_mpc, z_mpc)")
-        else:
-            logger.info(f"  Using existing Cartesian coordinates (x, y, z)")
+        logger.info(f"  Using existing Cartesian coordinates (x, y, z)")
     
     # Calculate linking length if not provided (using FILTERED catalog with valid positions)
     if linking_length is None:

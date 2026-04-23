@@ -379,7 +379,7 @@ The analysis is divided into specialized pipelines:
 - **GAMMA**: Calculates theoretical γ(z) and Λ(z) evolution.
 - **BAO**: Tests baryon acoustic oscillation predictions against galaxy survey data.
 - **CMB**: Analyzes E-mode polarization for signatures of information processing phase transitions.
-- **VOID**: Examines cosmic void structures for alignment with E8×E8 geometry.
+- **VOID**: Examines cosmic void structures for alignment with entropy mechanics (inverse QTEP ratio).
 - **ML**: Applies unsupervised learning to detect non-standard patterns in multi-modal data.
 
 ### Computational Framework
@@ -514,9 +514,9 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
                 'prediction': 'H-ΛCDM predicts specific E-mode polarization patterns from recombination-era information processing'
             },
             'void': {
-                'question': 'Do cosmic void structures align with E8×E8 geometry?',
-                'looking_for': 'Specific clustering ratios matching E8 root system geometry',
-                'prediction': 'H-ΛCDM predicts void clustering coefficients matching η_natural ≈ 0.443'
+                'question': 'Do cosmic void structures align with entropy mechanics predictions?',
+                'looking_for': 'Specific clustering ratios matching η_natural (inverse QTEP ratio)',
+                'prediction': 'H-ΛCDM predicts void clustering coefficients matching η_natural ≈ 0.443 (inverse QTEP ratio)'
             },
             'voidfinder': {
                 'question': 'What is the distribution of voids in the galaxy survey?',

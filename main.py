@@ -1011,6 +1011,17 @@ def run_pipeline_analysis(pipeline_name: str, pipeline_obj, config: Dict[str, An
                 except Exception as e:
                     logger.error(f"Could not save extended validation results: {e}")
 
+        except RuntimeError as e:
+            # Critical errors (e.g., missing ΛCDM data) should fail hard
+            import traceback
+            error_traceback = traceback.format_exc()
+            logger.error(f"✗ CRITICAL ERROR in {pipeline_name} pipeline: {e}")
+            logger.error(f"Full traceback:\n{error_traceback}")
+            logger.error("")
+            logger.error("=" * 70)
+            logger.error("PIPELINE EXECUTION ABORTED")
+            logger.error("=" * 70)
+            raise  # Re-raise to stop execution
         except Exception as e:
             import traceback
             error_traceback = traceback.format_exc()
