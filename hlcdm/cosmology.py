@@ -287,17 +287,20 @@ class HLCDMCosmology:
         """
         Calculate theoretical gamma at given redshift.
 
-        Uses the fundamental formula γ = H(z)/π² where H(z) is the
-        Hubble parameter at redshift z.
+        Uses the holographic information-processing rate from
+        bao_resolution_qit.tex eq. 3:
+            γ(z) = H(z) / ln(π c⁵ / (G ℏ H(z)²))
+
+        At z=1100 this yields γ ≈ 1.707×10⁻¹⁶ s⁻¹, matching the paper.
 
         Parameters:
             z (float): Redshift
 
         Returns:
-            float: Theoretical gamma at redshift z
+            float: Theoretical gamma at redshift z (s⁻¹)
         """
         H_z = HLCDM_PARAMS.get_hubble_at_redshift(z)
-        return HLCDMCosmology.gamma_fundamental(H_z)
+        return HLCDMCosmology.gamma_theoretical(H_z)
     
     @staticmethod
     def gamma_refined_at_redshift(z: float) -> Tuple[float, float]:

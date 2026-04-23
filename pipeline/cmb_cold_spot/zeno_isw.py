@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 # Physical constants
 c = 299792.458  # km/s
+C_SI = 2.998e8  # m/s (for holographic-rate logarithm)
+HBAR_SI = 1.055e-34  # J·s
+G_SI = 6.674e-11  # m³ kg⁻¹ s⁻²
 T_CMB = 2.725  # K (CMB temperature today)
 
 # QTEP parameters from bao_resolution_qit.tex
@@ -38,9 +41,14 @@ Z_RECOMB = 1089  # Recombination redshift
 Z_STAR = 1089    # Last scattering surface
 DELTA_Z_RECOMB = 200  # Width of recombination interval
 
-# Zeno parameters from §2.4 of BAO paper
+# Zeno-interval kinematic duration (paper §2.4, Δt_Z ≈ 1.3×10⁵ yr)
 ZENO_DURATION_YR = 1.3e5  # Duration of strong Zeno regime (years)
-N_ZENO_SCATTERINGS = 1.2e7  # Thomson scatterings per baryon during Zeno interval
+# N.B. Paper §2.4 also quotes N_Z ≈ 1.2×10⁷ scatterings per baryon and
+# M_max ≈ 6.7×10⁷; both follow from the paper's Γ_T ≈ 3×10⁻⁶ s⁻¹, which
+# is inconsistent with n_e σ_T c (physical value ~6.7×10⁻¹² s⁻¹).
+# The helpers below compute these derived quantities from the physical
+# Γ_T, yielding N_Z ≈ 27 and M_max ≈ 150.  The Zeno condition M ≫ 1
+# still holds; only the numerical magnitudes differ from the paper.
 
 
 def calculate_hubble_rate(z: float, 
@@ -145,33 +153,72 @@ def calculate_monitoring_strength(z: float) -> float:
 def calculate_holographic_rate(z: float) -> float:
     """
     Calculate holographic information processing rate γ(z).
-    
-    From §2.2 of BAO paper:
-    γ = H(z) / ln(N_P) where N_P ~ π c^5 / (G ℏ H^2)
-    
+
+    From §2.2 of BAO paper (eq. 3):
+        γ(z) = H(z) / ln(N_P),   N_P = π c⁵ / (G ℏ H(z)²)
+
+    The log is evaluated exactly rather than approximated by a constant,
+    so γ tracks the z-dependence of N_P (e.g. ln(N_P) ≈ 261.9 at z=1100
+    and ≈ 283.6 at z=0).
+
     Parameters:
         z: Redshift
-        
+
     Returns:
-        γ(z) in s^-1
+        γ(z) in s⁻¹
     """
     H_z = calculate_hubble_rate(z)
-    
+
     # Convert to SI
     Mpc_to_km = 3.086e19
     H_z_SI = H_z / Mpc_to_km  # s^-1
-    
-    # Holographic entropy (very large number ~ 10^113)
-    # N_P ~ π c^5 / (G ℏ H^2)
-    # We use ln(N_P) ~ 260 at z ~ 1089 (from BAO paper)
-    
-    # More precisely: ln(N_P) = ln(π) + 5ln(c) - ln(G) - ln(ℏ) - 2ln(H)
-    # For numerical stability, use the fact that ln(N_P) ~ 260 ± 5 near recombination
-    ln_N_P = 260.0
-    
+
+    # ln(N_P) = ln(π c⁵ / (G ℏ H²))
+    ln_N_P = np.log(np.pi * C_SI**5 / (G_SI * HBAR_SI * H_z_SI**2))
+
     gamma = H_z_SI / ln_N_P
-    
+
     return gamma
+
+
+def calculate_zeno_duration(z_star: float = Z_STAR,
+                            delta_z: float = DELTA_Z_RECOMB) -> float:
+    """
+    Kinematic duration of the strong-monitoring window (paper §2.4):
+        Δt_Z ≈ Δz / [(1+z_*) H(z_*)]
+
+    Returns Δt_Z in seconds.  For Δz=200 and Planck-2018 H(z_*=1089),
+    this is ≈ 4.06×10¹² s ≈ 1.3×10⁵ yr, matching the paper.
+    """
+    H_z_kmsmpc = calculate_hubble_rate(z_star)
+    Mpc_to_km = 3.086e19
+    H_z_SI = H_z_kmsmpc / Mpc_to_km  # s^-1
+    return delta_z / ((1.0 + z_star) * H_z_SI)
+
+
+def calculate_zeno_scattering_budget(z_star: float = Z_STAR,
+                                     delta_z: float = DELTA_Z_RECOMB) -> float:
+    """
+    Scattering budget per baryon across the Zeno window:
+        N_Z = Γ_T(z_*) × Δt_Z
+
+    Computed from the physically correct Thomson rate; yields N_Z ≈ 27.
+    Paper §2.4 quotes 1.2×10⁷, which presumes the paper's (unphysical)
+    Γ_T ≈ 3×10⁻⁶ s⁻¹ — see module header comment.
+    """
+    gamma_t = calculate_thomson_rate(z_star)
+    dt_z = calculate_zeno_duration(z_star, delta_z)
+    return gamma_t * dt_z
+
+
+def calculate_monitoring_strength_max(z_star: float = Z_STAR) -> float:
+    """
+    Peak dimensionless monitoring strength M_max ≡ Γ_T(z_*)/H(z_*).
+
+    From physical Γ_T and H at z=1089 → M_max ≈ 150, well in the
+    Zeno regime (M ≫ 1) though far below the paper's quoted 6.7×10⁷.
+    """
+    return calculate_monitoring_strength(z_star)
 
 
 def calculate_visibility_function(z: float,

@@ -3955,7 +3955,7 @@ class MLPipeline(AnalysisPipeline):
         
         # Calculate gamma at z=0 using theoretical formula
         H0 = HLCDM_PARAMS.H0
-        gamma_baseline = HLCDMCosmology.gamma_theoretical(H0)  # ≈ 1.89e-29 s^-1
+        gamma_baseline = HLCDMCosmology.gamma_theoretical(H0)  # H₀/ln(πc⁵/GℏH₀²) ≈ 7.7e-21 s⁻¹
         qtep_ratio = HLCDM_PARAMS.QTEP_RATIO  # ≈ 2.257
         gamma_measurement = gamma_baseline * (1 + np.sqrt(qtep_ratio))
         
@@ -4268,7 +4268,7 @@ class MLPipeline(AnalysisPipeline):
         
         # Calculate gamma at z=0 using theoretical formula
         H0 = HLCDM_PARAMS.H0
-        gamma = HLCDMCosmology.gamma_theoretical(H0)  # ≈ 1.89e-29 s^-1
+        gamma = HLCDMCosmology.gamma_theoretical(H0)  # H₀/ln(πc⁵/GℏH₀²) ≈ 7.7e-21 s⁻¹
         f_LB = gamma / (2 * np.pi)  # ≈ 3e-30 Hz
         
         # Modulation amplitude: A ≈ 2.257 × (I/I_max)^2
