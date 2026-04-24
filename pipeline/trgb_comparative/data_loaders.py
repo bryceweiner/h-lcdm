@@ -73,6 +73,12 @@ class TRGBDataBundle:
     # host name -> list of Pantheon+ row indices (absolute, not per-calibrator-subset)
     # Populated via RA/Dec crossmatch; an empty dict means no mapping built.
 
+    tip_source: str = "anand_2022"
+    # Source of the per-host published μ_TRGB values that `published_mu_hosts`
+    # carries. Valid values: "freedman_2019", "freedman_2025", "anand_2022".
+    # The Freedman reproduction branches report this in the output so the
+    # reader knows which published H₀ target the reproduction is aiming at.
+
 
 # ---------------------------------------------------------------------------
 # Loader helpers
@@ -169,13 +175,32 @@ def build_host_to_pantheon_indices(
 # ---------------------------------------------------------------------------
 
 
-def load_case_a(loader: DataLoader, *, strict: bool = True) -> TRGBDataBundle:
+def load_case_a(
+    loader: DataLoader,
+    *,
+    strict: bool = True,
+    tip_source: str = "freedman_2019",
+) -> TRGBDataBundle:
     """Freedman 2019/2020 HST, LMC-anchored.
+
+    Parameters
+    ----------
+    tip_source:
+        Source of per-host published μ_TRGB values. ``"freedman_2019"`` is
+        the primary reproduction path; it reads from Freedman 2019 Table 3
+        transcription. ``"anand_2022"`` uses the independent Anand 2021
+        reduction via EDD — reported as a cross-check rather than the
+        primary reproduction target. ``"freedman_2025"`` is valid if a
+        Case-A-compatible 2025 subset is requested; it reads JWST-era
+        distances and is typically reserved for Case B.
 
     When ``strict`` is False and any data are missing, the loader returns a
     bundle with empty host_fields / anchor_fields so higher-level code can
     proceed (tests mostly) — callers must verify before running MCMC.
     """
+    if tip_source not in ("freedman_2019", "freedman_2025", "anand_2022"):
+        raise ValueError(f"Unknown tip_source: {tip_source!r}")
+
     anchor = _make_anchor_from_dict(loader.load_pietrzynski_lmc_distance(), "LMC")
 
     # Per-host A_F814W from Freedman 2019 Table 1 — authoritative foreground
@@ -185,6 +210,29 @@ def load_case_a(loader: DataLoader, *, strict: bool = True) -> TRGBDataBundle:
         a_f814w_by_host = {h: v["A_F814W"] for h, v in table1["hosts"].items()}
     except Exception:
         a_f814w_by_host = {}
+
+    # Per-host published μ_TRGB depending on tip_source. Freedman 2019
+    # Table 3 is the primary target; Anand 2022 is an independent-reduction
+    # cross-check.
+    published_by_source: Dict[str, Tuple[float, float]] = {}
+    if tip_source == "freedman_2019":
+        try:
+            f19 = loader.load_freedman_2019_table3()
+            for h, rec in f19["hosts"].items():
+                published_by_source[h] = (float(rec["mu"]), float(rec["sigma"]))
+        except Exception:
+            if strict:
+                raise
+    elif tip_source == "freedman_2025":
+        try:
+            f25 = loader.load_freedman_2025_table2()
+            for h, rec in f25["hosts"].items():
+                published_by_source[h] = (float(rec["mu_bar"]), float(rec["sigma_bar"]))
+        except Exception:
+            if strict:
+                raise
+    # "anand_2022" is left empty here; it falls back to each host's manifest
+    # value (Anand 2021 EDD reduction, which the manifest carries).
 
     anchor_fields: Dict[str, TRGBPhotometryField] = {}
     host_fields: Dict[str, TRGBPhotometryField] = {}
@@ -220,22 +268,53 @@ def load_case_a(loader: DataLoader, *, strict: bool = True) -> TRGBDataBundle:
                 "F555W_err": rec.get("F555W_err"),
                 "flag": rec.get("flag"),
             }
-            # Attach Freedman 2019 Table 1 A_F814W when available.
             host_metadata: Dict[str, float] = {}
             if host in a_f814w_by_host:
                 host_metadata["A_F814W"] = a_f814w_by_host[host]
+            # Tip source: freedman_2019 / freedman_2025 override the manifest
+            # (Anand 2021) value with the paper's published μ_TRGB.
+            chosen_mu, chosen_sigma = (
+                rec["published_mu_TRGB"],
+                rec["published_sigma_mu"],
+            )
+            if host in published_by_source:
+                chosen_mu, chosen_sigma = published_by_source[host]
             host_fields[host] = _photometry_from_dict(
                 photom, field_id=host,
                 primary_mag="F814W", primary_err="F814W_err",
                 color_bands=("F555W", "F814W"),
                 metadata=host_metadata,
-                published_mu=rec["published_mu_TRGB"],
-                published_sigma=rec["published_sigma_mu"],
+                published_mu=chosen_mu,
+                published_sigma=chosen_sigma,
             )
-            published_mu_hosts[host] = (rec["published_mu_TRGB"], rec["published_sigma_mu"])
+            published_mu_hosts[host] = (chosen_mu, chosen_sigma)
     except DataUnavailableError:
         if strict:
             raise
+
+    # Hosts that are in Freedman 2019 Table 3 but NOT in our HST photometry
+    # manifest should still appear as host entries for fits that rely on
+    # published μ_TRGB rather than the raw photometry. (Edge-detection
+    # variants will skip them.)
+    if tip_source == "freedman_2019":
+        for h, (mu, sigma) in published_by_source.items():
+            if h not in host_fields and h != "LMC":
+                # Create a stub TRGBPhotometryField with empty photometry
+                # arrays so the likelihood can still use the published μ.
+                import numpy as _np
+                host_fields[h] = TRGBPhotometryField(
+                    field_id=h,
+                    mag=_np.array([]),
+                    sigma_mag=_np.array([]),
+                    color=None,
+                    sigma_color=None,
+                    flag=None,
+                    published_mu_TRGB=mu,
+                    published_sigma_mu=sigma,
+                    metadata={"A_F814W": a_f814w_by_host.get(h, 0.03),
+                              "stub_no_photometry": 1.0},
+                )
+                published_mu_hosts[h] = (mu, sigma)
 
     pantheon_plus = loader.load_pantheon_plus()
     host_to_pantheon = build_host_to_pantheon_indices(
@@ -250,17 +329,51 @@ def load_case_a(loader: DataLoader, *, strict: bool = True) -> TRGBDataBundle:
         pantheon_plus=pantheon_plus,
         published_mu_hosts=published_mu_hosts,
         host_to_pantheon_indices=host_to_pantheon,
+        tip_source=tip_source,
     )
 
 
-def load_case_b(loader: DataLoader, *, strict: bool = True) -> TRGBDataBundle:
+def load_case_b(
+    loader: DataLoader,
+    *,
+    strict: bool = True,
+    tip_source: str = "freedman_2025",
+) -> TRGBDataBundle:
     """Freedman 2024/2025 JWST, NGC 4258-anchored.
+
+    Parameters
+    ----------
+    tip_source:
+        Source of per-host published μ_TRGB. Default ``"freedman_2025"``
+        reads the JWST Table 2 values. ``"anand_2022"`` falls back to the
+        manifest's EDD/Anand reduction (HST-era, cross-check only).
 
     The JWST sample uses F150W as the primary band with F090W−F150W color.
     The NGC 4258 anchor's TRGB photometry for F150W comes from the same
     manifest (treated as one of the 'hosts' for bookkeeping).
     """
+    if tip_source not in ("freedman_2019", "freedman_2025", "anand_2022"):
+        raise ValueError(f"Unknown tip_source: {tip_source!r}")
+
     anchor = _make_anchor_from_dict(loader.load_reid_ngc4258_distance(), "NGC_4258")
+
+    published_by_source: Dict[str, Tuple[float, float]] = {}
+    if tip_source == "freedman_2025":
+        try:
+            f25 = loader.load_freedman_2025_table2()
+            for h, rec in f25["hosts"].items():
+                published_by_source[h] = (float(rec["mu_bar"]), float(rec["sigma_bar"]))
+        except Exception:
+            if strict:
+                raise
+    elif tip_source == "freedman_2019":
+        try:
+            f19 = loader.load_freedman_2019_table3()
+            for h, rec in f19["hosts"].items():
+                published_by_source[h] = (float(rec["mu"]), float(rec["sigma"]))
+        except Exception:
+            if strict:
+                raise
 
     host_fields: Dict[str, TRGBPhotometryField] = {}
     anchor_fields: Dict[str, TRGBPhotometryField] = {}
@@ -275,24 +388,48 @@ def load_case_b(loader: DataLoader, *, strict: bool = True) -> TRGBDataBundle:
                 "F090W_err": rec["F090W_err"],
                 "flag": rec.get("flag"),
             }
+            chosen_mu, chosen_sigma = (
+                rec["published_mu_TRGB"],
+                rec["published_sigma_mu"],
+            )
+            if host in published_by_source:
+                chosen_mu, chosen_sigma = published_by_source[host]
             field = _photometry_from_dict(
                 photom, field_id=host,
                 primary_mag="F150W", primary_err="F150W_err",
                 color_bands=("F090W", "F150W"),
-                published_mu=rec["published_mu_TRGB"],
-                published_sigma=rec["published_sigma_mu"],
+                published_mu=chosen_mu,
+                published_sigma=chosen_sigma,
             )
             if host.upper() in ("NGC 4258", "NGC_4258", "NGC4258"):
                 anchor_fields[host] = field
             else:
                 host_fields[host] = field
-                published_mu_hosts[host] = (
-                    rec["published_mu_TRGB"],
-                    rec["published_sigma_mu"],
-                )
+                published_mu_hosts[host] = (chosen_mu, chosen_sigma)
     except DataUnavailableError:
         if strict:
             raise
+
+    # For tip_source="freedman_2025", include hosts from Table 2 that have
+    # no direct photometry entry (photometry stub with only published μ).
+    if tip_source == "freedman_2025":
+        import numpy as _np
+        for h, (mu, sigma) in published_by_source.items():
+            if h == "NGC 4258" or h.upper().replace(" ", "") == "NGC4258":
+                continue
+            if h not in host_fields:
+                host_fields[h] = TRGBPhotometryField(
+                    field_id=h,
+                    mag=_np.array([]),
+                    sigma_mag=_np.array([]),
+                    color=None,
+                    sigma_color=None,
+                    flag=None,
+                    published_mu_TRGB=mu,
+                    published_sigma_mu=sigma,
+                    metadata={"A_F150W": 0.015, "stub_no_photometry": 1.0},
+                )
+                published_mu_hosts[h] = (mu, sigma)
 
     pantheon_plus = loader.load_pantheon_plus()
     host_to_pantheon = build_host_to_pantheon_indices(
@@ -307,17 +444,29 @@ def load_case_b(loader: DataLoader, *, strict: bool = True) -> TRGBDataBundle:
         pantheon_plus=pantheon_plus,
         published_mu_hosts=published_mu_hosts,
         host_to_pantheon_indices=host_to_pantheon,
+        tip_source=tip_source,
     )
 
 
-def load_all(loader: Optional[DataLoader] = None, *, strict: bool = True) -> Dict[str, TRGBDataBundle]:
+def load_all(
+    loader: Optional[DataLoader] = None,
+    *,
+    strict: bool = True,
+    tip_source_a: str = "freedman_2019",
+    tip_source_b: str = "freedman_2025",
+) -> Dict[str, TRGBDataBundle]:
     """Load both cases. With strict=False, returns bundles even if host
-    photometry is missing (useful during development + dry runs)."""
+    photometry is missing (useful during development + dry runs).
+
+    Per-case tip sources default to the authoritative published paper for
+    that case (Freedman 2019 Table 3 for Case A, Freedman 2025 Table 2
+    for Case B).
+    """
     if loader is None:
         loader = DataLoader()
     return {
-        "case_a": load_case_a(loader, strict=strict),
-        "case_b": load_case_b(loader, strict=strict),
+        "case_a": load_case_a(loader, strict=strict, tip_source=tip_source_a),
+        "case_b": load_case_b(loader, strict=strict, tip_source=tip_source_b),
     }
 
 
