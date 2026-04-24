@@ -4023,6 +4023,75 @@ class DataLoader:
         self.log_message(f"Loaded SN host TRGB JWST photometry for {len(hosts)} hosts")
         return {'name': 'SN host TRGB JWST photometry (F090W/F150W)', 'hosts': hosts}
 
+    def load_pantheon_2018(self, force_download: bool = False) -> Dict[str, Any]:
+        """Scolnic et al. 2018 Pantheon SN Ia sample — the ORIGINAL Pantheon.
+
+        Distinct from ``load_pantheon_plus()`` (which is the 2022 SH0ES-
+        calibrated Pantheon+ release). The 2018 Pantheon release is the
+        pre-SH0ES compilation and is one of the four SN samples Hoyt 2025
+        analyses.
+
+        Source: Scolnic et al. 2018, ApJ 859, 101. Data file
+        ``lcparam_full_long.txt`` from https://github.com/dscolnic/Pantheon
+        containing 1048 SNe with SALT2 light-curve parameters, CMB-frame
+        redshift, standardized m_B, and biascor flags.
+
+        Columns in the file: name, zcmb, zhel, dz, mb, dmb, x1, dx1, color,
+        dcolor, 3rdvar (host logmass), d3rdvar, cov_m_s, cov_m_c, cov_s_c,
+        set, ra, dec, biascor.
+
+        Returns a dict with numpy arrays keyed by column plus a summary
+        header with the file SHA-256 for provenance.
+        """
+        import hashlib as _hashlib
+        cache_dir = self.downloaded_data_dir / "pantheon_2018"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        path = cache_dir / "lcparam_full_long.txt"
+        url = "https://raw.githubusercontent.com/dscolnic/Pantheon/master/lcparam_full_long.txt"
+
+        if force_download or not path.exists() or path.stat().st_size == 0:
+            self.log_message(f"Downloading Pantheon 2018 SN sample from {url}")
+            import urllib.request
+            urllib.request.urlretrieve(url, path)
+
+        # SHA-256 for provenance.
+        sha = _hashlib.sha256(path.read_bytes()).hexdigest()
+
+        df = pd.read_csv(path, sep=r"\s+", comment="#", header=None,
+                         names=[
+                             'name', 'zcmb', 'zhel', 'dz', 'mb', 'dmb',
+                             'x1', 'dx1', 'color', 'dcolor',
+                             'third_var', 'd_third_var',
+                             'cov_m_s', 'cov_m_c', 'cov_s_c',
+                             'set', 'ra', 'dec', 'biascor',
+                         ])
+        self.log_message(
+            f"Loaded Pantheon 2018 (Scolnic 2018, ApJ 859, 101): "
+            f"{len(df)} SNe, z ∈ [{df['zcmb'].min():.4f}, {df['zcmb'].max():.4f}]"
+        )
+        return {
+            'name': 'Pantheon 2018 (Scolnic 2018)',
+            'reference': 'Scolnic et al. 2018, ApJ 859, 101',
+            'url': url,
+            'file_path': str(path),
+            'file_sha256': sha,
+            'N': int(len(df)),
+            'SN_name': df['name'].to_numpy(),
+            'zcmb': df['zcmb'].to_numpy(dtype=float),
+            'zhel': df['zhel'].to_numpy(dtype=float),
+            'mb': df['mb'].to_numpy(dtype=float),
+            'dmb': df['dmb'].to_numpy(dtype=float),
+            'x1': df['x1'].to_numpy(dtype=float),
+            'dx1': df['dx1'].to_numpy(dtype=float),
+            'color': df['color'].to_numpy(dtype=float),
+            'dcolor': df['dcolor'].to_numpy(dtype=float),
+            'third_var': df['third_var'].to_numpy(dtype=float),
+            'ra': df['ra'].to_numpy(dtype=float),
+            'dec': df['dec'].to_numpy(dtype=float),
+            'biascor': df['biascor'].to_numpy(dtype=float),
+            'set_id': df['set'].to_numpy(dtype=int),
+        }
+
     def load_hoyt_2025_sn_calibration(self) -> Dict[str, Any]:
         """Hoyt 2025 SN Ia magnitude-system recalibration reference + augmented values.
 
@@ -4152,25 +4221,53 @@ class DataLoader:
             )
         df = pd.read_csv(path, comment='#')
         hosts: Dict[str, Dict[str, Any]] = {}
+        calibrator_sne: List[Dict[str, Any]] = []
         for _, row in df.iterrows():
             h = str(row['host_canon'])
+            # Keep the row as a calibrator SN with all per-system m_B values.
+            def f(col, default=float('nan')):
+                v = row.get(col, default)
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    return float('nan')
+                if pd.isna(v):
+                    return float('nan')
+                return v
+            calibrator_sne.append({
+                'sn': str(row['SN']),
+                'host_canon': h,
+                'mu_TRGB': f('mu_TRGB'),
+                'sigma_T': f('sigma_T'),
+                'trgb_source': str(row.get('trgb_source') or ''),
+                'm_B_CSP': f('m_B_CSP'),
+                'sigma_B_CSP': f('sigma_B_CSP'),
+                'm_B_SuperCal': f('m_B_SuperCal'),
+                'sigma_B_SC': f('sigma_B_SC'),
+                'mu_Ceph': f('mu_Ceph'),
+                'sigma_C': f('sigma_C'),
+                'V_NED_kms': f('V_NED_kms'),
+            })
             if h not in hosts:
-                hosts[h] = {
-                    'mu': float(row['mu_TRGB']),
-                    'sigma': float(row['sigma_T']),
-                    'sne': [str(row['SN'])],
-                    'source': str(row['source']),
-                }
+                mu_val = f('mu_TRGB')
+                sig_val = f('sigma_T')
+                if not (mu_val != mu_val):  # not NaN
+                    hosts[h] = {
+                        'mu': mu_val,
+                        'sigma': sig_val,
+                        'sne': [str(row['SN'])],
+                        'source': str(row.get('trgb_source') or ''),
+                    }
             else:
-                # Same host, another SN → same mu & sigma per Table 3; sanity-check.
                 hosts[h]['sne'].append(str(row['SN']))
         self.log_message(
-            f"Loaded Freedman 2019 Table 3: {len(hosts)} unique hosts, "
-            f"{int(len(df))} SN Ia calibrators."
+            f"Loaded Freedman 2019 Table 3: {len(hosts)} unique TRGB-measured hosts, "
+            f"{int(len(df))} SN Ia calibrator rows (incl. ones without TRGB)."
         )
         return {
-            'name': 'Freedman 2019 CCHP VIII Table 3 (TRGB distances)',
+            'name': 'Freedman 2019 CCHP VIII Table 3 (TRGB distances + calibrator m_B)',
             'hosts': hosts,
+            'calibrator_sne': calibrator_sne,
             'reference': 'Freedman et al. 2019, ApJ 882, 34',
             'H0_published': 69.8,
             'H0_sigma_stat': 0.8,
