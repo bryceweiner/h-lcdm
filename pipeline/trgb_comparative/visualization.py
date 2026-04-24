@@ -120,23 +120,23 @@ def plot_h0_posteriors(
         samples = case_a.mcmc_result.samples[:, 0]
         _plot_posterior(samples, "Case A reproduced (Freedman 2020)", _CASE_COLORS["case_a"])
         ax.axvline(
-            case_a.published_H0,
+            case_a.H0_published,
             color=_CASE_COLORS["case_a"],
             ls=":",
             lw=1.0,
             alpha=0.8,
-            label=f"Case A published ({case_a.published_H0})",
+            label=f"Case A published ({case_a.H0_published})",
         )
     if case_b is not None:
         samples = case_b.mcmc_result.samples[:, 0]
         _plot_posterior(samples, "Case B reproduced (Freedman 2024)", _CASE_COLORS["case_b"])
         ax.axvline(
-            case_b.published_H0,
+            case_b.H0_published,
             color=_CASE_COLORS["case_b"],
             ls=":",
             lw=1.0,
             alpha=0.8,
-            label=f"Case B published ({case_b.published_H0})",
+            label=f"Case B published ({case_b.H0_published})",
         )
     if framework_a is not None:
         samples = framework_a.H0_samples
@@ -165,13 +165,23 @@ def plot_predictions_vs_observed(
 
     rows = []
     if case_a is not None:
-        rows.append(("Case A published", case_a.published_H0, case_a.published_sigma_stat, _CASE_COLORS["published"]))
-        rows.append(("Case A reproduced", case_a.reproduced_H0, case_a.reproduced_sigma_stat, _CASE_COLORS["case_a"]))
+        rows.append(("Case A published", case_a.H0_published, case_a.H0_sigma_stat_published, _CASE_COLORS["published"]))
+        rows.append((
+            "Case A MCMC Pantheon+",
+            case_a.mcmc_posterior_H0_pantheon_plus,
+            case_a.mcmc_posterior_sigma_pantheon_plus,
+            _CASE_COLORS["case_a"],
+        ))
     if framework_a is not None:
         rows.append(("Case A framework", framework_a.H0_median, 0.5 * (framework_a.H0_high - framework_a.H0_low), _CASE_COLORS["framework"]))
     if case_b is not None:
-        rows.append(("Case B published", case_b.published_H0, case_b.published_sigma_stat, _CASE_COLORS["published"]))
-        rows.append(("Case B reproduced", case_b.reproduced_H0, case_b.reproduced_sigma_stat, _CASE_COLORS["case_b"]))
+        rows.append(("Case B published", case_b.H0_published, case_b.H0_sigma_stat_published, _CASE_COLORS["published"]))
+        rows.append((
+            "Case B MCMC Pantheon+",
+            case_b.mcmc_posterior_H0_pantheon_plus,
+            case_b.mcmc_posterior_sigma_pantheon_plus,
+            _CASE_COLORS["case_b"],
+        ))
     if framework_b is not None:
         rows.append(("Case B framework", framework_b.H0_median, 0.5 * (framework_b.H0_high - framework_b.H0_low), _CASE_COLORS["framework"]))
 
@@ -207,17 +217,19 @@ def plot_cross_case_shift(
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
     if case_a is not None and case_b is not None:
-        obs_shift = case_b.reproduced_H0 - case_a.reproduced_H0
+        a_H0 = case_a.mcmc_posterior_H0_pantheon_plus
+        b_H0 = case_b.mcmc_posterior_H0_pantheon_plus
+        obs_shift = b_H0 - a_H0
         ax.annotate(
             "",
-            xy=(case_b.reproduced_H0, 1.2),
-            xytext=(case_a.reproduced_H0, 1.2),
+            xy=(b_H0, 1.2),
+            xytext=(a_H0, 1.2),
             arrowprops=dict(arrowstyle="->", color=HLCDM_COLORS["primary"], lw=2),
         )
         ax.text(
-            0.5 * (case_a.reproduced_H0 + case_b.reproduced_H0),
+            0.5 * (a_H0 + b_H0),
             1.25,
-            f"observed Δ = {obs_shift:+.2f}",
+            f"MCMC P+ Δ = {obs_shift:+.2f}",
             ha="center",
             color=HLCDM_COLORS["primary"],
         )

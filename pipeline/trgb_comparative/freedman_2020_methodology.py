@@ -57,43 +57,95 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class FreedmanCaseResult:
+    """Result of a single Freedman-case run.
+
+    Variable naming discipline (enforced by refactor #12):
+
+    - ``mcmc_posterior_H0_pantheon_plus`` / ``mcmc_posterior_sigma_pantheon_plus``:
+      the MCMC posterior median and 68 % half-width from a chain actually
+      sampled on Pantheon+SH0ES flow data in *this* pipeline. This is the
+      ONLY pipeline-computed H₀ value at present (CSP-based MCMC chains
+      are scheduled for Steps 7/8 of the resolution task).
+
+    - ``H0_published`` / ``H0_sigma_published``: published target value
+      for this case (Freedman 2019 or Freedman 2025). This is a literature
+      reference point, not a pipeline computation.
+
+    - ``literature_citations``: dict keyed by an explicit citation tag
+      (e.g. "hoyt_2025_table7_augmented_CSP-I") mapping to published H₀
+      values with full provenance strings. These are NEVER pipeline
+      computations.
+
+    - ``case_sigma_tension_pantheon_plus``: tension of the pipeline-
+      computed Pantheon+ MCMC posterior against the published value for
+      this case.
+
+    **There is no "reproduced_H0" field.** The pipeline does not currently
+    compute a CSP-based MCMC posterior, so no field claims to be a CSP
+    reproduction. The Hoyt 2025 citations live in ``literature_citations``
+    and are clearly labeled as such; they are never promoted into fields
+    whose names imply they came from a pipeline MCMC run.
+    """
+
     case: str                                       # "freedman_2020"
-    published_H0: float
-    published_sigma_stat: float
-    published_sigma_sys: float
-    reproduced_H0: float
-    reproduced_sigma_stat: float
-    reproduction_delta: float                       # reproduced - published
-    reproduction_within_tolerance: bool
-    tolerance_mag: float
-    mcmc_result: MCMCResult
-    edge_detections_anchor: Dict[str, EdgeDetectionResult]
-    edge_detections_hosts: Dict[str, Dict[str, EdgeDetectionResult]]
-    distance_chain_hosts: Tuple[TRGBHostDistance, ...]
-    anchor: GeometricAnchor
-    sn_system: Optional[str] = None
-    sn_variant_H0: Dict[str, Dict[str, float]] = field(default_factory=dict)
-    # When sn_variant_H0 is populated, each entry is one of the four
-    # Hoyt 2025 SN magnitude systems with the per-system H₀ derived via
-    # Hoyt Eq. 15 applied to our TRGB distances.
+
+    # Published target values for the case:
+    H0_published: float
+    H0_sigma_stat_published: float
+    H0_sigma_sys_published: float
+
+    # Pipeline-computed MCMC posterior (Pantheon+SH0ES flow):
+    mcmc_posterior_H0_pantheon_plus: float
+    mcmc_posterior_sigma_pantheon_plus: float
+    mcmc_n_walkers: int = 0
+    mcmc_n_steps: int = 0
+    mcmc_n_burnin: int = 0
+    mcmc_rhat_max: float = float("nan")
+    mcmc_converged: bool = False
+    mcmc_convergence_gate: float = 1.01
+
+    # Delta and tolerance against published — against the Pantheon+ MCMC.
+    pantheon_plus_mcmc_delta: float = 0.0
+    pantheon_plus_mcmc_within_tolerance: bool = False
+    tolerance_mag: float = 0.0
+
+    # Literature citations (NOT pipeline computations):
+    literature_citations: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    # Diagnostic artefacts:
+    mcmc_result: Optional[MCMCResult] = None
+    edge_detections_anchor: Dict[str, EdgeDetectionResult] = field(default_factory=dict)
+    edge_detections_hosts: Dict[str, Dict[str, EdgeDetectionResult]] = field(default_factory=dict)
+    distance_chain_hosts: Tuple[TRGBHostDistance, ...] = ()
+    anchor: Optional[GeometricAnchor] = None
 
     def as_dict(self) -> Dict[str, object]:
         return {
             "case": self.case,
-            "sn_system": self.sn_system,
-            "sn_variant_H0": {
-                s: {k: (float(v) if isinstance(v, (int, float)) else v) for k, v in rec.items()}
-                for s, rec in self.sn_variant_H0.items()
-            },
-            "published_H0": float(self.published_H0),
-            "published_sigma_stat": float(self.published_sigma_stat),
-            "published_sigma_sys": float(self.published_sigma_sys),
-            "reproduced_H0": float(self.reproduced_H0),
-            "reproduced_sigma_stat": float(self.reproduced_sigma_stat),
-            "reproduction_delta": float(self.reproduction_delta),
-            "reproduction_within_tolerance": bool(self.reproduction_within_tolerance),
+            # Published target:
+            "H0_published": float(self.H0_published),
+            "H0_sigma_stat_published": float(self.H0_sigma_stat_published),
+            "H0_sigma_sys_published": float(self.H0_sigma_sys_published),
+            # Pipeline MCMC posterior on Pantheon+SH0ES flow (the ONLY
+            # pipeline-computed H₀ value at present — no CSP MCMC yet).
+            "mcmc_posterior_H0_pantheon_plus": float(self.mcmc_posterior_H0_pantheon_plus),
+            "mcmc_posterior_sigma_pantheon_plus": float(self.mcmc_posterior_sigma_pantheon_plus),
+            "mcmc_n_walkers": int(self.mcmc_n_walkers),
+            "mcmc_n_steps": int(self.mcmc_n_steps),
+            "mcmc_n_burnin": int(self.mcmc_n_burnin),
+            "mcmc_rhat_max": float(self.mcmc_rhat_max),
+            "mcmc_converged": bool(self.mcmc_converged),
+            "mcmc_convergence_gate": float(self.mcmc_convergence_gate),
+            # Tension vs published — of our Pantheon+ MCMC, against published.
+            "pantheon_plus_mcmc_delta": float(self.pantheon_plus_mcmc_delta),
+            "pantheon_plus_mcmc_within_tolerance": bool(self.pantheon_plus_mcmc_within_tolerance),
             "tolerance_mag": float(self.tolerance_mag),
-            "mcmc": self.mcmc_result.as_dict(),
+            # Literature citations (NOT pipeline computations):
+            "literature_citations": {
+                tag: {k: (float(v) if isinstance(v, (int, float)) else v) for k, v in rec.items()}
+                for tag, rec in self.literature_citations.items()
+            },
+            "mcmc": self.mcmc_result.as_dict() if self.mcmc_result else None,
             "anchor": {
                 "name": self.anchor.name,
                 "mu": float(self.anchor.mu),
@@ -343,30 +395,27 @@ def run_freedman_2020(
     log_fn: Optional[Callable[[str], None]] = None,
     tolerance_mag: float = 0.8,
     parametrization: str = "freedman_fixed",
-    sn_system: Optional[str] = None,
     hoyt_tables: Optional[Dict[str, Any]] = None,
 ) -> FreedmanCaseResult:
     """End-to-end Case A reproduction.
 
+    Pipeline-computed MCMC posterior is always on Pantheon+SH0ES flow
+    (until CSP-I MCMC is added in Steps 7/8 of the resolution task). The
+    ``hoyt_tables`` dict, if supplied, is attached to the returned result
+    as a set of clearly-labeled literature citations — these do NOT
+    participate in any MCMC posterior field.
+
     Parameters
     ----------
     parametrization:
-        "freedman_fixed" (default) holds M_TRGB, E(B−V), β at their
-        published central values and samples only H₀ — reproducing
-        Freedman's frequentist-profile approach. "bayesian_sampled"
-        samples all 4 parameters with Gaussian priors (widens the
-        posterior, retained for sensitivity analysis).
-    sn_system:
-        Optional. When set (e.g. "CSP-I"), the primary reproduced H₀ is
-        taken from the Hoyt 2025 Table 7 augmented-sample row for that
-        system, bypassing our Pantheon+SH0ES joint-fit machinery. This
-        is the methodologically faithful path for reproducing Freedman
-        2019's CSP-I-based H₀ = 69.8. The MCMC over nuisance parameters
-        still runs so σ_H₀ from the nuisance budget is available, but
-        the central H₀ comes from the Hoyt reference.
+        "freedman_fixed" (default) or "bayesian_sampled".
     hoyt_tables:
-        Hoyt 2025 Table 6/7 data (from load_hoyt_2025_sn_calibration()).
-        Required when sn_system is provided.
+        Optional Hoyt 2025 Table 6/7 data (from
+        ``load_hoyt_2025_sn_calibration()``). When provided, the per-SN
+        system Eq. 15 values are attached to the result's
+        ``literature_citations`` mapping with explicit
+        ``"nature": "literature_citation_not_pipeline_mcmc"`` tags. The
+        primary MCMC-computed H₀ is NOT overridden by these citations.
     """
     _log = log_fn or (lambda m: logger.info(m))
     if bundle.case != "case_a":
@@ -503,69 +552,75 @@ def run_freedman_2020(
         log_fn=_log,
     )
 
-    # --- Primary H0 selection ---
-    # If sn_system is set, use Hoyt 2025 Eq. 15 reference H₀ as the
-    # primary reproduced value; the MCMC posterior width is used for the
-    # σ_H₀ reported alongside. Otherwise fall back to the Pantheon+-
-    # based joint-fit H₀ (Case-A default behavior, Pantheon+-biased).
-    mcmc_H0 = mcmc_result.best_fit["H0"]
+    # --- Pipeline-computed MCMC posterior (Pantheon+SH0ES flow only; the
+    # only sample the current likelihood sees) ---
+    mcmc_H0 = float(mcmc_result.best_fit["H0"])
     mcmc_ci = mcmc_result.credible_intervals["H0"]
-    mcmc_sigma = 0.5 * (mcmc_ci[2] - mcmc_ci[0])
+    mcmc_sigma = 0.5 * float(mcmc_ci[2] - mcmc_ci[0])
+    rhat_max = float(max(mcmc_result.r_hat.values())) if mcmc_result.r_hat else float("nan")
+    converged = bool(rhat_max < 1.01)
 
-    sn_variant_H0: Dict[str, Dict[str, float]] = {}
+    # --- Literature citations (no substitution into MCMC-named fields) ---
+    literature_citations: Dict[str, Dict[str, Any]] = {}
     if hoyt_tables is not None:
-        sn_variant_H0 = compute_sn_variant_H0_via_hoyt_eq15(
+        eq15 = compute_sn_variant_H0_via_hoyt_eq15(
             hoyt_tables["systems"] if "systems" in hoyt_tables else hoyt_tables,
             sample="augmented",
         )
+        for s, rec in eq15.items():
+            tag = f"hoyt_2025_table7_augmented_{s}"
+            literature_citations[tag] = dict(rec)
+            literature_citations[tag]["system"] = s
+            literature_citations[tag]["nature"] = "literature_citation_not_pipeline_mcmc"
+    # Published value for the case:
+    literature_citations["H0_freedman_2019_published"] = {
+        "H0": float(FREEDMAN_2020_MODEL.published_H0),
+        "sigma_stat": float(FREEDMAN_2020_MODEL.published_sigma_stat),
+        "sigma_sys": float(FREEDMAN_2020_MODEL.published_sigma_sys),
+        "provenance": "Freedman et al. 2019, ApJ 882, 34",
+        "nature": "published_target_value",
+    }
 
-    if sn_system is not None and sn_system in sn_variant_H0:
-        H0_rep = float(sn_variant_H0[sn_system]["H0"])
-        # σ_H₀: quadrature of (a) Hoyt reference σ (if available) and
-        # (b) our MCMC posterior width on H₀. Hoyt's augmented sample
-        # σ(ΔM_B) is small (≈0.02 mag → ≈0.7 km/s/Mpc) — our MCMC width
-        # is the dominant contribution.
-        hoyt_sigma = float(sn_variant_H0[sn_system].get("sigma_H0", 0.0))
-        sigma_stat = float(np.sqrt(mcmc_sigma ** 2 + hoyt_sigma ** 2))
-    else:
-        H0_rep = mcmc_H0
-        sigma_stat = mcmc_sigma
-
-    delta = H0_rep - FREEDMAN_2020_MODEL.published_H0
+    delta = mcmc_H0 - FREEDMAN_2020_MODEL.published_H0
     within = abs(delta) <= tolerance_mag
 
-    if sn_system is not None:
+    _log(
+        f"[freedman_2020] MCMC posterior (Pantheon+SH0ES flow, "
+        f"pipeline-computed): H0 = {mcmc_H0:.3f} ± {mcmc_sigma:.3f}  "
+        f"R̂_max = {rhat_max:.4f} ({'converged' if converged else 'NOT converged'})"
+    )
+    _log(
+        f"[freedman_2020] Δ(MCMC Pantheon+ − published 69.8) = "
+        f"{delta:+.3f};  tolerance ±{tolerance_mag};  within = {within}"
+    )
+    if literature_citations:
         _log(
-            f"[freedman_2020 / SN={sn_system}] reproduced H0 = {H0_rep:.3f} "
-            f"(+/- {sigma_stat:.3f} stat);  published 69.8 ± 0.8 ± 1.7;"
-            f"  |Δ| = {abs(delta):.3f};  tolerance ±{tolerance_mag};  "
-            f"within = {within}"
-        )
-    else:
-        _log(
-            f"[freedman_2020] reproduced H0 = {H0_rep:.3f} "
-            f"(+/- {sigma_stat:.3f} stat);  published 69.8 ± 0.8 ± 1.7;"
-            f"  |Δ| = {abs(delta):.3f};  tolerance ±{tolerance_mag};  "
-            f"within = {within}"
+            "[freedman_2020] Literature citations attached (Hoyt 2025 Table 7 "
+            "Eq. 15 per SN system) — these are NOT pipeline MCMC posteriors."
         )
 
     return FreedmanCaseResult(
         case="freedman_2020",
-        published_H0=FREEDMAN_2020_MODEL.published_H0,
-        published_sigma_stat=FREEDMAN_2020_MODEL.published_sigma_stat,
-        published_sigma_sys=FREEDMAN_2020_MODEL.published_sigma_sys,
-        reproduced_H0=H0_rep,
-        reproduced_sigma_stat=sigma_stat,
-        reproduction_delta=delta,
-        reproduction_within_tolerance=bool(within),
+        H0_published=FREEDMAN_2020_MODEL.published_H0,
+        H0_sigma_stat_published=FREEDMAN_2020_MODEL.published_sigma_stat,
+        H0_sigma_sys_published=FREEDMAN_2020_MODEL.published_sigma_sys,
+        mcmc_posterior_H0_pantheon_plus=mcmc_H0,
+        mcmc_posterior_sigma_pantheon_plus=mcmc_sigma,
+        mcmc_n_walkers=int(settings.n_walkers),
+        mcmc_n_steps=int(settings.n_steps),
+        mcmc_n_burnin=int(settings.n_burnin),
+        mcmc_rhat_max=rhat_max,
+        mcmc_converged=converged,
+        mcmc_convergence_gate=1.01,
+        pantheon_plus_mcmc_delta=delta,
+        pantheon_plus_mcmc_within_tolerance=bool(within),
         tolerance_mag=tolerance_mag,
+        literature_citations=literature_citations,
         mcmc_result=mcmc_result,
         edge_detections_anchor=anchor_detections,
         edge_detections_hosts=host_detections_all,
         distance_chain_hosts=distance_chain,
         anchor=bundle.anchor,
-        sn_system=sn_system,
-        sn_variant_H0=sn_variant_H0,
     )
 
 

@@ -45,19 +45,39 @@ def _case_section(
     lines: List[str] = []
     lines.append(f"### {case_label}\n\n")
     lines.append(
-        f"- Published: H₀ = **{case.published_H0}** ± {case.published_sigma_stat} (stat) "
-        f"± {case.published_sigma_sys} (sys) km/s/Mpc\n"
+        f"- Published target: H₀ = **{case.H0_published}** ± "
+        f"{case.H0_sigma_stat_published} (stat) ± "
+        f"{case.H0_sigma_sys_published} (sys) km/s/Mpc\n"
+    )
+    # Pipeline-computed MCMC posterior (Pantheon+SH0ES flow) — the only
+    # H₀ value this pipeline currently computes.
+    conv = "converged" if case.mcmc_converged else "NOT CONVERGED"
+    lines.append(
+        f"- **MCMC posterior (Pantheon+SH0ES flow, pipeline-computed):** "
+        f"H₀ = **{case.mcmc_posterior_H0_pantheon_plus:.3f}** ± "
+        f"{case.mcmc_posterior_sigma_pantheon_plus:.3f} (stat); "
+        f"R̂_max = {case.mcmc_rhat_max:.4f} ({conv}, gate {case.mcmc_convergence_gate}); "
+        f"walkers={case.mcmc_n_walkers}, steps={case.mcmc_n_steps}, "
+        f"burn-in={case.mcmc_n_burnin}\n"
     )
     lines.append(
-        f"- Reproduced: H₀ = **{case.reproduced_H0:.3f}** ± {case.reproduced_sigma_stat:.3f} "
-        "(stat, from MCMC posterior)\n"
-    )
-    delta = case.reproduction_delta
-    lines.append(
-        f"- Δ(reproduced − published) = {delta:+.3f}; "
+        f"- Δ(MCMC_Pantheon+ − published) = {case.pantheon_plus_mcmc_delta:+.3f}; "
         f"tolerance ±{case.tolerance_mag} (stat); "
-        f"within tolerance: **{'YES' if case.reproduction_within_tolerance else 'NO'}**\n\n"
+        f"within tolerance: **{'YES' if case.pantheon_plus_mcmc_within_tolerance else 'NO'}**\n"
     )
+    # Literature citations — explicitly labeled, never promoted to
+    # reproduction-named fields.
+    if case.literature_citations:
+        lines.append("\n**Literature citations (NOT pipeline computations):**\n\n")
+        for tag, rec in case.literature_citations.items():
+            nat = rec.get("nature", "")
+            H0v = rec.get("H0")
+            if H0v is None:
+                continue
+            lines.append(
+                f"- `{tag}`: H₀ = {H0v:.3f}  *({nat})*\n"
+            )
+        lines.append("\n")
 
     if framework is not None:
         lines.append(
@@ -86,21 +106,33 @@ def _case_section(
 
         fw_sigma = 0.5 * (framework.H0_high - framework.H0_low)
         tension = _sigma_tension(
-            case.reproduced_H0, case.reproduced_sigma_stat, framework.H0_median, fw_sigma
+            case.mcmc_posterior_H0_pantheon_plus,
+            case.mcmc_posterior_sigma_pantheon_plus,
+            framework.H0_median,
+            fw_sigma,
         )
         lines.append(
-            f"- Tension between reproduced and framework-predicted H₀: "
+            f"- Tension between MCMC Pantheon+ posterior and framework-predicted H₀: "
             f"**{tension:.2f}σ** (stat-only).\n\n"
         )
 
     mcmc = case.mcmc_result
-    lines.append(
-        "| Parameter | Median (68% CI) | R̂ |\n| --- | --- | --- |\n"
-    )
-    for p in mcmc.param_names:
-        ci = mcmc.credible_intervals[p]
-        rhat = mcmc.r_hat.get(p, float("nan"))
-        lines.append(f"| {p} | {_fmt_ci(ci, 4)} | {rhat:.4f} |\n")
+    if mcmc is not None:
+        lines.append(
+            "\n**MCMC posterior parameters (Pantheon+SH0ES flow):**\n\n"
+            "| Parameter | Median (68% CI) | R̂ |\n| --- | --- | --- |\n"
+        )
+        for p in mcmc.param_names:
+            ci = mcmc.credible_intervals[p]
+            rhat = mcmc.r_hat.get(p, float("nan"))
+            lines.append(f"| {p} | {_fmt_ci(ci, 4)} | {rhat:.4f} |\n")
+        lines.append(
+            "\n*Note: The MCMC posterior median for H0 here is the "
+            "pipeline-computed value against Pantheon+SH0ES — which carries "
+            "the SH0ES Cepheid calibration layer (Hoyt 2025 §4 documents a "
+            "+2 km/s/Mpc bias). The Hoyt 2025 citation above is the value "
+            "reported as the \"reproduction\" when `sn_system` is set.*\n"
+        )
     lines.append("\n")
     return "".join(lines)
 
@@ -154,10 +186,15 @@ def write_summary(
 
     lines.append("## Cross-case comparison\n\n")
     if case_a is not None and case_b is not None:
-        obs_shift = case_b.reproduced_H0 - case_a.reproduced_H0
+        obs_shift = (
+            case_b.mcmc_posterior_H0_pantheon_plus
+            - case_a.mcmc_posterior_H0_pantheon_plus
+        )
         lines.append(
-            f"- Observed CCHP shift (LMC → NGC 4258): **{obs_shift:+.2f} km/s/Mpc** "
-            f"(from {case_a.reproduced_H0:.2f} to {case_b.reproduced_H0:.2f}).\n"
+            f"- Pipeline MCMC Pantheon+ shift (LMC → NGC 4258): "
+            f"**{obs_shift:+.2f} km/s/Mpc** (from "
+            f"{case_a.mcmc_posterior_H0_pantheon_plus:.2f} to "
+            f"{case_b.mcmc_posterior_H0_pantheon_plus:.2f}).\n"
         )
     if framework_a is not None and framework_b is not None:
         fw_shift = framework_b.H0_median - framework_a.H0_median

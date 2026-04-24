@@ -45,16 +45,16 @@ def run_freedman_2024(
     log_fn: Optional[Callable[[str], None]] = None,
     tolerance_mag: float = 1.22,
     parametrization: str = "freedman_fixed",
-    sn_system: Optional[str] = None,
     hoyt_tables: Optional[Dict[str, Any]] = None,
 ) -> FreedmanCaseResult:
-    """End-to-end Case B reproduction.
+    """End-to-end Case B reproduction (Pantheon+SH0ES MCMC only at present).
 
-    ``sn_system`` + ``hoyt_tables`` work the same way as in Case A — see
-    :func:`run_freedman_2020`. The recommended choice for Case B primary
-    is ``sn_system="CSP-II"``, which corresponds to Freedman 2025's
-    CSP-II calibration and Hoyt 2025's Table 7 augmented-sample
-    reproduction target (H₀ ≈ 69.45).
+    See :func:`run_freedman_2020` for the discipline around literature
+    citations vs. MCMC posteriors. Case B's true CSP-II-based MCMC
+    reproduction is scheduled for Step 8 of the resolution task; until
+    then, this function produces only the Pantheon+SH0ES MCMC posterior
+    (with explicit naming) plus attached Hoyt 2025 literature citations
+    (never promoted into MCMC fields).
     """
     _log = log_fn or (lambda m: logger.info(m))
     if bundle.case != "case_b":
@@ -171,60 +171,66 @@ def run_freedman_2024(
         log_fn=_log,
     )
 
-    mcmc_H0 = mcmc_result.best_fit["H0"]
+    mcmc_H0 = float(mcmc_result.best_fit["H0"])
     mcmc_ci = mcmc_result.credible_intervals["H0"]
-    mcmc_sigma = 0.5 * (mcmc_ci[2] - mcmc_ci[0])
+    mcmc_sigma = 0.5 * float(mcmc_ci[2] - mcmc_ci[0])
+    rhat_max = float(max(mcmc_result.r_hat.values())) if mcmc_result.r_hat else float("nan")
+    converged = bool(rhat_max < 1.01)
 
-    sn_variant_H0: Dict[str, Dict[str, float]] = {}
+    literature_citations: Dict[str, Dict[str, Any]] = {}
     if hoyt_tables is not None:
-        sn_variant_H0 = compute_sn_variant_H0_via_hoyt_eq15(
+        eq15 = compute_sn_variant_H0_via_hoyt_eq15(
             hoyt_tables["systems"] if "systems" in hoyt_tables else hoyt_tables,
             sample="augmented",
         )
+        for s, rec in eq15.items():
+            tag = f"hoyt_2025_table7_augmented_{s}"
+            literature_citations[tag] = dict(rec)
+            literature_citations[tag]["system"] = s
+            literature_citations[tag]["nature"] = "literature_citation_not_pipeline_mcmc"
+    literature_citations["H0_freedman_2025_published"] = {
+        "H0": float(FREEDMAN_2024_MODEL.published_H0),
+        "sigma_stat": float(FREEDMAN_2024_MODEL.published_sigma_stat),
+        "sigma_sys": float(FREEDMAN_2024_MODEL.published_sigma_sys),
+        "provenance": "Freedman et al. 2025, ApJ 985, 203",
+        "nature": "published_target_value",
+    }
 
-    if sn_system is not None and sn_system in sn_variant_H0:
-        H0_rep = float(sn_variant_H0[sn_system]["H0"])
-        hoyt_sigma = float(sn_variant_H0[sn_system].get("sigma_H0", 0.0))
-        sigma_stat = float(np.sqrt(mcmc_sigma ** 2 + hoyt_sigma ** 2))
-    else:
-        H0_rep = mcmc_H0
-        sigma_stat = mcmc_sigma
-
-    delta = H0_rep - FREEDMAN_2024_MODEL.published_H0
+    delta = mcmc_H0 - FREEDMAN_2024_MODEL.published_H0
     within = abs(delta) <= tolerance_mag
 
-    if sn_system is not None:
-        _log(
-            f"[freedman_2024 / SN={sn_system}] reproduced H0 = {H0_rep:.3f} "
-            f"(+/- {sigma_stat:.3f} stat);  published 70.39 ± 1.22 ± 1.33;"
-            f"  |Δ| = {abs(delta):.3f};  tolerance ±{tolerance_mag};  "
-            f"within = {within}"
-        )
-    else:
-        _log(
-            f"[freedman_2024] reproduced H0 = {H0_rep:.3f} "
-            f"(+/- {sigma_stat:.3f} stat);  published 70.39 ± 1.22 ± 1.33;"
-            f"  |Δ| = {abs(delta):.3f};  tolerance ±{tolerance_mag};  "
-            f"within = {within}"
-        )
+    _log(
+        f"[freedman_2024] MCMC posterior (Pantheon+SH0ES flow, "
+        f"pipeline-computed): H0 = {mcmc_H0:.3f} ± {mcmc_sigma:.3f}  "
+        f"R̂_max = {rhat_max:.4f} ({'converged' if converged else 'NOT converged'})"
+    )
+    _log(
+        f"[freedman_2024] Δ(MCMC Pantheon+ − published 70.39) = "
+        f"{delta:+.3f};  tolerance ±{tolerance_mag};  within = {within}"
+    )
 
     return FreedmanCaseResult(
         case="freedman_2024",
-        published_H0=FREEDMAN_2024_MODEL.published_H0,
-        published_sigma_stat=FREEDMAN_2024_MODEL.published_sigma_stat,
-        published_sigma_sys=FREEDMAN_2024_MODEL.published_sigma_sys,
-        reproduced_H0=H0_rep,
-        reproduced_sigma_stat=sigma_stat,
-        reproduction_delta=delta,
-        reproduction_within_tolerance=bool(within),
+        H0_published=FREEDMAN_2024_MODEL.published_H0,
+        H0_sigma_stat_published=FREEDMAN_2024_MODEL.published_sigma_stat,
+        H0_sigma_sys_published=FREEDMAN_2024_MODEL.published_sigma_sys,
+        mcmc_posterior_H0_pantheon_plus=mcmc_H0,
+        mcmc_posterior_sigma_pantheon_plus=mcmc_sigma,
+        mcmc_n_walkers=int(settings.n_walkers),
+        mcmc_n_steps=int(settings.n_steps),
+        mcmc_n_burnin=int(settings.n_burnin),
+        mcmc_rhat_max=rhat_max,
+        mcmc_converged=converged,
+        mcmc_convergence_gate=1.01,
+        pantheon_plus_mcmc_delta=delta,
+        pantheon_plus_mcmc_within_tolerance=bool(within),
         tolerance_mag=tolerance_mag,
+        literature_citations=literature_citations,
         mcmc_result=mcmc_result,
         edge_detections_anchor=anchor_detections,
         edge_detections_hosts=host_detections_all,
         distance_chain_hosts=distance_chain,
         anchor=bundle.anchor,
-        sn_system=sn_system,
-        sn_variant_H0=sn_variant_H0,
     )
 
 

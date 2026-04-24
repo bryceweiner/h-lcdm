@@ -127,10 +127,10 @@ class TRGBComparativePipeline(AnalysisPipeline):
         parametrization = str(ctx.get("parametrization", "freedman_fixed"))
         tip_source_a = str(ctx.get("tip_source_a", "freedman_2019"))
         tip_source_b = str(ctx.get("tip_source_b", "freedman_2025"))
-        # Case A primary SN system: CSP-I (Freedman 2019's sample).
-        # Case B primary SN system: CSP-II (Freedman 2025's sample).
-        sn_system_a = ctx.get("sn_system_a", "CSP-I")
-        sn_system_b = ctx.get("sn_system_b", "CSP-II")
+        # Note: sn_system_a / sn_system_b are no longer used to select
+        # between citations — MCMC posteriors are always Pantheon+SH0ES-based
+        # at present. CSP-I/II MCMC chains are scheduled for Steps 7/8 of
+        # the resolution task.
 
         if enforce_preregistration:
             try:
@@ -187,17 +187,16 @@ class TRGBComparativePipeline(AnalysisPipeline):
         case_a_result: Optional[FreedmanCaseResult] = None
         if bundle_a is not None and bundle_a.host_fields:
             self.log_progress(
-                f"Running Case A reproduction (parametrization={parametrization}, "
-                f"sn_system={sn_system_a})…"
+                f"Running Case A Pantheon+SH0ES MCMC "
+                f"(parametrization={parametrization})…"
             )
             case_a_result = run_freedman_2020(
                 bundle_a,
                 settings,
-                chain_out_path=chains_dir / "freedman_2020.npz",
+                chain_out_path=chains_dir / "freedman_2020_pantheon_plus.npz",
                 log_fn=self.log_progress,
                 tolerance_mag=0.8,
                 parametrization=parametrization,
-                sn_system=sn_system_a,
                 hoyt_tables=hoyt_tables,
             )
         else:
@@ -207,17 +206,16 @@ class TRGBComparativePipeline(AnalysisPipeline):
         case_b_result: Optional[FreedmanCaseResult] = None
         if bundle_b is not None and bundle_b.host_fields:
             self.log_progress(
-                f"Running Case B reproduction (parametrization={parametrization}, "
-                f"sn_system={sn_system_b})…"
+                f"Running Case B Pantheon+SH0ES MCMC "
+                f"(parametrization={parametrization})…"
             )
             case_b_result = run_freedman_2024(
                 bundle_b,
                 settings,
-                chain_out_path=chains_dir / "freedman_2024.npz",
+                chain_out_path=chains_dir / "freedman_2024_pantheon_plus.npz",
                 log_fn=self.log_progress,
                 tolerance_mag=1.22,
                 parametrization=parametrization,
-                sn_system=sn_system_b,
                 hoyt_tables=hoyt_tables,
             )
         else:
