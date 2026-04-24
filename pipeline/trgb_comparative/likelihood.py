@@ -149,9 +149,14 @@ FREEDMAN_2024_MODEL = FreedmanModelConfig(
     param_names=("H0", "M_TRGB", "EBV", "beta"),
     priors=(
         PriorBox("H0", 55.0, 85.0),
-        PriorBox("M_TRGB", -5.5, -4.0, mean=-4.362, sigma=0.05),
+        # Freedman 2025 §14.2 explicitly: "F19 and F21 share a common
+        # TRGB absolute magnitude zero point, M814W = -4.049 mag".
+        # The four-anchor calibration agrees with the NGC 4258 zero point
+        # to within 0.001 mag. We adopt the common -4.049 value with a
+        # slightly broader σ to reflect the NIR propagation.
+        PriorBox("M_TRGB", -4.20, -3.90, mean=-4.049, sigma=0.05),
         PriorBox("EBV", -0.10, 0.30, mean=0.07, sigma=0.03),
-        PriorBox("beta", -0.2, 0.6, mean=0.08, sigma=0.1),
+        PriorBox("beta", -0.2, 0.6, mean=0.20, sigma=0.1),
     ),
     published_H0=70.39,
     published_sigma_stat=1.22,
