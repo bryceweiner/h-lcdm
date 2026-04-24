@@ -4282,6 +4282,203 @@ class DataLoader:
             'hubble_flow_z_max': 0.15,
         }
 
+    def load_uddin_h0csp_sample(self) -> Dict[str, Any]:
+        """Uddin et al. 2023 CSP-I + CSP-II SN Ia compilation with TRGB calibrators.
+
+        Source: https://github.com/syeduddin/h0csp (public data accompanying
+        Uddin et al. 2023, arXiv:2308.01875, ApJ 970 72).
+
+        This is the authoritative public release of the full CSP-I + CSP-II
+        sample used in CCHP-adjacent H₀ analyses. Two products:
+
+        - Full sample ``data/B_all_noj21.csv`` (N ≈ 390) carrying
+          ``sn, zhel, zcmb, st, est, Mmax, eMmax, ..., sample``. ``Mmax`` is
+          the standardized peak B-band magnitude in the native Carnegie
+          photometric system; ``sample`` ∈ {CSPI, CSPII}.
+        - Freedman-2019-style TRGB calibrator subset
+          ``data/calibrators/calibrators_trgb_f19.csv`` (N = 18) with
+          ``sn, host, ml, m, mu, dist, edist, caltype`` where ``m`` is the
+          standardized peak magnitude and ``mu`` is the LMC-anchored TRGB
+          distance modulus of the host.
+
+        The Uddin "CSP-I" and "CSP-II" labels refer to which CSP release the
+        SN was discovered under; both subsets are reduced on the same native
+        Carnegie photometric system. The distinction matters because CCHP
+         reproductions have historically split the calibration by release
+        era — hence treating the two sub-samples as separate photometric-
+        system chains, as Hoyt 2025 Table 6/7 does.
+
+        Returns a dict with the full Hubble flow sample plus the 18-host
+        TRGB calibrator set, both keyed as numpy arrays.
+        """
+        base = self.downloaded_data_dir / "uddin_h0csp"
+        flow_path = base / "B_all_noj21.csv"
+        cal_path = base / "calibrators_trgb_f19.csv"
+        if not flow_path.exists() or flow_path.stat().st_size == 0:
+            raise DataUnavailableError(
+                f"Uddin h0csp flow sample missing at {flow_path}. "
+                "Clone https://github.com/syeduddin/h0csp and stage to "
+                f"{base}/. See PROVENANCE.md for SHA-256s."
+            )
+        if not cal_path.exists() or cal_path.stat().st_size == 0:
+            raise DataUnavailableError(
+                f"Uddin h0csp TRGB-f19 calibrator file missing at {cal_path}."
+            )
+
+        import hashlib as _hashlib
+        flow_sha = _hashlib.sha256(flow_path.read_bytes()).hexdigest()
+        cal_sha = _hashlib.sha256(cal_path.read_bytes()).hexdigest()
+
+        # The full Hubble flow file is whitespace-separated (header row has
+        # spaces; CSV suffix is misleading — no commas between columns).
+        flow = pd.read_csv(flow_path, sep=r"\s+")
+        cal = pd.read_csv(cal_path)
+        self.log_message(
+            f"Loaded Uddin h0csp: flow N={len(flow)} "
+            f"(CSPI={int((flow['sample']=='CSPI').sum())}, "
+            f"CSPII={int((flow['sample']=='CSPII').sum())}), "
+            f"TRGB-f19 calibrators N={len(cal)}"
+        )
+        return {
+            'name': 'Uddin 2023 h0csp — CSP-I + CSP-II SN Ia compilation',
+            'reference': 'Uddin et al. 2023, arXiv:2308.01875, ApJ 970 72',
+            'url': 'https://github.com/syeduddin/h0csp',
+            'flow_file_path': str(flow_path),
+            'flow_file_sha256': flow_sha,
+            'cal_file_path': str(cal_path),
+            'cal_file_sha256': cal_sha,
+            'N_flow_total': int(len(flow)),
+            'N_flow_cspi': int((flow['sample'] == 'CSPI').sum()),
+            'N_flow_cspii': int((flow['sample'] == 'CSPII').sum()),
+            'N_calibrators_trgb_f19': int(len(cal)),
+            'flow': {
+                'SN_name': flow['sn'].to_numpy(),
+                'zhel': flow['zhel'].to_numpy(dtype=float),
+                'zcmb': flow['zcmb'].to_numpy(dtype=float),
+                'Mmax': flow['Mmax'].to_numpy(dtype=float),
+                'eMmax': flow['eMmax'].to_numpy(dtype=float),
+                'st': flow['st'].to_numpy(dtype=float),
+                'est': flow['est'].to_numpy(dtype=float),
+                'BV': flow['BV'].to_numpy(dtype=float),
+                'eBV': flow['eBV'].to_numpy(dtype=float),
+                'sample': flow['sample'].to_numpy(),   # CSPI / CSPII
+                'subtype': flow['subtype'].to_numpy(),
+                'quality': flow['quality'].to_numpy(dtype=float),
+                'cosmo': flow['cosmo'].to_numpy(dtype=int),
+                'phys': flow['phys'].to_numpy(dtype=int),
+                'host': flow['host'].to_numpy(),
+                'caltype': flow['caltype'].to_numpy(),
+            },
+            'calibrators_trgb_f19': {
+                # Per Uddin h0csp schema (verified against repo CSV headers
+                # 2026-04-24): `m` is the standardized peak B-band magnitude;
+                # `dist` is the TRGB distance modulus (LMC-anchored on the
+                # Freedman 2019 scale); `edist` its 1σ uncertainty. The
+                # `mu` column is an internal SNooPy intermediate and is not
+                # used by the pipeline.
+                'SN_name': cal['sn'].to_numpy(),
+                'host': cal['host'].to_numpy(),
+                'Mmax': cal['m'].to_numpy(dtype=float),
+                'mu_TRGB': cal['dist'].to_numpy(dtype=float),
+                'sigma_mu_TRGB': cal['edist'].to_numpy(dtype=float),
+            },
+        }
+
+    def load_uddin_h0csp_trgb_dataset(self) -> Dict[str, Any]:
+        """Unified Uddin B-band TRGB Hubble-diagram fit dataset.
+
+        Source: ``data/working/B_trgb_update3.csv`` from
+        https://github.com/syeduddin/h0csp — the direct input file to Uddin
+        2023's ``scripts/H0CSP.py``. Combines Hubble-flow SNe and TRGB
+        calibrators into one table, with ``dist < 0`` flagging flow rows
+        and ``dist > 0`` carrying the TRGB distance modulus for calibrators.
+
+        Schema (full Uddin columns): ``sn zhel zcmb st est Mmax eMmax t0
+        EBVmw eEBVmw covMs sample subtype quality cosmo phys BV eBV
+        covBV_M ml m mu host dist edist caltype covBVs``. ``m`` is the host
+        log stellar mass (host-mass step covariate), NOT a peak magnitude
+        (distinct from Freedman 2019 Table 3's `m_B_CSP` column).
+
+        Returns the raw table split into two dicts (``calibrators``,
+        ``flow``) plus a copy of Uddin's published posterior medians so
+        downstream code has a published-target reference without re-running
+        the 8-parameter MCMC from scratch.
+        """
+        base = self.downloaded_data_dir / "uddin_h0csp"
+        path = base / "B_trgb_update3.csv"
+        if not path.exists() or path.stat().st_size == 0:
+            raise DataUnavailableError(
+                f"Uddin unified B_trgb_update3.csv missing at {path}."
+            )
+        import hashlib as _hashlib
+        sha = _hashlib.sha256(path.read_bytes()).hexdigest()
+        df = pd.read_csv(path)
+        flow_mask = df["dist"].to_numpy(dtype=float) < 0
+        cal_mask = ~flow_mask
+
+        def _pack(rows: pd.DataFrame) -> Dict[str, np.ndarray]:
+            return {
+                "SN_name": rows["sn"].to_numpy(),
+                "zhel": rows["zhel"].to_numpy(dtype=float),
+                "zcmb": rows["zcmb"].to_numpy(dtype=float),
+                "st": rows["st"].to_numpy(dtype=float),
+                "est": rows["est"].to_numpy(dtype=float),
+                "Mmax": rows["Mmax"].to_numpy(dtype=float),
+                "eMmax": rows["eMmax"].to_numpy(dtype=float),
+                "EBVmw": rows["EBVmw"].to_numpy(dtype=float),
+                "eEBVmw": rows["eEBVmw"].to_numpy(dtype=float),
+                "covMs": rows["covMs"].to_numpy(dtype=float),
+                "sample": rows["sample"].to_numpy(),
+                "subtype": rows["subtype"].to_numpy(),
+                "BV": rows["BV"].to_numpy(dtype=float),
+                "eBV": rows["eBV"].to_numpy(dtype=float),
+                "covBV_M": rows["covBV_M"].to_numpy(dtype=float),
+                "covBVs": rows["covBVs"].to_numpy(dtype=float),
+                "ml": rows["ml"].to_numpy(dtype=float),
+                "m_hostmass": rows["m"].to_numpy(dtype=float),
+                "mu_hostmass": rows["mu"].to_numpy(dtype=float),
+                "host": rows["host"].to_numpy(),
+                "dist": rows["dist"].to_numpy(dtype=float),
+                "edist": rows["edist"].to_numpy(dtype=float),
+                "caltype": rows["caltype"].to_numpy(),
+            }
+
+        flow = _pack(df[flow_mask])
+        cal = _pack(df[cal_mask])
+        self.log_message(
+            f"Loaded Uddin h0csp B_trgb_update3: flow N={len(flow['zcmb'])}, "
+            f"calibrators N={len(cal['zcmb'])}"
+        )
+        return {
+            "name": "Uddin 2023 unified B-band TRGB Hubble-diagram fit input",
+            "reference": "Uddin et al. 2023, arXiv:2308.01875, ApJ 970 72",
+            "url": "https://github.com/syeduddin/h0csp",
+            "file_path": str(path),
+            "file_sha256": sha,
+            "calibrators": cal,
+            "flow": flow,
+            "uddin_published_posterior": {
+                # From ``results/B_trgb_update3_result.txt`` (median ± σ):
+                "M_B": -19.180,
+                "sigma_M_B": 0.015,
+                "p1": -1.091,
+                "sigma_p1": 0.096,
+                "p2": -0.541,
+                "sigma_p2": 0.269,
+                "beta": 2.869,           # colour coefficient (Uddin's RV/β)
+                "sigma_beta": 0.063,
+                "alpha": -0.004,         # host-mass step
+                "sigma_alpha": 0.011,
+                "sigma_int": 0.179,
+                "sigma_sigma_int": 0.012,
+                "v_pec_kms": 429.6,
+                "sigma_v_pec_kms": 54.2,
+                "H0_kms_Mpc": 70.242,
+                "sigma_H0_kms_Mpc": 0.724,
+                "q0": -0.53,
+            },
+        }
+
     def load_freedman_2025_table2(self) -> Dict[str, Any]:
         """Freedman 2025 CCHP JWST Table 2 per-galaxy TRGB/JAGB distances.
 
@@ -4378,5 +4575,8 @@ class DataLoader:
             'freedman_2019_table3': Path("data/catalogs/freedman_2019_table3.csv").exists(),
             'freedman_2025_table2': Path("data/catalogs/freedman_2025_table2.csv").exists(),
             'hoyt_2025_tables': Path("data/catalogs/hoyt_2025_tables.csv").exists(),
+            'pantheon_2018': (self.downloaded_data_dir / "pantheon_2018" / "lcparam_full_long.txt").exists(),
+            'uddin_h0csp_flow': (self.downloaded_data_dir / "uddin_h0csp" / "B_all_noj21.csv").exists(),
+            'uddin_h0csp_calibrators_trgb_f19': (self.downloaded_data_dir / "uddin_h0csp" / "calibrators_trgb_f19.csv").exists(),
         }
         return datasets
