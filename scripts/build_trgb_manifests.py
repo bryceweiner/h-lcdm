@@ -29,6 +29,12 @@ import pandas as pd
 RAW_DIR = Path("downloaded_data/trgb/sn_host_trgb_hst/raw")
 OUT_DIR = Path("downloaded_data/trgb/sn_host_trgb_hst")
 
+# Hosts that must NEVER appear in the Case A manifest: NGC 4258 is the
+# Case B anchor galaxy (per Reid 2019 maser distance). Including it as a
+# Case A host pollutes the LMC-anchored distance ladder. See diagnostic
+# report § Bug 1.
+CASE_A_EXCLUDED_HOSTS = {"NGC 4258"}
+
 
 def _detect_format(first_line: str, second_line: str) -> str:
     """Return 'A' for mag1/mag2 style, 'B' for named-filter style."""
@@ -203,6 +209,9 @@ def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     manifest_rows = []
     for host, rec in parsed.items():
+        if host in CASE_A_EXCLUDED_HOSTS:
+            print(f"  {host}: excluded from Case A manifest (anchor-galaxy contamination)")
+            continue
         raw = RAW_DIR / f'{host.replace(" ", "_")}.phot.WEB'
         if not raw.exists() or raw.stat().st_size < 10000:
             print(f"  {host}: no raw photometry")
