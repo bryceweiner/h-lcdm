@@ -194,10 +194,20 @@ def _build_likelihood_inputs(
     # Index into the calibrator sub-array (dense, not sparse).
     host_to_cal_index = {h: i for i, h in enumerate(usable_hosts)}
 
-    # Hubble-flow SNe: non-calibrators only.
-    z_flow = pantheon["z"][~is_calib]
-    mu_flow = pantheon["mu"][~is_calib]
-    sub_cov = cov[~is_calib][:, ~is_calib]
+    # Hubble-flow SNe: non-calibrators passing Freedman 2019 §6.3 z cuts
+    # (0.023 < z < 0.15). The zHD column is already in the CMB frame.
+    from .likelihood import FREEDMAN_HUBBLE_FLOW_Z_MAX, FREEDMAN_HUBBLE_FLOW_Z_MIN
+
+    flow_mask = ~is_calib
+    z_all = np.asarray(pantheon["z"], dtype=float)
+    z_min, z_max = FREEDMAN_HUBBLE_FLOW_Z_MIN, FREEDMAN_HUBBLE_FLOW_Z_MAX
+    z_cut_mask = (z_all >= z_min) & (z_all <= z_max)
+    n_before_cut = int(flow_mask.sum())
+    flow_mask = flow_mask & z_cut_mask
+    n_after_cut = int(flow_mask.sum())
+    z_flow = z_all[flow_mask]
+    mu_flow = pantheon["mu"][flow_mask]
+    sub_cov = cov[flow_mask][:, flow_mask]
     try:
         inv_cov_flow = np.linalg.inv(sub_cov)
     except np.linalg.LinAlgError:
@@ -245,6 +255,10 @@ def _build_likelihood_inputs(
         z_flow=np.asarray(z_flow, dtype=float),
         mu_flow=np.asarray(mu_flow, dtype=float),
         inv_cov_flow=np.asarray(inv_cov_flow, dtype=float),
+        z_flow_n_before_cut=n_before_cut,
+        z_flow_n_after_cut=n_after_cut,
+        z_flow_z_min=z_min,
+        z_flow_z_max=z_max,
     )
     return inputs, distance_chain
 

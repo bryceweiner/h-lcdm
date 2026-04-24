@@ -107,6 +107,16 @@ FREEDMAN_2024_MODEL = FreedmanModelConfig(
 # ---------------------------------------------------------------------------
 
 
+#: Hubble-flow redshift cuts from Freedman et al. 2019 §6.3 (Supercal
+#: subsample: 0.023 < z < 0.15). Applied to the Pantheon+ non-calibrator
+#: sample for both Case A (Freedman 2019/2020) and Case B (Freedman 2025)
+#: reproductions. Below 0.023 peculiar velocities dominate; above 0.15
+#: dark-energy cosmology introduces model dependence that Freedman's
+#: analysis does not include.
+FREEDMAN_HUBBLE_FLOW_Z_MIN: float = 0.023
+FREEDMAN_HUBBLE_FLOW_Z_MAX: float = 0.15
+
+
 @dataclass
 class FreedmanLikelihoodInputs:
     """Everything the log-posterior needs, pre-computed per Freedman case."""
@@ -133,11 +143,15 @@ class FreedmanLikelihoodInputs:
     sigma_mB_calibrators: np.ndarray
     host_to_calibrator_index: Dict[str, int]
 
-    # Hubble-flow SNe.
+    # Hubble-flow SNe (after redshift cuts).
     z_flow: np.ndarray
     mu_flow: np.ndarray
     inv_cov_flow: np.ndarray
     Om_flow: float = 0.315
+    z_flow_n_before_cut: int = 0
+    z_flow_n_after_cut: int = 0
+    z_flow_z_min: float = FREEDMAN_HUBBLE_FLOW_Z_MIN
+    z_flow_z_max: float = FREEDMAN_HUBBLE_FLOW_Z_MAX
 
     def n_data(self) -> int:
         return int(self.z_flow.size + self.I_TRGB_hosts.size + 1)
