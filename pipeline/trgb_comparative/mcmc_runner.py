@@ -35,14 +35,26 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MCMCSettings:
-    n_walkers: int = 32
-    n_steps: int = 10_000
-    n_burnin: int = 2_000
+    """MCMC settings for TRGB comparative chains.
+
+    Defaults are the **production** settings validated on 2026-04-24 as
+    the minimum length at which all eight per-(case, SN-system) chains
+    reach the Gelman-Rubin R̂ < 1.01 convergence gate. The 8-parameter
+    Uddin CSP chains require ~64 walkers × 20 000 steps × 5 000 burn-in
+    to converge on Apple-silicon hardware (~45 s / chain). Simple
+    1-parameter SuperCal / Pantheon+ chains converge faster at these
+    settings with ample margin.
+    """
+
+    n_walkers: int = 64
+    n_steps: int = 20_000
+    n_burnin: int = 5_000
     seed: int = 42
     progress: bool = True
 
     @classmethod
     def short(cls) -> "MCMCSettings":
+        """Smoke-test settings — not production-grade, will not converge."""
         return cls(n_walkers=16, n_steps=400, n_burnin=100, progress=False)
 
 
