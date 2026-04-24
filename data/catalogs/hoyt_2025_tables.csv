@@ -1,0 +1,47 @@
+# Hoyt, Jang, Freedman, Madore, Owens, Lee 2025 — SN Ia magnitude system recalibrations
+# Source: Hoyt et al. 2025 (arXiv:2503.11769) — Tables 6 and 7.
+# Transcribed: 2026-04-24 from the paper PDF.
+#
+# Table 6 ("ref_..."): reference values from each SN source study, computed
+# from their own tables so that ⟨M_B⟩ exactly reproduces each study's
+# published H₀ (inverse-variance-weighted average; off-diagonal elements of
+# covariance populated for galaxies hosting >1 SN).
+#
+# Table 7 ("jwst_only_..." and "augmented_..."): recalibrated ⟨M_B⟩ and
+# resulting H₀ after applying (a) Hoyt 2025's ten JWST/F115W TRGB distances
+# [jwst_only_...] and (b) the combined HST+JWST augmented sample of 24 TRGB
+# distances [augmented_...]. The augmented sample uses the same Freedman
+# 2025 Table 2 distances our pipeline's Case B bundle reads.
+#
+# Hoyt Eq. (15): H₀(new) = H₀(ref) × 10^(-ΔM_B / 5)
+# where ΔM_B = ⟨M_B⟩(new) - ⟨M_B⟩(ref).
+#
+# Verification: CSP-I row (ref H₀ = 69.8, augmented H₀ = 69.73) and
+# Pantheon+ row (ref H₀ = 73.04, augmented H₀ = 71.62) spot-checked against
+# paper text.
+#
+# Columns:
+#   sn_system           = CSP-I | CSP-II | SuperCal | Pantheon+
+#   N_ref               = N calibrator SNe in reference-study analysis
+#   M_B_ref_mag         = ⟨M_B⟩ from reference study
+#   sigma_M_B_ref_mag   = 1-sigma spread in M_B (reference)
+#   H0_ref_kms_Mpc      = reference-study-published H₀
+#   H0_sigma_ref        = reference-study 1σ stat (where given; blank otherwise)
+#   dist_source         = TRGB/Ceph anchor used in the reference study
+#   sn_ref_paper        = SN standardized-magnitude source paper
+#   jwst_only_N         = N calibrator SNe in Hoyt 2025 JWST-only recalibration
+#   jwst_only_M_B_mag   = ⟨M_B⟩ after applying Hoyt 2025 JWST TRGB distances (10 hosts)
+#   jwst_only_sigma_M_B = σ_M_B in JWST-only subset
+#   jwst_only_H0        = H₀ derived via Hoyt Eq. 15 in JWST-only subset
+#   augmented_N         = N calibrator SNe in HST+JWST augmented sample (24 TRGB distances)
+#   augmented_M_B_mag   = ⟨M_B⟩ after applying CCHP HST+JWST augmented TRGB sample
+#   augmented_sigma_M_B = σ_M_B in augmented subset
+#   augmented_delta_M_B = ΔM_B = M_B(augmented) - M_B(ref)
+#   augmented_delta_sig = 1σ uncertainty on ΔM_B (from bootstrap)
+#   augmented_H0        = H₀ derived via Hoyt Eq. 15 in augmented subset
+#   augmented_sigma_significance = significance of the H₀ shift vs. reference (σ)
+sn_system,N_ref,M_B_ref_mag,sigma_M_B_ref_mag,H0_ref_kms_Mpc,H0_sigma_ref,dist_source,sn_ref_paper,jwst_only_N,jwst_only_M_B_mag,jwst_only_sigma_M_B,jwst_only_H0,augmented_N,augmented_M_B_mag,augmented_sigma_M_B,augmented_delta_M_B,augmented_delta_sig,augmented_H0,augmented_sigma_significance
+CSP-I,18,-19.223,0.13,69.8,1.9,CCHP_TRGB_F19_H21,F19,9,-19.267,0.086,68.39,22,-19.225,0.129,0.042,0.016,69.73,2.6
+CSP-II,20,-19.165,0.16,69.87,0.69,CCHP_TRGB_F19_H21,U23,11,-19.205,0.139,68.58,24,-19.178,0.160,0.027,0.020,69.45,1.4
+SuperCal,19,-19.287,0.13,71.99,1.74,SH0ES_Cepheid_R22,R16,9,-19.359,0.055,69.60,14,-19.322,0.095,0.037,0.019,70.83,1.9
+Pantheon+,42,-19.259,0.13,73.04,1.04,SH0ES_Cepheid_R22,R22,11,-19.360,0.080,69.64,17,-19.301,0.140,0.059,0.019,71.62,3.1

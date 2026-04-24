@@ -4023,6 +4023,77 @@ class DataLoader:
         self.log_message(f"Loaded SN host TRGB JWST photometry for {len(hosts)} hosts")
         return {'name': 'SN host TRGB JWST photometry (F090W/F150W)', 'hosts': hosts}
 
+    def load_hoyt_2025_sn_calibration(self) -> Dict[str, Any]:
+        """Hoyt 2025 SN Ia magnitude-system recalibration reference + augmented values.
+
+        Source: Hoyt et al. 2025 (arXiv:2503.11769) Tables 6 and 7.
+        Transcribed at ``data/catalogs/hoyt_2025_tables.csv``.
+
+        This provides, per SN Ia magnitude system (CSP-I, CSP-II, SuperCal,
+        Pantheon+), the published reference M_B and H₀ plus the
+        recalibrated values using CCHP's augmented HST+JWST TRGB-distance
+        sample. The augmented sample uses the Freedman 2025 Table 2
+        distances — i.e., the same distances our pipeline's Case B bundle
+        uses when tip_source="freedman_2025" — so the "augmented" H₀
+        column is the authoritative per-system reproduction target for
+        Case B.
+
+        Returned shape::
+
+            {'systems': {
+                'CSP-I': {
+                    'M_B_ref_mag': -19.223, 'H0_ref': 69.8, ...,
+                    'augmented_H0': 69.73, 'augmented_delta_M_B': 0.042,
+                    ...},
+                ...},
+             'reference': 'Hoyt et al. 2025, arXiv:2503.11769'}
+        """
+        path = Path("data") / "catalogs" / "hoyt_2025_tables.csv"
+        if not path.exists():
+            raise DataUnavailableError(
+                f"Hoyt 2025 Table 6/7 transcription missing at {path}."
+            )
+        df = pd.read_csv(path, comment='#')
+        systems: Dict[str, Dict[str, Any]] = {}
+        for _, row in df.iterrows():
+            s = str(row['sn_system'])
+            systems[s] = {
+                'N_ref': int(row['N_ref']),
+                'M_B_ref_mag': float(row['M_B_ref_mag']),
+                'sigma_M_B_ref_mag': float(row['sigma_M_B_ref_mag']),
+                'H0_ref_kms_Mpc': float(row['H0_ref_kms_Mpc']),
+                'H0_sigma_ref': (None if pd.isna(row.get('H0_sigma_ref'))
+                                 else float(row['H0_sigma_ref'])),
+                'dist_source': str(row['dist_source']),
+                'sn_ref_paper': str(row['sn_ref_paper']),
+                'jwst_only_N': int(row['jwst_only_N']),
+                'jwst_only_M_B_mag': float(row['jwst_only_M_B_mag']),
+                'jwst_only_sigma_M_B': float(row['jwst_only_sigma_M_B']),
+                'jwst_only_H0': float(row['jwst_only_H0']),
+                'augmented_N': int(row['augmented_N']),
+                'augmented_M_B_mag': float(row['augmented_M_B_mag']),
+                'augmented_sigma_M_B': float(row['augmented_sigma_M_B']),
+                'augmented_delta_M_B': float(row['augmented_delta_M_B']),
+                'augmented_delta_sig': float(row['augmented_delta_sig']),
+                'augmented_H0': float(row['augmented_H0']),
+                'augmented_sigma_significance': float(row['augmented_sigma_significance']),
+            }
+        self.log_message(
+            f"Loaded Hoyt 2025 SN calibration reference: {len(systems)} systems "
+            f"({list(systems.keys())})"
+        )
+        return {
+            'name': 'Hoyt 2025 SN Ia magnitude-system recalibration',
+            'systems': systems,
+            'reference': 'Hoyt et al. 2025, arXiv:2503.11769',
+            'notes': (
+                'Augmented block uses Freedman 2025 Table 2 TRGB distances '
+                '(HST+JWST, N=24 calibrator SNe). These H₀ values are the '
+                'authoritative per-system reproduction targets when combined '
+                'with tip_source="freedman_2025".'
+            ),
+        }
+
     def load_freedman_2019_table1(self) -> Dict[str, Any]:
         """Freedman 2019 CCHP VIII Table 1 — TRGB calibration sample.
 
@@ -4209,5 +4280,6 @@ class DataLoader:
             'freedman_2019_table1': Path("data/catalogs/freedman_2019_table1.csv").exists(),
             'freedman_2019_table3': Path("data/catalogs/freedman_2019_table3.csv").exists(),
             'freedman_2025_table2': Path("data/catalogs/freedman_2025_table2.csv").exists(),
+            'hoyt_2025_tables': Path("data/catalogs/hoyt_2025_tables.csv").exists(),
         }
         return datasets

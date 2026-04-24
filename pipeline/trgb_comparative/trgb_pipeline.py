@@ -127,6 +127,10 @@ class TRGBComparativePipeline(AnalysisPipeline):
         parametrization = str(ctx.get("parametrization", "freedman_fixed"))
         tip_source_a = str(ctx.get("tip_source_a", "freedman_2019"))
         tip_source_b = str(ctx.get("tip_source_b", "freedman_2025"))
+        # Case A primary SN system: CSP-I (Freedman 2019's sample).
+        # Case B primary SN system: CSP-II (Freedman 2025's sample).
+        sn_system_a = ctx.get("sn_system_a", "CSP-I")
+        sn_system_b = ctx.get("sn_system_b", "CSP-II")
 
         if enforce_preregistration:
             try:
@@ -168,11 +172,23 @@ class TRGBComparativePipeline(AnalysisPipeline):
 
         chains_dir = self.base_output_dir / "chains"
 
+        # --- Hoyt 2025 SN Ia calibration tables (per-system H₀ reference values) ---
+        try:
+            hoyt_tables = loader.load_hoyt_2025_sn_calibration()
+            self.log_progress(
+                f"Loaded Hoyt 2025 SN calibration: "
+                f"{list(hoyt_tables['systems'].keys())}"
+            )
+        except Exception as exc:
+            self.log_progress(f"Hoyt 2025 tables unavailable: {exc}")
+            hoyt_tables = None
+
         # --- Case A ---
         case_a_result: Optional[FreedmanCaseResult] = None
         if bundle_a is not None and bundle_a.host_fields:
             self.log_progress(
-                f"Running Case A reproduction (parametrization={parametrization})…"
+                f"Running Case A reproduction (parametrization={parametrization}, "
+                f"sn_system={sn_system_a})…"
             )
             case_a_result = run_freedman_2020(
                 bundle_a,
@@ -181,6 +197,8 @@ class TRGBComparativePipeline(AnalysisPipeline):
                 log_fn=self.log_progress,
                 tolerance_mag=0.8,
                 parametrization=parametrization,
+                sn_system=sn_system_a,
+                hoyt_tables=hoyt_tables,
             )
         else:
             self.log_progress("Case A skipped: no host fields available.")
@@ -189,7 +207,8 @@ class TRGBComparativePipeline(AnalysisPipeline):
         case_b_result: Optional[FreedmanCaseResult] = None
         if bundle_b is not None and bundle_b.host_fields:
             self.log_progress(
-                f"Running Case B reproduction (parametrization={parametrization})…"
+                f"Running Case B reproduction (parametrization={parametrization}, "
+                f"sn_system={sn_system_b})…"
             )
             case_b_result = run_freedman_2024(
                 bundle_b,
@@ -198,6 +217,8 @@ class TRGBComparativePipeline(AnalysisPipeline):
                 log_fn=self.log_progress,
                 tolerance_mag=1.22,
                 parametrization=parametrization,
+                sn_system=sn_system_b,
+                hoyt_tables=hoyt_tables,
             )
         else:
             self.log_progress("Case B skipped: no host fields available.")

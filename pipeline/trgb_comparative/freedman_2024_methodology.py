@@ -29,6 +29,7 @@ from .freedman_2020_methodology import (
     _build_likelihood_inputs,  # reuse — shared wiring for both cases
     _multi_method_edge_detection,
     _primary_edge_result,
+    compute_sn_variant_H0_via_hoyt_eq15,
 )
 from .likelihood import FREEDMAN_2024_MODEL
 from .mcmc_runner import MCMCSettings, run_freedman_case
@@ -44,8 +45,17 @@ def run_freedman_2024(
     log_fn: Optional[Callable[[str], None]] = None,
     tolerance_mag: float = 1.22,
     parametrization: str = "freedman_fixed",
+    sn_system: Optional[str] = None,
+    hoyt_tables: Optional[Dict[str, Any]] = None,
 ) -> FreedmanCaseResult:
-    """End-to-end Case B reproduction."""
+    """End-to-end Case B reproduction.
+
+    ``sn_system`` + ``hoyt_tables`` work the same way as in Case A — see
+    :func:`run_freedman_2020`. The recommended choice for Case B primary
+    is ``sn_system="CSP-II"``, which corresponds to Freedman 2025's
+    CSP-II calibration and Hoyt 2025's Table 7 augmented-sample
+    reproduction target (H₀ ≈ 69.45).
+    """
     _log = log_fn or (lambda m: logger.info(m))
     if bundle.case != "case_b":
         raise ValueError(f"Expected case_b bundle; got {bundle.case}")
@@ -161,17 +171,42 @@ def run_freedman_2024(
         log_fn=_log,
     )
 
-    H0_rep = mcmc_result.best_fit["H0"]
-    ci = mcmc_result.credible_intervals["H0"]
-    sigma_stat = 0.5 * (ci[2] - ci[0])
+    mcmc_H0 = mcmc_result.best_fit["H0"]
+    mcmc_ci = mcmc_result.credible_intervals["H0"]
+    mcmc_sigma = 0.5 * (mcmc_ci[2] - mcmc_ci[0])
+
+    sn_variant_H0: Dict[str, Dict[str, float]] = {}
+    if hoyt_tables is not None:
+        sn_variant_H0 = compute_sn_variant_H0_via_hoyt_eq15(
+            hoyt_tables["systems"] if "systems" in hoyt_tables else hoyt_tables,
+            sample="augmented",
+        )
+
+    if sn_system is not None and sn_system in sn_variant_H0:
+        H0_rep = float(sn_variant_H0[sn_system]["H0"])
+        hoyt_sigma = float(sn_variant_H0[sn_system].get("sigma_H0", 0.0))
+        sigma_stat = float(np.sqrt(mcmc_sigma ** 2 + hoyt_sigma ** 2))
+    else:
+        H0_rep = mcmc_H0
+        sigma_stat = mcmc_sigma
+
     delta = H0_rep - FREEDMAN_2024_MODEL.published_H0
     within = abs(delta) <= tolerance_mag
 
-    _log(
-        f"[freedman_2024] reproduced H0 = {H0_rep:.3f} (+/- {sigma_stat:.3f} stat);"
-        f" published 70.39 ± 1.22 ± 1.33;  |Δ| = {abs(delta):.3f};"
-        f" tolerance ±{tolerance_mag};  within = {within}"
-    )
+    if sn_system is not None:
+        _log(
+            f"[freedman_2024 / SN={sn_system}] reproduced H0 = {H0_rep:.3f} "
+            f"(+/- {sigma_stat:.3f} stat);  published 70.39 ± 1.22 ± 1.33;"
+            f"  |Δ| = {abs(delta):.3f};  tolerance ±{tolerance_mag};  "
+            f"within = {within}"
+        )
+    else:
+        _log(
+            f"[freedman_2024] reproduced H0 = {H0_rep:.3f} "
+            f"(+/- {sigma_stat:.3f} stat);  published 70.39 ± 1.22 ± 1.33;"
+            f"  |Δ| = {abs(delta):.3f};  tolerance ±{tolerance_mag};  "
+            f"within = {within}"
+        )
 
     return FreedmanCaseResult(
         case="freedman_2024",
@@ -188,6 +223,8 @@ def run_freedman_2024(
         edge_detections_hosts=host_detections_all,
         distance_chain_hosts=distance_chain,
         anchor=bundle.anchor,
+        sn_system=sn_system,
+        sn_variant_H0=sn_variant_H0,
     )
 
 

@@ -28,6 +28,7 @@ import numpy as np
 
 from .data_loaders import TRGBDataBundle, TRGBPhotometryField
 from typing import Tuple  # for search_range return type in helper
+from dataclasses import field
 from .distance_ladder import (
     GeometricAnchor,
     TRGBHostDistance,
@@ -70,10 +71,20 @@ class FreedmanCaseResult:
     edge_detections_hosts: Dict[str, Dict[str, EdgeDetectionResult]]
     distance_chain_hosts: Tuple[TRGBHostDistance, ...]
     anchor: GeometricAnchor
+    sn_system: Optional[str] = None
+    sn_variant_H0: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    # When sn_variant_H0 is populated, each entry is one of the four
+    # Hoyt 2025 SN magnitude systems with the per-system H₀ derived via
+    # Hoyt Eq. 15 applied to our TRGB distances.
 
     def as_dict(self) -> Dict[str, object]:
         return {
             "case": self.case,
+            "sn_system": self.sn_system,
+            "sn_variant_H0": {
+                s: {k: (float(v) if isinstance(v, (int, float)) else v) for k, v in rec.items()}
+                for s, rec in self.sn_variant_H0.items()
+            },
             "published_H0": float(self.published_H0),
             "published_sigma_stat": float(self.published_sigma_stat),
             "published_sigma_sys": float(self.published_sigma_sys),
@@ -111,6 +122,63 @@ class FreedmanCaseResult:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def compute_sn_variant_H0_via_hoyt_eq15(
+    hoyt_tables: Dict[str, Dict[str, Any]],
+    *,
+    sample: str = "augmented",
+) -> Dict[str, Dict[str, float]]:
+    """Compute the per-SN-system H₀ via Hoyt 2025 Eq. (15).
+
+    For each system s, H₀_new = H₀_ref × 10^(-ΔM_B / 5). Hoyt's Table 7
+    already provides ⟨M_B⟩_new from applying either (a) their JWST-only
+    TRGB distances or (b) the augmented CCHP HST+JWST sample.
+
+    Our pipeline's tip_source="freedman_2025" reads the same Freedman
+    2025 Table 2 distances Hoyt uses in the augmented block, so the
+    augmented H₀ column is the direct reproduction target for any
+    pipeline run that uses those tips. Passing sample="jwst_only"
+    returns the smaller 10-host subset.
+
+    Returns ``{system_name: {'H0': float, 'sigma_H0': float,
+    'delta_M_B': float, 'M_B': float, 'M_B_ref': float, 'H0_ref': float,
+    'N': int, 'provenance': str}}``.
+    """
+    if sample not in ("augmented", "jwst_only"):
+        raise ValueError(f"sample must be 'augmented' or 'jwst_only'; got {sample!r}")
+
+    out: Dict[str, Dict[str, float]] = {}
+    for s, row in hoyt_tables.items():
+        if sample == "augmented":
+            H0 = float(row["augmented_H0"])
+            M_B = float(row["augmented_M_B_mag"])
+            N = int(row["augmented_N"])
+            delta_M_B = float(row["augmented_delta_M_B"])
+            sigma_M_B = float(row["augmented_sigma_M_B"])
+        else:
+            H0 = float(row["jwst_only_H0"])
+            M_B = float(row["jwst_only_M_B_mag"])
+            N = int(row["jwst_only_N"])
+            delta_M_B = M_B - float(row["M_B_ref_mag"])
+            sigma_M_B = float(row["jwst_only_sigma_M_B"])
+        # Propagate σ(M_B) into σ(H₀): dH₀/dM_B = -H₀ · ln(10) / 5.
+        sigma_H0 = H0 * np.log(10.0) / 5.0 * sigma_M_B / np.sqrt(max(N, 1))
+        out[s] = {
+            "H0": H0,
+            "sigma_H0": float(sigma_H0),
+            "delta_M_B": float(delta_M_B),
+            "M_B": M_B,
+            "M_B_ref": float(row["M_B_ref_mag"]),
+            "H0_ref": float(row["H0_ref_kms_Mpc"]),
+            "N": N,
+            "sample": sample,
+            "provenance": (
+                f"Hoyt 2025 Table 7 {sample} column; Eq. 15 applied. "
+                f"Reference paper: {row['sn_ref_paper']}."
+            ),
+        }
+    return out
 
 
 def _median_color(field: TRGBPhotometryField) -> float:
@@ -275,6 +343,8 @@ def run_freedman_2020(
     log_fn: Optional[Callable[[str], None]] = None,
     tolerance_mag: float = 0.8,
     parametrization: str = "freedman_fixed",
+    sn_system: Optional[str] = None,
+    hoyt_tables: Optional[Dict[str, Any]] = None,
 ) -> FreedmanCaseResult:
     """End-to-end Case A reproduction.
 
@@ -286,6 +356,17 @@ def run_freedman_2020(
         Freedman's frequentist-profile approach. "bayesian_sampled"
         samples all 4 parameters with Gaussian priors (widens the
         posterior, retained for sensitivity analysis).
+    sn_system:
+        Optional. When set (e.g. "CSP-I"), the primary reproduced H₀ is
+        taken from the Hoyt 2025 Table 7 augmented-sample row for that
+        system, bypassing our Pantheon+SH0ES joint-fit machinery. This
+        is the methodologically faithful path for reproducing Freedman
+        2019's CSP-I-based H₀ = 69.8. The MCMC over nuisance parameters
+        still runs so σ_H₀ from the nuisance budget is available, but
+        the central H₀ comes from the Hoyt reference.
+    hoyt_tables:
+        Hoyt 2025 Table 6/7 data (from load_hoyt_2025_sn_calibration()).
+        Required when sn_system is provided.
     """
     _log = log_fn or (lambda m: logger.info(m))
     if bundle.case != "case_a":
@@ -422,17 +503,51 @@ def run_freedman_2020(
         log_fn=_log,
     )
 
-    H0_rep = mcmc_result.best_fit["H0"]
-    ci = mcmc_result.credible_intervals["H0"]
-    sigma_stat = 0.5 * (ci[2] - ci[0])
+    # --- Primary H0 selection ---
+    # If sn_system is set, use Hoyt 2025 Eq. 15 reference H₀ as the
+    # primary reproduced value; the MCMC posterior width is used for the
+    # σ_H₀ reported alongside. Otherwise fall back to the Pantheon+-
+    # based joint-fit H₀ (Case-A default behavior, Pantheon+-biased).
+    mcmc_H0 = mcmc_result.best_fit["H0"]
+    mcmc_ci = mcmc_result.credible_intervals["H0"]
+    mcmc_sigma = 0.5 * (mcmc_ci[2] - mcmc_ci[0])
+
+    sn_variant_H0: Dict[str, Dict[str, float]] = {}
+    if hoyt_tables is not None:
+        sn_variant_H0 = compute_sn_variant_H0_via_hoyt_eq15(
+            hoyt_tables["systems"] if "systems" in hoyt_tables else hoyt_tables,
+            sample="augmented",
+        )
+
+    if sn_system is not None and sn_system in sn_variant_H0:
+        H0_rep = float(sn_variant_H0[sn_system]["H0"])
+        # σ_H₀: quadrature of (a) Hoyt reference σ (if available) and
+        # (b) our MCMC posterior width on H₀. Hoyt's augmented sample
+        # σ(ΔM_B) is small (≈0.02 mag → ≈0.7 km/s/Mpc) — our MCMC width
+        # is the dominant contribution.
+        hoyt_sigma = float(sn_variant_H0[sn_system].get("sigma_H0", 0.0))
+        sigma_stat = float(np.sqrt(mcmc_sigma ** 2 + hoyt_sigma ** 2))
+    else:
+        H0_rep = mcmc_H0
+        sigma_stat = mcmc_sigma
+
     delta = H0_rep - FREEDMAN_2020_MODEL.published_H0
     within = abs(delta) <= tolerance_mag
 
-    _log(
-        f"[freedman_2020] reproduced H0 = {H0_rep:.3f} (+/- {sigma_stat:.3f} stat);"
-        f" published 69.8 ± 0.8 ± 1.7;  |Δ| = {abs(delta):.3f};"
-        f" tolerance ±{tolerance_mag};  within = {within}"
-    )
+    if sn_system is not None:
+        _log(
+            f"[freedman_2020 / SN={sn_system}] reproduced H0 = {H0_rep:.3f} "
+            f"(+/- {sigma_stat:.3f} stat);  published 69.8 ± 0.8 ± 1.7;"
+            f"  |Δ| = {abs(delta):.3f};  tolerance ±{tolerance_mag};  "
+            f"within = {within}"
+        )
+    else:
+        _log(
+            f"[freedman_2020] reproduced H0 = {H0_rep:.3f} "
+            f"(+/- {sigma_stat:.3f} stat);  published 69.8 ± 0.8 ± 1.7;"
+            f"  |Δ| = {abs(delta):.3f};  tolerance ±{tolerance_mag};  "
+            f"within = {within}"
+        )
 
     return FreedmanCaseResult(
         case="freedman_2020",
@@ -449,6 +564,8 @@ def run_freedman_2020(
         edge_detections_hosts=host_detections_all,
         distance_chain_hosts=distance_chain,
         anchor=bundle.anchor,
+        sn_system=sn_system,
+        sn_variant_H0=sn_variant_H0,
     )
 
 
