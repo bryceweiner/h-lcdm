@@ -1,0 +1,33 @@
+# Freedman 2019 CCHP VIII Table 3 — TRGB Calibrator Distances
+# Source: Freedman, Madore, Hatt, Hoyt, Jang, et al. 2019, ApJ 882, 34 (arXiv:1907.05922)
+# DOI: 10.3847/1538-4357/ab2f73
+# Transcribed: 2026-04-24 from the paper PDF (Section 5, Table 3).
+# Columns:
+#   SN         = SN Ia calibrator name
+#   Galaxy     = host galaxy (original column "N1316" → NGC 1316; "M101" kept verbatim)
+#   mu_TRGB    = TRGB distance modulus (mag)
+#   sigma_T    = 1-sigma uncertainty on mu_TRGB (mag)
+#   source     = "CCHP" or "JL" (Jang & Lee 2017) per the paper's Source column
+#   host_canon = canonical host galaxy name used across the pipeline
+# Only rows with a non-empty mu_TRGB are kept (Freedman 2019's TRGB-measured subset).
+# Verification: NGC 1365 (mu=31.36, sigma=0.05) and NGC 4536 (mu=30.96, sigma=0.05)
+#   spot-checked against Freedman 2019 Table 3 verbatim.
+SN,Galaxy,mu_TRGB,sigma_T,source,host_canon
+1980N,N1316,31.46,0.04,CCHP,NGC 1316
+1981B,N4536,30.96,0.05,CCHP,NGC 4536
+1981D,N1316,31.46,0.04,CCHP,NGC 1316
+1989B,N3627,30.22,0.04,CCHP,NGC 3627
+1994D,N4526,31.00,0.07,CCHP,NGC 4526
+1994ae,N3370,32.27,0.05,JL,NGC 3370
+1995al,N3021,32.22,0.05,JL,NGC 3021
+1998bu,N3368,30.31,0.04,CCHP,NGC 3368
+2001el,N1448,31.32,0.06,CCHP,NGC 1448
+2002fk,N1309,32.50,0.07,JL,NGC 1309
+2006dd,N1316,31.46,0.04,CCHP,NGC 1316
+2007af,N5584,31.82,0.10,JL,NGC 5584
+2007on,N1404,31.42,0.05,CCHP,NGC 1404
+2007sr,N4038,31.68,0.05,JL,NGC 4038
+2011fe,M101,29.08,0.04,CCHP,M101
+2011iv,N1404,31.42,0.05,CCHP,NGC 1404
+2012cg,N4424,31.00,0.06,CCHP,NGC 4424
+2012fr,N1365,31.36,0.05,CCHP,NGC 1365

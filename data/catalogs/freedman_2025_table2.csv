@@ -1,0 +1,27 @@
+# Freedman 2025 CCHP Status Report Table 2 — JWST Galaxy Distance Moduli
+# Source: Freedman, Madore, Hoyt, Owens, Lee, et al. 2025, ApJ 985, 203 (arXiv:2408.06153)
+# Transcribed: 2026-04-24 from the paper PDF (Section 8, Table 2).
+# Columns:
+#   SN         = SN Ia calibrator name
+#   Galaxy     = host galaxy (column "N1365" → NGC 1365)
+#   mu_TRGB    = JWST TRGB distance modulus (mag)
+#   sigma_T    = 1-sigma uncertainty on mu_TRGB (mag)
+#   mu_JAGB    = JWST JAGB distance modulus (mag; "..." if not measured)
+#   sigma_J    = 1-sigma uncertainty on mu_JAGB (mag)
+#   mu_bar     = weighted mean mu (TRGB/JAGB)
+#   sigma_bar  = 1-sigma uncertainty on mu_bar
+#   host_canon = canonical host galaxy name
+# Verification: SN 2012fr (N1365, mu=31.366) and SN 1981B (N4536, mu=30.923) spot-checked
+#   against Freedman 2025 Table 2 verbatim.
+SN,Galaxy,mu_TRGB,sigma_T,mu_JAGB,sigma_J,mu_bar,sigma_bar,host_canon
+2011fe,M101,29.151,0.042,29.208,0.045,29.18,0.03,M101
+2012fr,N1365,31.366,0.069,31.384,0.039,31.38,0.03,NGC 1365
+2015F,N2442,31.646,0.097,31.605,0.044,31.61,0.03,NGC 2442
+2011by,N3972,31.747,0.068,,,31.75,0.07,NGC 3972
+2007sr,N4038,31.645,0.078,,,31.65,0.08,NGC 4038
+2012cg,N4424,30.926,0.030,,,30.93,0.03,NGC 4424
+1981B,N4536,30.923,0.052,30.971,0.034,30.95,0.03,NGC 4536
+1990N,N4639,31.774,0.073,31.733,0.039,31.74,0.03,NGC 4639
+2013aa,N5643,30.643,0.071,30.582,0.038,30.60,0.03,NGC 5643
+2017cbv,N5643,30.643,0.071,30.582,0.038,30.60,0.03,NGC 5643
+2013dy,N7250,31.629,0.047,31.592,0.043,31.61,0.03,NGC 7250
