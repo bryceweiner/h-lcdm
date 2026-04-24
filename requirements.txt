@@ -39,6 +39,7 @@ vast @ git+https://github.com/DESI-UR/VAST.git
 # Bayesian inference
 emcee>=3.1.0
 dynesty>=2.0.0
+corner>=2.5.0
 
 # Statistical testing
 statsmodels>=0.13.0

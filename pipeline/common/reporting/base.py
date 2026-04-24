@@ -31,6 +31,7 @@ from . import (
     ml_reporter,
     tmdc_reporter,
     recommendation_reporter,
+    trgb_comparative_reporter,
     void_reporter,
 )
 
@@ -159,6 +160,7 @@ class HLambdaDMReporter:
             "cosmo_const": cosmo_const_reporter,
             "fine_structure": fine_structure_reporter,
             "gravitational_constant": gravitational_constant_reporter,
+            "trgb_comparative": trgb_comparative_reporter,
             "void": void_reporter,
             "ml": ml_reporter,
             "tmdc": tmdc_reporter,
@@ -603,6 +605,7 @@ The results indicate [SUMMARY OF CONCLUSION TO BE FILLED BASED ON DATA].
             "cosmo_const": cosmo_const_reporter,
             "fine_structure": fine_structure_reporter,
             "gravitational_constant": gravitational_constant_reporter,
+            "trgb_comparative": trgb_comparative_reporter,
             "void": void_reporter,
             "ml": ml_reporter,
             "tmdc": tmdc_reporter,

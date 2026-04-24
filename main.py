@@ -52,6 +52,8 @@ from pipeline.cmb_gw import CMBGWPipeline
 from pipeline.cosmo_const import CosmoConstPipeline
 from pipeline.fine_structure import FineStructurePipeline
 from pipeline.gravitational_constant import GravitationalConstantPipeline
+from pipeline.expansion_enhancement import ExpansionPipeline
+from pipeline.trgb_comparative import TRGBComparativePipeline
 from pipeline.common.reporting import HLambdaDMReporter
 from pipeline.common.visualization import HLambdaDMVisualizer
 
@@ -161,6 +163,53 @@ def parse_arguments():
         help='Run gravitational constant analysis (information processing principles). '
              'Optional arguments: validate, extended. '
              'Example: --gravitational-constant validate extended'
+    )
+
+    parser.add_argument(
+        '--expansion-test',
+        nargs='*',
+        metavar='VALIDATION',
+        dest='expansion_test',
+        help='Run expansion-enhancement falsifiability test '
+             '(BAO + Pantheon+ + Planck θ* joint fit of H(z) framework enhancement). '
+             'Optional arguments: validate, extended, short. '
+             'Example: --expansion-test  |  --expansion-test short validate'
+    )
+
+    parser.add_argument(
+        '--trgb-comparative',
+        nargs='*',
+        metavar='VALIDATION',
+        dest='trgb_comparative',
+        help='Run TRGB comparative analysis (Freedman 2020 LMC anchor + '
+             'Freedman 2024 NGC 4258 anchor; framework forward predictions). '
+             'Optional arguments: validate, extended, short, nopreregcheck. '
+             'Example: --trgb-comparative short'
+    )
+    parser.add_argument(
+        '--trgb-comparative-preregister-stage1',
+        action='store_true',
+        dest='trgb_preregister_stage1',
+        help='Generate docs/trgb_comparative_preregistration_stage1.md (pre-data).'
+    )
+    parser.add_argument(
+        '--trgb-comparative-load-data',
+        action='store_true',
+        dest='trgb_load_data',
+        help='Download TRGB archival photometry and report availability.'
+    )
+    parser.add_argument(
+        '--trgb-comparative-preregister-stage2',
+        action='store_true',
+        dest='trgb_preregister_stage2',
+        help='Generate docs/trgb_comparative_preregistration_stage2.md (post-data).'
+    )
+    parser.add_argument(
+        '--compute-backend',
+        type=str,
+        default='auto',
+        choices=['auto', 'mlx', 'numpy'],
+        help='Compute backend for TRGB comparative pipeline (default: auto).'
     )
 
     parser.add_argument(
@@ -511,6 +560,8 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
         'cosmo_const': args.cosmo_const,
         'fine_structure': args.fine_structure,
         'gravitational_constant': args.gravitational_constant,
+        'expansion_test': getattr(args, 'expansion_test', None),
+        'trgb_comparative': getattr(args, 'trgb_comparative', None),
         'void': args.void,
         'voidfinder': args.voidfinder,
         'hlcdm': args.hlcdm,
@@ -578,6 +629,19 @@ def determine_pipeline_config(args) -> Dict[str, Dict[str, Any]]:
                     'z_min': args.z_min,
                     'z_max': args.z_max,
                     'z_steps': args.z_steps
+                })
+            elif pipeline_name == 'expansion_test':
+                # ``short`` accepted as a subcommand alongside validate/extended.
+                pipeline_config[pipeline_name]['context'].update({
+                    'short': 'short' in (validation_level or []),
+                })
+            elif pipeline_name == 'trgb_comparative':
+                vlist = validation_level or []
+                pipeline_config[pipeline_name]['context'].update({
+                    'short': 'short' in vlist,
+                    'enforce_preregistration': 'nopreregcheck' not in vlist,
+                    'strict_data': 'nostrictdata' not in vlist,
+                    'compute_backend': args.compute_backend,
                 })
             elif pipeline_name == 'bao':
                 # Use all available datasets if none specified
@@ -722,6 +786,8 @@ def initialize_pipelines(output_dir: str) -> Dict[str, Any]:
         'cosmo_const': CosmoConstPipeline(output_dir),
         'fine_structure': FineStructurePipeline(output_dir),
         'gravitational_constant': GravitationalConstantPipeline(output_dir),
+        'expansion_test': ExpansionPipeline(output_dir + "/expansion_enhancement"),
+        'trgb_comparative': TRGBComparativePipeline(output_dir + "/trgb_comparative"),
         'void': VoidPipeline(output_dir),
         'voidfinder': VoidFinderPipeline(output_dir),
         'hlcdm': HLCDMPipeline(output_dir),
@@ -1239,6 +1305,32 @@ def main():
 
     # Parse arguments
     args = parse_arguments()
+
+    # -----------------------------------------------------------------
+    # Early short-circuit subcommands (TRGB preregistration / data load)
+    # -----------------------------------------------------------------
+    if getattr(args, 'trgb_preregister_stage1', False):
+        pipe = TRGBComparativePipeline(str(Path(args.output_dir) / "trgb_comparative"))
+        result = pipe.preregister_stage1({'compute_backend': args.compute_backend})
+        logger.info(f"Stage 1 preregistration: {result['stage1_path']}")
+        return 0
+    if getattr(args, 'trgb_load_data', False):
+        pipe = TRGBComparativePipeline(str(Path(args.output_dir) / "trgb_comparative"))
+        result = pipe.load_data({})
+        logger.info(f"Data availability: {result['availability']}")
+        return 0
+    if getattr(args, 'trgb_preregister_stage2', False):
+        pipe = TRGBComparativePipeline(str(Path(args.output_dir) / "trgb_comparative"))
+        try:
+            import subprocess
+            commit = subprocess.check_output(
+                ['git', 'rev-parse', 'HEAD'], cwd=str(Path(__file__).parent)
+            ).decode().strip()
+        except Exception:
+            commit = 'unknown'
+        result = pipe.preregister_stage2({'loader_git_commit': commit})
+        logger.info(f"Stage 2 preregistration: {result['stage2_path']}")
+        return 0
 
     # Determine pipeline configuration
     config = determine_pipeline_config(args)

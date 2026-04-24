@@ -3565,8 +3565,598 @@ class DataLoader:
         logger.info("")
         logger.info("=" * 70)
 
+    # ========================================================================
+    # EXPANSION-ENHANCEMENT TEST DATASETS
+    # ========================================================================
+    # Used by pipeline/expansion_enhancement. Distinct from the D_M/r_d-only
+    # BOSS-DR12 loader above — these return the full DESI DR1 data vector
+    # (D_M/r_d AND D_H/r_d per bin, plus the intra-bin correlation), the
+    # Pantheon+SH0ES distance-modulus sample with its 1701×1701 covariance,
+    # and the scalar Planck 2018 θ* Gaussian prior.
+
+    def load_desi_dr1_bao_full(self) -> Dict[str, Any]:
+        """DESI DR1 BAO measurements with intra-bin D_M/D_H correlations.
+
+        Source: DESI Collaboration 2024, arXiv:2404.03002, Table 1.
+        Seven effective redshifts. BGS and QSO tracers report only D_V/r_d;
+        the five intermediate bins report (D_M/r_d, D_H/r_d) as a correlated
+        pair. Cross-bin correlations are taken as zero (published covariance
+        is block-diagonal).
+
+        Returns
+        -------
+        dict with keys:
+            ``z``: (N,) redshifts, one entry per measurement row
+            ``type``: list of 'D_V/r_d' | 'D_M/r_d' | 'D_H/r_d' per row
+            ``value``: (N,) measurements
+            ``error``: (N,) 1σ uncertainties
+            ``cov``: (N,N) block-diagonal covariance matrix
+        """
+        # Table 1, DESI Collaboration 2024, arXiv:2404.03002.
+        # Each row: (z_eff, measurement_type, value, sigma).
+        rows = [
+            # BGS
+            (0.295, 'D_V/r_d',  7.93,  0.15),
+            # LRG1 (correlated pair)
+            (0.510, 'D_M/r_d', 13.62,  0.25),
+            (0.510, 'D_H/r_d', 20.98,  0.61),
+            # LRG2
+            (0.706, 'D_M/r_d', 16.85,  0.32),
+            (0.706, 'D_H/r_d', 20.08,  0.60),
+            # LRG3+ELG1
+            (0.930, 'D_M/r_d', 21.71,  0.28),
+            (0.930, 'D_H/r_d', 17.88,  0.35),
+            # ELG2
+            (1.317, 'D_M/r_d', 27.79,  0.69),
+            (1.317, 'D_H/r_d', 13.82,  0.42),
+            # QSO
+            (1.491, 'D_V/r_d', 26.07,  0.67),
+            # Lyα
+            (2.330, 'D_M/r_d', 39.71,  0.94),
+            (2.330, 'D_H/r_d',  8.52,  0.17),
+        ]
+        # Intra-bin (D_M, D_H) correlations from the DESI DR1 paper.
+        # Tuple order matches the rows above: first index is the D_M row,
+        # second is the D_H row immediately after it.
+        intra_bin_correlations = {
+            0.510: -0.445,
+            0.706: -0.420,
+            0.930: -0.389,
+            1.317: -0.444,
+            2.330: -0.477,
+        }
+
+        n = len(rows)
+        z = np.array([r[0] for r in rows])
+        kind = [r[1] for r in rows]
+        value = np.array([r[2] for r in rows])
+        error = np.array([r[3] for r in rows])
+
+        cov = np.zeros((n, n))
+        # Fill diagonal first.
+        for i in range(n):
+            cov[i, i] = error[i] ** 2
+        # Apply intra-bin off-diagonal entries: a D_M row is followed by
+        # its paired D_H row in the table above, so (i, i+1) is the pair.
+        for i in range(n - 1):
+            if kind[i] == 'D_M/r_d' and kind[i + 1] == 'D_H/r_d' and z[i] == z[i + 1]:
+                rho = intra_bin_correlations.get(z[i], 0.0)
+                cov[i, i + 1] = rho * error[i] * error[i + 1]
+                cov[i + 1, i] = cov[i, i + 1]
+
+        self.log_message(f"Loaded DESI DR1 BAO: {n} measurements across 7 redshift bins")
+
+        return {
+            'name': 'DESI DR1 BAO (full)',
+            'z': z,
+            'type': kind,
+            'value': value,
+            'error': error,
+            'cov': cov,
+            'reference': 'DESI Collaboration 2024, arXiv:2404.03002',
+            'data_release': 'DESI DR1',
+            'url': 'https://data.desi.lbl.gov/public/papers/c3/y1kp6/',
+        }
+
+    def load_pantheon_plus(self, force_download: bool = False) -> Dict[str, Any]:
+        """Pantheon+SH0ES sample with full stat+sys covariance.
+
+        Source: Scolnic et al. 2022, ApJ 938, 113, arXiv:2202.04077. Data
+        release at https://github.com/PantheonPlusSH0ES/DataRelease.
+
+        Returns
+        -------
+        dict with keys:
+            ``z``: (M,) Hubble-diagram redshifts (zHD)
+            ``mu``: (M,) observed distance modulus (corrected)
+            ``cov``: (M,M) stat+sys covariance on μ
+            ``is_calibrator``: (M,) bool mask for Cepheid-host SNe
+            ``M_cepheid``: (K,) calibrator distance moduli from SH0ES (used
+                           when including SH0ES calibration; not used in the
+                           profile-likelihood M marginalization)
+        """
+        cache_dir = self.downloaded_data_dir / "pantheon_plus"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        data_url = (
+            "https://raw.githubusercontent.com/PantheonPlusSH0ES/DataRelease/main/"
+            "Pantheon%2B_Data/4_DISTANCES_AND_COVAR/Pantheon%2BSH0ES.dat"
+        )
+        cov_url = (
+            "https://raw.githubusercontent.com/PantheonPlusSH0ES/DataRelease/main/"
+            "Pantheon%2B_Data/4_DISTANCES_AND_COVAR/Pantheon%2BSH0ES_STAT%2BSYS.cov"
+        )
+        data_path = cache_dir / "Pantheon+SH0ES.dat"
+        cov_path = cache_dir / "Pantheon+SH0ES_STAT+SYS.cov"
+
+        import urllib.request
+        for url, path in ((data_url, data_path), (cov_url, cov_path)):
+            if force_download or not path.exists() or path.stat().st_size == 0:
+                self.log_message(f"Downloading {path.name} from PantheonPlusSH0ES…")
+                urllib.request.urlretrieve(url, path)
+
+        # .dat is whitespace-separated with a header row.
+        df = pd.read_csv(data_path, sep=r"\s+")
+
+        # Hubble-diagram redshift and distance modulus are ``zHD`` and ``MU_SH0ES``
+        # (distance modulus including SH0ES bias corrections).
+        z_hd = df["zHD"].to_numpy(dtype=float)
+        mu = df["MU_SH0ES"].to_numpy(dtype=float)
+        is_calib = df["IS_CALIBRATOR"].to_numpy(dtype=bool)
+        ceph_dist = df["CEPH_DIST"].to_numpy(dtype=float)
+
+        # Covariance: first line is the matrix dimension N, then N*N floats
+        # (one per line) in row-major order.
+        with open(cov_path) as f:
+            first = f.readline().strip()
+            N = int(first)
+            flat = np.fromstring(f.read(), sep="\n", dtype=float)
+        if flat.size != N * N:
+            raise DataUnavailableError(
+                f"Pantheon+ covariance size mismatch: expected {N*N}, got {flat.size}"
+            )
+        cov = flat.reshape((N, N))
+        if cov.shape[0] != z_hd.size:
+            raise DataUnavailableError(
+                f"Pantheon+ sample/covariance mismatch: {z_hd.size} SNe vs {cov.shape[0]} cov rows"
+            )
+
+        self.log_message(
+            f"Loaded Pantheon+SH0ES: {z_hd.size} SNe "
+            f"({is_calib.sum()} Cepheid calibrators), z={z_hd.min():.3f}–{z_hd.max():.3f}"
+        )
+
+        cids = df["CID"].to_numpy()
+        ra = df["RA"].to_numpy(dtype=float)
+        dec = df["DEC"].to_numpy(dtype=float)
+
+        return {
+            'name': 'Pantheon+SH0ES',
+            'z': z_hd,
+            'mu': mu,
+            'cov': cov,
+            'is_calibrator': is_calib,
+            'M_cepheid': ceph_dist,
+            'CID': cids,
+            'RA': ra,
+            'DEC': dec,
+            'reference': 'Scolnic et al. 2022, ApJ 938, 113',
+            'url': 'https://pantheonplussh0es.github.io/',
+            'data_release': 'Pantheon+SH0ES',
+        }
+
+    def load_planck_2018_full_spectra_dell(self) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        """Planck 2018 TT/TE/EE unbinned 'full' spectra in D_ℓ units (μK²).
+
+        Used by the expansion-enhancement residual-shape model. Different from
+        ``load_planck_2018``: returns D_ℓ (not C_ℓ) and symmetric-averaged
+        1σ errors from the asymmetric -dDl/+dDl columns in Planck's file.
+
+        Source: Planck Legacy Archive
+          - COM_PowerSpect_CMB-TT-full_R3.01.txt
+          - COM_PowerSpect_CMB-TE-full_R3.01.txt
+          - COM_PowerSpect_CMB-EE-full_R3.01.txt
+        (File format: ``# l  Dl  -dDl  +dDl``, ℓ = 2…2508.)
+
+        Returns
+        -------
+        dict keyed by 'TT'|'TE'|'EE' → (ell, D_ell, sigma) numpy arrays.
+        """
+        import urllib.request
+
+        urls = {
+            'TT': 'https://pla.esac.esa.int/pla/aio/product-action?COSMOLOGY.FILE_ID=COM_PowerSpect_CMB-TT-full_R3.01.txt',
+            'TE': 'https://pla.esac.esa.int/pla/aio/product-action?COSMOLOGY.FILE_ID=COM_PowerSpect_CMB-TE-full_R3.01.txt',
+            'EE': 'https://pla.esac.esa.int/pla/aio/product-action?COSMOLOGY.FILE_ID=COM_PowerSpect_CMB-EE-full_R3.01.txt',
+        }
+        cache_dir = self.downloaded_data_dir / "planck_2018_full"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        out: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+        for channel, url in urls.items():
+            path = cache_dir / f"planck_2018_{channel}_full_Dell.txt"
+            if not path.exists() or path.stat().st_size == 0:
+                self.log_message(f"Downloading Planck 2018 {channel} full D_ℓ spectrum…")
+                urllib.request.urlretrieve(url, path)
+            data = np.loadtxt(path, comments='#')
+            ell = data[:, 0].astype(float)
+            D_ell = data[:, 1].astype(float)
+            # Symmetrize asymmetric errors by averaging magnitudes.
+            sigma = 0.5 * (np.abs(data[:, 2]) + np.abs(data[:, 3])).astype(float)
+            out[channel] = (ell, D_ell, sigma)
+        self.log_message(
+            f"Loaded Planck 2018 full D_ℓ spectra: TT/TE/EE, "
+            f"ℓ={int(out['TT'][0].min())}–{int(out['TT'][0].max())}"
+        )
+        return out
+
+    def load_planck_2018_best_fit_theory(self) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+        """Planck 2018 minimum-χ² ΛCDM theory spectrum (TT, TE, EE) in D_ℓ (μK²).
+
+        This is Planck's publicly-distributed best-fit reference — the
+        'minimum-theory' curve from the ``base_plikHM_TTTEEE_lowl_lowE_lensing``
+        chain (Planck 2018 results VI, Table 2).
+
+        Source: Planck Legacy Archive,
+          COM_PowerSpect_CMB-base-plikHM-TTTEEE-lowl-lowE-lensing-minimum-theory_R3.01.txt
+        (File format: ``# L  TT  TE  EE  BB  PP`` in D_ℓ units, ℓ = 2…2508.)
+
+        Returns
+        -------
+        dict keyed by 'TT'|'TE'|'EE' → (ell, D_ell_theory) numpy arrays.
+        """
+        import urllib.request
+
+        url = (
+            'https://pla.esac.esa.int/pla/aio/product-action?'
+            'COSMOLOGY.FILE_ID=COM_PowerSpect_CMB-base-plikHM-TTTEEE-lowl-lowE-lensing-minimum-theory_R3.01.txt'
+        )
+        cache_dir = self.downloaded_data_dir / "planck_2018_full"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        path = cache_dir / "planck_2018_best_fit_theory_Dell.txt"
+        if not path.exists() or path.stat().st_size == 0:
+            self.log_message("Downloading Planck 2018 best-fit ΛCDM theory D_ℓ spectrum…")
+            urllib.request.urlretrieve(url, path)
+        data = np.loadtxt(path, comments='#')
+        ell = data[:, 0].astype(float)
+        out = {
+            'TT': (ell, data[:, 1].astype(float)),
+            'TE': (ell, data[:, 2].astype(float)),
+            'EE': (ell, data[:, 3].astype(float)),
+        }
+        self.log_message(
+            f"Loaded Planck 2018 best-fit theory D_ℓ: "
+            f"ℓ={int(ell.min())}–{int(ell.max())}"
+        )
+        return out
+
+    def load_planck_2018_theta_star(self) -> Dict[str, float]:
+        """Planck 2018 CMB distance prior on D_M(z*).
+
+        Why D_M(z*) and not θ*:
+            θ* = r_s*/D_M(z*) is a direct Planck measurement, but converting
+            θ* to a model prediction requires r_s* — the sound horizon at
+            *photon decoupling* z* ≈ 1089.80. That is subtly different from
+            r_d at the baryon-drag epoch z_drag ≈ 1059 (which is what the
+            framework's r_d = 150.71 Mpc refers to). Using Planck's derived
+            D_M(z*) sidesteps the r_d vs r_s* distinction — the CMB
+            constraint becomes model-independent of the framework's choice
+            of BAO sound horizon.
+
+        Source: Planck 2018 results VI, A&A 641 A6 (2020), Table 2
+        (TT,TE,EE+lowE+lensing).
+        """
+        return {
+            'name': 'Planck 2018 D_M(z*) distance prior',
+            # D_M(z*) = D_A(z*) in flat universe (comoving transverse distance).
+            # Planck 2018 VI Table 2: D_A(z*)/Mpc = 13869.7 ± 4.4 (TT,TE,EE+lowE+lensing).
+            'D_M_z_rec': 13869.7,
+            'sigma_D_M': 4.4,
+            'z_rec': 1089.80,
+            # Retained for backward compatibility / reporting convenience.
+            'theta_star': 0.0104092,
+            'sigma_theta_star': 3.1e-6,
+            'reference': 'Planck Collaboration 2020, A&A 641 A6, Table 2',
+            'url': 'https://pla.esac.esa.int/',
+        }
+
+    # =========================================================================
+    # TRGB photometry and anchor distances (used by pipeline.trgb_comparative)
+    # =========================================================================
+
+    def load_pietrzynski_lmc_distance(self) -> Dict[str, Any]:
+        """Pietrzyński et al. 2019 DEB distance to the LMC.
+
+        Source: Pietrzyński et al. 2019, Nature 567, 200 (arXiv:1903.08096).
+        Canonical detached-eclipsing-binary geometric distance.
+        """
+        return {
+            'name': 'Pietrzyński 2019 LMC DEB',
+            'mu': 18.477,
+            'sigma_mu_stat': 0.026,
+            'sigma_mu_sys': 0.024,
+            'd_kpc': 49.59,
+            'reference': 'Pietrzyński et al. 2019, Nature 567, 200',
+            'url': 'https://www.nature.com/articles/s41586-019-0999-4',
+        }
+
+    def load_reid_ngc4258_distance(self) -> Dict[str, Any]:
+        """Reid et al. 2019 H₂O maser distance to NGC 4258.
+
+        Source: Reid et al. 2019, ApJ 886, L27 (arXiv:1908.05625).
+        """
+        return {
+            'name': 'Reid 2019 NGC 4258 maser',
+            'mu': 29.397,
+            'sigma_mu_stat': 0.024,
+            'sigma_mu_sys': 0.022,
+            'd_mpc': 7.58,
+            'reference': 'Reid et al. 2019, ApJ 886, L27',
+            'url': 'https://iopscience.iop.org/article/10.3847/2041-8213/ab552d',
+        }
+
+    def load_lmc_trgb_hst_photometry(self, force_download: bool = False) -> Dict[str, Any]:
+        """HST ACS/WFC LMC halo photometry used by Hatt 2018 / Freedman 2019-2020.
+
+        Primary reference: Hatt et al. 2018, ApJ 861, 104 (arXiv:1806.02900).
+        The data release is hosted on the Carnegie CCHP archive; the exact
+        table URLs are captured in the preregistration Stage 1 document. This
+        loader expects the cached CSV to live at
+        ``downloaded_data/trgb/lmc_hatt2018_halo_photometry.csv`` with
+        columns ``ra, dec, F814W, F814W_err, F555W, F555W_err, field_id,
+        flag`` (``flag`` = 0 for stars passing Hatt 2018 quality cuts).
+
+        When the cached file is not present the loader raises
+        :class:`DataUnavailableError` with the URL to fetch; it does not
+        silently synthesize data. Real data provisioning is the Stage 2
+        preregistration responsibility.
+        """
+        cache_dir = self.downloaded_data_dir / "trgb"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        path = cache_dir / "lmc_hatt2018_halo_photometry.csv"
+
+        if not path.exists() or path.stat().st_size == 0:
+            raise DataUnavailableError(
+                "LMC TRGB HST photometry not found at "
+                f"{path}. Place the Hatt 2018 halo photometry CSV (columns: "
+                "ra, dec, F814W, F814W_err, F555W, F555W_err, field_id, flag) "
+                "there. Source: Hatt et al. 2018, ApJ 861, 104; CCHP archive."
+            )
+
+        df = pd.read_csv(path)
+        self.log_message(f"Loaded LMC TRGB HST photometry: {len(df)} stars across "
+                         f"{df['field_id'].nunique()} fields")
+        return {
+            'name': 'LMC TRGB HST halo photometry',
+            'ra': df['ra'].to_numpy(dtype=float),
+            'dec': df['dec'].to_numpy(dtype=float),
+            'F814W': df['F814W'].to_numpy(dtype=float),
+            'F814W_err': df['F814W_err'].to_numpy(dtype=float),
+            'F555W': df['F555W'].to_numpy(dtype=float) if 'F555W' in df else None,
+            'F555W_err': df['F555W_err'].to_numpy(dtype=float) if 'F555W_err' in df else None,
+            'field_id': df['field_id'].to_numpy(),
+            'flag': df['flag'].to_numpy(dtype=int) if 'flag' in df else np.zeros(len(df), dtype=int),
+            'reference': 'Hatt et al. 2018, ApJ 861, 104',
+        }
+
+    def load_sn_host_trgb_hst_photometry(self, force_download: bool = False) -> Dict[str, Any]:
+        """HST photometry of SN Ia host galaxies used by Freedman 2019/2020.
+
+        Expects a per-host CSV at
+        ``downloaded_data/trgb/sn_host_trgb_hst/{host}.csv``, each with
+        columns ``F814W, F814W_err, F555W, F555W_err, flag``, plus a host
+        manifest at ``downloaded_data/trgb/sn_host_trgb_hst/manifest.csv``
+        with columns ``host, published_mu_TRGB, published_sigma_mu,
+        reference``.
+
+        Raises :class:`DataUnavailableError` when the manifest is missing.
+        """
+        base = self.downloaded_data_dir / "trgb" / "sn_host_trgb_hst"
+        manifest_path = base / "manifest.csv"
+        if not manifest_path.exists():
+            raise DataUnavailableError(
+                f"SN host TRGB HST manifest not found at {manifest_path}. "
+                "Populate with columns host, published_mu_TRGB, "
+                "published_sigma_mu, reference. Primary sources: Freedman "
+                "et al. 2019 ApJ 882 34 Table 1, Anand et al. 2022 ApJS 257 34."
+            )
+
+        manifest = pd.read_csv(manifest_path)
+        hosts: Dict[str, Dict[str, Any]] = {}
+        for _, row in manifest.iterrows():
+            host = str(row['host'])
+            photom_path = base / f"{host}.csv"
+            if not photom_path.exists():
+                raise DataUnavailableError(
+                    f"SN host TRGB HST photometry missing for {host!r} at {photom_path}"
+                )
+            df = pd.read_csv(photom_path)
+            hosts[host] = {
+                'F814W': df['F814W'].to_numpy(dtype=float),
+                'F814W_err': df['F814W_err'].to_numpy(dtype=float),
+                'F555W': df['F555W'].to_numpy(dtype=float) if 'F555W' in df else None,
+                'F555W_err': df['F555W_err'].to_numpy(dtype=float) if 'F555W_err' in df else None,
+                'flag': df['flag'].to_numpy(dtype=int) if 'flag' in df else np.zeros(len(df), dtype=int),
+                'published_mu_TRGB': float(row['published_mu_TRGB']),
+                'published_sigma_mu': float(row['published_sigma_mu']),
+                'reference': str(row.get('reference', '')),
+            }
+        self.log_message(f"Loaded SN host TRGB HST photometry for {len(hosts)} hosts")
+        return {'name': 'SN host TRGB HST photometry (F814W)', 'hosts': hosts}
+
+    def load_sn_host_trgb_jwst_photometry(self, force_download: bool = False) -> Dict[str, Any]:
+        """JWST NIRCam photometry of SN Ia host galaxies used by CCHP 2024.
+
+        Expects a per-host CSV at
+        ``downloaded_data/trgb/sn_host_trgb_jwst/{host}.csv`` with columns
+        ``F090W, F090W_err, F150W, F150W_err, flag``, plus a manifest at
+        ``downloaded_data/trgb/sn_host_trgb_jwst/manifest.csv``.
+        """
+        base = self.downloaded_data_dir / "trgb" / "sn_host_trgb_jwst"
+        manifest_path = base / "manifest.csv"
+        if not manifest_path.exists():
+            raise DataUnavailableError(
+                f"SN host TRGB JWST manifest not found at {manifest_path}. "
+                "Primary source: Freedman et al. 2024 (CCHP JWST status report)."
+            )
+
+        manifest = pd.read_csv(manifest_path)
+        hosts: Dict[str, Dict[str, Any]] = {}
+        for _, row in manifest.iterrows():
+            host = str(row['host'])
+            photom_path = base / f"{host}.csv"
+            if not photom_path.exists():
+                raise DataUnavailableError(
+                    f"SN host TRGB JWST photometry missing for {host!r} at {photom_path}"
+                )
+            df = pd.read_csv(photom_path)
+            hosts[host] = {
+                'F090W': df['F090W'].to_numpy(dtype=float),
+                'F090W_err': df['F090W_err'].to_numpy(dtype=float),
+                'F150W': df['F150W'].to_numpy(dtype=float),
+                'F150W_err': df['F150W_err'].to_numpy(dtype=float),
+                'flag': df['flag'].to_numpy(dtype=int) if 'flag' in df else np.zeros(len(df), dtype=int),
+                'published_mu_TRGB': float(row['published_mu_TRGB']),
+                'published_sigma_mu': float(row['published_sigma_mu']),
+                'reference': str(row.get('reference', '')),
+            }
+        self.log_message(f"Loaded SN host TRGB JWST photometry for {len(hosts)} hosts")
+        return {'name': 'SN host TRGB JWST photometry (F090W/F150W)', 'hosts': hosts}
+
+    def load_freedman_2019_table3(self) -> Dict[str, Any]:
+        """Freedman 2019 CCHP VIII Table 3 per-galaxy TRGB distance moduli.
+
+        Source: Freedman et al. 2019, ApJ 882, 34 (arXiv:1907.05922), Table 3.
+        Transcribed to ``downloaded_data/trgb/freedman_2019_table3.csv`` with
+        the CCHP-reduced and Jang&Lee-reduced tip measurements that entered
+        the Freedman 2019 H₀ = 69.8 ± 0.8 ± 1.7 km/s/Mpc determination.
+
+        Returns a dict whose keys are host galaxies and whose values are
+        ``{'mu': mu_TRGB, 'sigma': sigma_T, 'sne': [list of calibrator SN
+        names]}``. Multiple SNe per host (e.g. NGC 1316 has 3) are merged
+        into a single host-level entry with the host's mu_TRGB and sigma_T
+        (they are identical in Table 3 for a given host).
+        """
+        path = Path("data") / "catalogs" / "freedman_2019_table3.csv"
+        if not path.exists():
+            raise DataUnavailableError(
+                f"Freedman 2019 Table 3 transcription missing at {path}. "
+                "This CSV ships with the pipeline; check the repo state."
+            )
+        df = pd.read_csv(path, comment='#')
+        hosts: Dict[str, Dict[str, Any]] = {}
+        for _, row in df.iterrows():
+            h = str(row['host_canon'])
+            if h not in hosts:
+                hosts[h] = {
+                    'mu': float(row['mu_TRGB']),
+                    'sigma': float(row['sigma_T']),
+                    'sne': [str(row['SN'])],
+                    'source': str(row['source']),
+                }
+            else:
+                # Same host, another SN → same mu & sigma per Table 3; sanity-check.
+                hosts[h]['sne'].append(str(row['SN']))
+        self.log_message(
+            f"Loaded Freedman 2019 Table 3: {len(hosts)} unique hosts, "
+            f"{int(len(df))} SN Ia calibrators."
+        )
+        return {
+            'name': 'Freedman 2019 CCHP VIII Table 3 (TRGB distances)',
+            'hosts': hosts,
+            'reference': 'Freedman et al. 2019, ApJ 882, 34',
+            'H0_published': 69.8,
+            'H0_sigma_stat': 0.8,
+            'H0_sigma_sys': 1.7,
+            'M_TRGB_abs': -4.049,          # F814W absolute mag (Freedman 2019 §4)
+            'M_TRGB_sigma_stat': 0.022,
+            'M_TRGB_sigma_sys': 0.039,
+            'mu_LMC': 18.477,
+            'sigma_mu_LMC_stat': 0.004,
+            'sigma_mu_LMC_sys': 0.020,
+            'hubble_flow_z_min': 0.023,   # Freedman 2019 Supercal subsample
+            'hubble_flow_z_max': 0.15,
+        }
+
+    def load_freedman_2025_table2(self) -> Dict[str, Any]:
+        """Freedman 2025 CCHP JWST Table 2 per-galaxy TRGB/JAGB distances.
+
+        Source: Freedman et al. 2025, ApJ 985, 203 (arXiv:2408.06153), Table 2.
+        Transcribed to ``downloaded_data/trgb/freedman_2025_table2.csv``.
+        Final TRGB-only H₀ = 70.39 ± 1.22 (stat) ± 1.33 (sys) km/s/Mpc
+        from NGC 4258 (Reid 2019 maser) as the geometric anchor.
+        """
+        path = Path("data") / "catalogs" / "freedman_2025_table2.csv"
+        if not path.exists():
+            raise DataUnavailableError(
+                f"Freedman 2025 Table 2 transcription missing at {path}."
+            )
+        df = pd.read_csv(path, comment='#')
+        hosts: Dict[str, Dict[str, Any]] = {}
+        for _, row in df.iterrows():
+            h = str(row['host_canon'])
+            if h not in hosts:
+                hosts[h] = {
+                    'mu': float(row['mu_TRGB']),
+                    'sigma': float(row['sigma_T']),
+                    'mu_jagb': (None if pd.isna(row.get('mu_JAGB'))
+                                else float(row['mu_JAGB'])),
+                    'sigma_jagb': (None if pd.isna(row.get('sigma_J'))
+                                   else float(row['sigma_J'])),
+                    'mu_bar': float(row['mu_bar']),
+                    'sigma_bar': float(row['sigma_bar']),
+                    'sne': [str(row['SN'])],
+                }
+            else:
+                hosts[h]['sne'].append(str(row['SN']))
+        self.log_message(
+            f"Loaded Freedman 2025 Table 2: {len(hosts)} unique hosts."
+        )
+        return {
+            'name': 'Freedman 2025 CCHP JWST Table 2 (TRGB distances)',
+            'hosts': hosts,
+            'reference': 'Freedman et al. 2025, ApJ 985, 203',
+            'H0_published': 70.39,
+            'H0_sigma_stat': 1.22,
+            'H0_sigma_sys': 1.33,
+            'M_TRGB_abs': -4.049,          # NGC 4258-anchored; see §14.2
+            'anchor_name': 'NGC 4258',
+            'mu_anchor': 29.397,
+            'sigma_mu_anchor_stat': 0.024,
+            'sigma_mu_anchor_sys': 0.022,
+            'hubble_flow_z_min': 0.023,
+            'hubble_flow_z_max': 0.15,
+        }
+
+    def load_anand_trgb_catalog(self) -> Dict[str, Any]:
+        """Anand et al. 2021/2022 public TRGB distance catalog.
+
+        Expects a CSV at
+        ``downloaded_data/trgb/anand2022_catalog.csv`` with columns
+        ``host, mu_TRGB, sigma_mu, method, anchor, reference``.
+        """
+        path = self.downloaded_data_dir / "trgb" / "anand2022_catalog.csv"
+        if not path.exists() or path.stat().st_size == 0:
+            raise DataUnavailableError(
+                f"Anand TRGB catalog not found at {path}. Source: "
+                "Anand et al. 2021 AJ 162 80 / Anand et al. 2022 ApJ 932 15 "
+                "(EDD database)."
+            )
+        df = pd.read_csv(path)
+        self.log_message(f"Loaded Anand TRGB catalog: {len(df)} hosts")
+        return {
+            'name': 'Anand 2021/2022 TRGB catalog',
+            'host': df['host'].to_numpy(),
+            'mu_TRGB': df['mu_TRGB'].to_numpy(dtype=float),
+            'sigma_mu': df['sigma_mu'].to_numpy(dtype=float),
+            'method': df['method'].to_numpy() if 'method' in df else None,
+            'anchor': df['anchor'].to_numpy() if 'anchor' in df else None,
+            'reference': df['reference'].to_numpy() if 'reference' in df else None,
+        }
+
     def check_data_availability(self) -> Dict[str, bool]:
         """Check availability of key datasets."""
+        trgb_dir = self.downloaded_data_dir / "trgb"
         datasets = {
             'act_dr6': (self.downloaded_data_dir / "act_dr6_fg_subtracted_EE.dat").exists(),
             'planck_2018': (self.downloaded_data_dir / "planck_2018_EE_spectrum.dat").exists(),
@@ -3575,5 +4165,12 @@ class DataLoader:
             'frb_catalog': (self.downloaded_data_dir / "frb_catalog.csv").exists(),
             'gw_nanograv': (self.downloaded_data_dir / "gw_nanograv.npz").exists(),
             'voidfinder_sdss_dr16': (self.processed_data_dir / "voidfinder_sdss_dr16.pkl").exists(),
+            'pantheon_plus': (self.downloaded_data_dir / "pantheon_plus" / "Pantheon+SH0ES.dat").exists(),
+            'lmc_trgb_hst': (trgb_dir / "lmc_hatt2018_halo_photometry.csv").exists(),
+            'sn_host_trgb_hst_manifest': (trgb_dir / "sn_host_trgb_hst" / "manifest.csv").exists(),
+            'sn_host_trgb_jwst_manifest': (trgb_dir / "sn_host_trgb_jwst" / "manifest.csv").exists(),
+            'anand_trgb_catalog': (trgb_dir / "anand2022_catalog.csv").exists(),
+            'freedman_2019_table3': Path("data/catalogs/freedman_2019_table3.csv").exists(),
+            'freedman_2025_table2': Path("data/catalogs/freedman_2025_table2.csv").exists(),
         }
         return datasets

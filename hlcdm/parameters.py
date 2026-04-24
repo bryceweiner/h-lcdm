@@ -93,6 +93,12 @@ class HLCDMParameters:
         # BOSS DR12
         self.RS_BOSS = 147.47         # BAO scale in Mpc (±0.59)
 
+        # Planck 2018 CMB comoving distance to last scattering
+        # Source: Planck 2018 VI, A&A 641 A6 (2020), Table 2 (TT,TE,EE+lowE+lensing).
+        # Used by the TRGB holographic projection formula as d_CMB.
+        self.D_CMB_PLANCK_2018 = 13869.7   # Mpc
+        self.SIGMA_D_CMB_PLANCK_2018 = 4.4  # Mpc, 1-sigma
+
 
         # ============================================================================
         # BAO DATA
@@ -280,6 +286,8 @@ S8_DES_Y3 = HLCDM_PARAMS.S8_DES_Y3
 OMEGA_M_DES_Y3 = HLCDM_PARAMS.OMEGA_M_DES_Y3
 RS_DES_Y3 = HLCDM_PARAMS.RS_DES_Y3
 RS_BOSS = HLCDM_PARAMS.RS_BOSS
+D_CMB_PLANCK_2018 = HLCDM_PARAMS.D_CMB_PLANCK_2018
+SIGMA_D_CMB_PLANCK_2018 = HLCDM_PARAMS.SIGMA_D_CMB_PLANCK_2018
 BOSS_DR12_BAO_DATA = HLCDM_PARAMS.BOSS_DR12_BAO_DATA
 BOSS_DR12_CORRELATION = HLCDM_PARAMS.BOSS_DR12_CORRELATION
 DES_Y3_BAO_DATA = HLCDM_PARAMS.DES_Y3_BAO_DATA
