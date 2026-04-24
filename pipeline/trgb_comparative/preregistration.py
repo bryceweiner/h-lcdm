@@ -84,7 +84,29 @@ class Stage1Config:
     )
     hubble_flow_z_cuts: str = (
         "0.023 ≤ z_CMB ≤ 0.15 (Freedman 2019 §6.3 Supercal subsample). "
-        "Applied to Pantheon+SH0ES non-calibrator SNe; N_flow ≈ 496."
+        "Applied to Pantheon+SH0ES non-calibrator SNe; N_flow ≈ 496. "
+        "For the Pantheon+-only variant of H₀; CSP/SuperCal variants use "
+        "Hoyt 2025 Eq. 15 reference values directly (see sn_system_*)."
+    )
+    sn_system_case_a: str = (
+        "CSP-I (Freedman 2019 primary SN sample). Per-system reproduced H₀ "
+        "computed via Hoyt 2025 Eq. 15 applied to our TRGB distances with "
+        "the Hoyt 2025 Table 6/7 reference values. Variants: CSP-I, "
+        "CSP-II, SuperCal, Pantheon+ all computed and reported."
+    )
+    sn_system_case_b: str = (
+        "CSP-II (Freedman 2025 primary SN sample). Same 4-variant analysis "
+        "as Case A. The Pantheon+ variant is expected to be +2 km/s/Mpc "
+        "higher than CSP-II per Hoyt 2025 Section 4; this is documented "
+        "but not used as the primary number."
+    )
+    sn_system_amendment: str = (
+        "2026-04-24 amendment: primary Hubble-flow SN sample for each case "
+        "is CCHP's own CSP-I/II rather than Pantheon+SH0ES. Pantheon+ "
+        "calibration is known (Hoyt 2025 §4, 3.1σ significance) to bias H₀ "
+        "upward by ≈+2 km/s/Mpc relative to CSP, because Pantheon+ μ_SH0ES "
+        "values are Cepheid/SH0ES-anchored. Retaining Pantheon+ as the "
+        "fourth variant directly demonstrates this +2 km/s/Mpc shift."
     )
 
     # Case A
@@ -217,7 +239,11 @@ class Stage1Config:
         lines.append(f"- Case B tip source: {self.tip_source_case_b}\n")
         lines.append(f"- Tip source sensitivity variant: {self.tip_source_sensitivity}\n")
         lines.append(f"- Per-host extinction: {self.per_host_extinction_source}\n")
-        lines.append(f"- Hubble-flow z cuts: {self.hubble_flow_z_cuts}\n\n")
+        lines.append(f"- Hubble-flow z cuts: {self.hubble_flow_z_cuts}\n")
+        lines.append(f"- SN Ia system (Case A primary): {self.sn_system_case_a}\n")
+        lines.append(f"- SN Ia system (Case B primary): {self.sn_system_case_b}\n\n")
+        lines.append("### 2026-04-24 Amendment: primary SN sample\n\n")
+        lines.append(f"{self.sn_system_amendment}\n\n")
 
         lines.append("## Case A — Freedman 2019/2020 (LMC anchor)\n\n")
         lines.append(f"- Anchor: {self.case_a_anchor}\n")
