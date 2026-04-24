@@ -274,8 +274,19 @@ def run_freedman_2020(
     chain_out_path: Optional[Path] = None,
     log_fn: Optional[Callable[[str], None]] = None,
     tolerance_mag: float = 0.8,
+    parametrization: str = "freedman_fixed",
 ) -> FreedmanCaseResult:
-    """End-to-end Case A reproduction."""
+    """End-to-end Case A reproduction.
+
+    Parameters
+    ----------
+    parametrization:
+        "freedman_fixed" (default) holds M_TRGB, E(B−V), β at their
+        published central values and samples only H₀ — reproducing
+        Freedman's frequentist-profile approach. "bayesian_sampled"
+        samples all 4 parameters with Gaussian priors (widens the
+        posterior, retained for sensitivity analysis).
+    """
     _log = log_fn or (lambda m: logger.info(m))
     if bundle.case != "case_a":
         raise ValueError(f"Expected case_a bundle; got {bundle.case}")
@@ -332,9 +343,27 @@ def run_freedman_2020(
     host_tips: Dict[str, EdgeDetectionResult] = {}
     host_detections_all: Dict[str, Dict[str, EdgeDetectionResult]] = {}
     for host, field in bundle.host_fields.items():
-        field_qc = field.quality_cut()
+        is_stub = bool(field.metadata.get("stub_no_photometry", 0)) or field.mag.size == 0
+        field_qc = field.quality_cut() if not is_stub else field
         meta = field_qc.metadata.copy()
         meta.setdefault("EBV_SFD", 0.03)
+        published = bundle.published_mu_hosts.get(host)
+
+        if is_stub:
+            # No photometry — skip edge detection; the primary path uses the
+            # published μ directly.
+            if published is None:
+                continue
+            mu_pub, sigma_pub = published
+            host_tips[host] = EdgeDetectionResult(
+                I_TRGB=mu_pub + (-4.05),
+                sigma_I_TRGB=sigma_pub,
+                method="published_mu_TRGB_stub",
+                hyperparameters={"source": "manifest"},
+                diagnostics={},
+            )
+            continue
+
         dereddened, _ = apply_extinction_freedman_2020(
             field_qc.mag, meta, filter_name="F814W"
         )
@@ -344,7 +373,6 @@ def run_freedman_2020(
             sigma_mag=field_qc.sigma_mag,
             color=field_qc.color,
         )
-        published = bundle.published_mu_hosts.get(host)
         if published is not None:
             expected_tip = published[0] + (-4.05)
             host_search = (expected_tip - 0.75, expected_tip + 0.75)
@@ -385,8 +413,9 @@ def run_freedman_2020(
     likelihood_inputs, distance_chain = _build_likelihood_inputs(
         bundle, anchor_tip, host_tips
     )
+    cfg = FREEDMAN_2020_MODEL.with_parametrization(parametrization)
     mcmc_result = run_freedman_case(
-        FREEDMAN_2020_MODEL,
+        cfg,
         likelihood_inputs,
         settings,
         chain_out_path=chain_out_path,

@@ -43,6 +43,7 @@ def run_freedman_2024(
     chain_out_path: Optional[Path] = None,
     log_fn: Optional[Callable[[str], None]] = None,
     tolerance_mag: float = 1.22,
+    parametrization: str = "freedman_fixed",
 ) -> FreedmanCaseResult:
     """End-to-end Case B reproduction."""
     _log = log_fn or (lambda m: logger.info(m))
@@ -91,9 +92,25 @@ def run_freedman_2024(
     host_tips: Dict[str, EdgeDetectionResult] = {}
     host_detections_all: Dict[str, Dict[str, EdgeDetectionResult]] = {}
     for host, field in bundle.host_fields.items():
-        field_qc = field.quality_cut()
+        is_stub = bool(field.metadata.get("stub_no_photometry", 0)) or field.mag.size == 0
+        field_qc = field.quality_cut() if not is_stub else field
         meta = field_qc.metadata.copy()
         meta.setdefault("EBV_SFD", 0.02)
+        published = bundle.published_mu_hosts.get(host)
+
+        if is_stub:
+            if published is None:
+                continue
+            mu_pub, sigma_pub = published
+            host_tips[host] = EdgeDetectionResult(
+                I_TRGB=mu_pub + (-4.05),
+                sigma_I_TRGB=sigma_pub,
+                method="published_mu_TRGB_stub",
+                hyperparameters={"source": "manifest"},
+                diagnostics={},
+            )
+            continue
+
         dereddened, _ = apply_extinction_freedman_2024(
             field_qc.mag, meta, filter_name="F150W"
         )
@@ -103,7 +120,6 @@ def run_freedman_2024(
             sigma_mag=field_qc.sigma_mag,
             color=field_qc.color,
         )
-        published = bundle.published_mu_hosts.get(host)
         if published is not None:
             expected_tip = published[0] + (-4.05)
             host_search = (expected_tip - 0.75, expected_tip + 0.75)
@@ -136,8 +152,9 @@ def run_freedman_2024(
     likelihood_inputs, distance_chain = _build_likelihood_inputs(
         bundle, anchor_tip, host_tips
     )
+    cfg = FREEDMAN_2024_MODEL.with_parametrization(parametrization)
     mcmc_result = run_freedman_case(
-        FREEDMAN_2024_MODEL,
+        cfg,
         likelihood_inputs,
         settings,
         chain_out_path=chain_out_path,

@@ -85,19 +85,29 @@ def _initial_ball(
     n_walkers: int,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Gaussian ball centered on each prior's mean (or box midpoint)."""
-    centres = np.empty(cfg.n_parameters)
-    widths = np.empty(cfg.n_parameters)
-    for i, prior in enumerate(cfg.priors):
+    """Gaussian ball centered on each prior's mean (or box midpoint).
+
+    In ``freedman_fixed`` parametrization only H0 is sampled, so the ball
+    is 1-D.
+    """
+    # Priors corresponding to the SAMPLED parameters only.
+    if cfg.parametrization == "freedman_fixed":
+        sampled_priors = (cfg.priors[0],)
+    else:
+        sampled_priors = cfg.priors
+
+    n_sampled = len(sampled_priors)
+    centres = np.empty(n_sampled)
+    widths = np.empty(n_sampled)
+    for i, prior in enumerate(sampled_priors):
         if prior.sigma > 0.0:
             centres[i] = prior.mean
             widths[i] = 0.5 * prior.sigma
         else:
             centres[i] = 0.5 * (prior.lo + prior.hi)
             widths[i] = 0.05 * (prior.hi - prior.lo)
-    ball = centres + widths * rng.standard_normal((n_walkers, cfg.n_parameters))
-    # Clip to stay inside box.
-    for i, prior in enumerate(cfg.priors):
+    ball = centres + widths * rng.standard_normal((n_walkers, n_sampled))
+    for i, prior in enumerate(sampled_priors):
         ball[:, i] = np.clip(ball[:, i], prior.lo + 1e-6, prior.hi - 1e-6)
     return ball
 
@@ -175,8 +185,10 @@ def run_freedman_case(
     post = chain_full[settings.n_burnin:]
     post_lp = log_prob_full[settings.n_burnin:]
 
+    sampled_names = list(cfg.sampled_param_names)
+
     rhat = _gelman_rubin(post)
-    rhat_dict = {p: float(r) for p, r in zip(cfg.param_names, rhat)}
+    rhat_dict = {p: float(r) for p, r in zip(sampled_names, rhat)}
     _log(
         f"[{cfg.name}] Gelman-Rubin R̂: "
         + ", ".join(f"{k}={v:.4f}" for k, v in rhat_dict.items())
@@ -193,8 +205,8 @@ def run_freedman_case(
 
     idx_best = int(np.argmax(flat_lp))
     theta_best = flat[idx_best]
-    best_fit = {p: float(v) for p, v in zip(cfg.param_names, theta_best)}
-    credible = _summarize(flat, cfg.param_names)
+    best_fit = {p: float(v) for p, v in zip(sampled_names, theta_best)}
+    credible = _summarize(flat, sampled_names)
 
     _log(
         f"[{cfg.name}] best-fit: "
@@ -209,14 +221,15 @@ def run_freedman_case(
             log_prob=log_prob_full,
             post=flat,
             post_log_prob=flat_lp,
-            param_names=np.array(cfg.param_names),
+            param_names=np.array(sampled_names),
             best_fit=theta_best,
+            parametrization=cfg.parametrization,
         )
         _log(f"[{cfg.name}] chain saved → {chain_out_path}")
 
     return MCMCResult(
         case_name=cfg.name,
-        param_names=list(cfg.param_names),
+        param_names=sampled_names,
         samples=flat,
         chain=chain_full,
         log_prob=log_prob_full,

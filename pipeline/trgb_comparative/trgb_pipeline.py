@@ -124,6 +124,9 @@ class TRGBComparativePipeline(AnalysisPipeline):
         short = bool(ctx.get("short", False))
         enforce_preregistration = bool(ctx.get("enforce_preregistration", True))
         strict_data = bool(ctx.get("strict_data", True))
+        parametrization = str(ctx.get("parametrization", "freedman_fixed"))
+        tip_source_a = str(ctx.get("tip_source_a", "freedman_2019"))
+        tip_source_b = str(ctx.get("tip_source_b", "freedman_2025"))
 
         if enforce_preregistration:
             try:
@@ -140,18 +143,22 @@ class TRGBComparativePipeline(AnalysisPipeline):
         loader = DataLoader(log_file=self.log_file)
 
         # --- Load bundles ---
-        self.log_progress("Loading Case A (Freedman 2020) data bundle…")
+        self.log_progress(
+            f"Loading Case A (Freedman 2020) bundle with tip_source={tip_source_a}…"
+        )
         try:
-            bundle_a = load_case_a(loader, strict=strict_data)
+            bundle_a = load_case_a(loader, strict=strict_data, tip_source=tip_source_a)
         except DataUnavailableError as exc:
             if strict_data:
                 self.log_progress(f"Case A data missing: {exc}")
                 raise
             bundle_a = None
             self.log_progress(f"Case A data missing (strict_data=False): {exc}")
-        self.log_progress("Loading Case B (Freedman 2024) data bundle…")
+        self.log_progress(
+            f"Loading Case B (Freedman 2024/2025) bundle with tip_source={tip_source_b}…"
+        )
         try:
-            bundle_b = load_case_b(loader, strict=strict_data)
+            bundle_b = load_case_b(loader, strict=strict_data, tip_source=tip_source_b)
         except DataUnavailableError as exc:
             if strict_data:
                 self.log_progress(f"Case B data missing: {exc}")
@@ -164,13 +171,16 @@ class TRGBComparativePipeline(AnalysisPipeline):
         # --- Case A ---
         case_a_result: Optional[FreedmanCaseResult] = None
         if bundle_a is not None and bundle_a.host_fields:
-            self.log_progress("Running Case A (Freedman 2020) reproduction…")
+            self.log_progress(
+                f"Running Case A reproduction (parametrization={parametrization})…"
+            )
             case_a_result = run_freedman_2020(
                 bundle_a,
                 settings,
                 chain_out_path=chains_dir / "freedman_2020.npz",
                 log_fn=self.log_progress,
                 tolerance_mag=0.8,
+                parametrization=parametrization,
             )
         else:
             self.log_progress("Case A skipped: no host fields available.")
@@ -178,13 +188,16 @@ class TRGBComparativePipeline(AnalysisPipeline):
         # --- Case B ---
         case_b_result: Optional[FreedmanCaseResult] = None
         if bundle_b is not None and bundle_b.host_fields:
-            self.log_progress("Running Case B (Freedman 2024) reproduction…")
+            self.log_progress(
+                f"Running Case B reproduction (parametrization={parametrization})…"
+            )
             case_b_result = run_freedman_2024(
                 bundle_b,
                 settings,
                 chain_out_path=chains_dir / "freedman_2024.npz",
                 log_fn=self.log_progress,
                 tolerance_mag=1.22,
+                parametrization=parametrization,
             )
         else:
             self.log_progress("Case B skipped: no host fields available.")

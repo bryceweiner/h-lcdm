@@ -58,7 +58,22 @@ class PriorBox:
 
 @dataclass(frozen=True)
 class FreedmanModelConfig:
-    """Freedman reproduction model config (Case A or Case B)."""
+    """Freedman reproduction model config (Case A or Case B).
+
+    ``parametrization`` controls which parameters are actually sampled:
+
+    - ``"bayesian_sampled"``: all 4 parameters (H0, M_TRGB, EBV, beta)
+      sampled with the full priors list. This is the Bayesian-
+      conservative mode retained from the original pipeline.
+    - ``"freedman_fixed"``: only H0 is sampled. M_TRGB, EBV, and beta
+      are held fixed at the prior's ``mean``. This reproduces
+      Freedman's frequentist-profile approach and yields a σ(H0)
+      comparable to Freedman's published ±0.8 (Case A) / ±1.22
+      (Case B) rather than our ~±3.7 Bayesian-sampled width.
+
+    Both parametrizations use the same analytic M_B profile-out over
+    the Hubble-flow block.
+    """
 
     name: str                               # "freedman_2020" or "freedman_2024"
     priors: Tuple[PriorBox, ...]
@@ -66,10 +81,51 @@ class FreedmanModelConfig:
     published_H0: float
     published_sigma_stat: float
     published_sigma_sys: float
+    parametrization: str = "bayesian_sampled"
 
     @property
     def n_parameters(self) -> int:
+        """Number of actually sampled parameters."""
+        if self.parametrization == "freedman_fixed":
+            return 1
         return len(self.param_names)
+
+    def fill_theta(self, sampled_theta: np.ndarray) -> np.ndarray:
+        """Expand a sampled-parameter vector into the full (H0, M_TRGB, EBV, beta) vector.
+
+        In ``bayesian_sampled`` mode this is the identity. In
+        ``freedman_fixed`` mode ``sampled_theta`` is length 1 (just H0);
+        the other three parameters take their prior means.
+        """
+        if self.parametrization == "freedman_fixed":
+            H0 = float(sampled_theta[0])
+            full = np.zeros(len(self.param_names))
+            full[0] = H0
+            for i, p in enumerate(self.priors):
+                if i == 0:  # H0
+                    continue
+                full[i] = p.mean
+            return full
+        return np.asarray(sampled_theta, dtype=float)
+
+    def with_parametrization(self, parametrization: str) -> "FreedmanModelConfig":
+        if parametrization not in ("bayesian_sampled", "freedman_fixed"):
+            raise ValueError(f"Unknown parametrization: {parametrization!r}")
+        return FreedmanModelConfig(
+            name=self.name,
+            priors=self.priors,
+            param_names=self.param_names,
+            published_H0=self.published_H0,
+            published_sigma_stat=self.published_sigma_stat,
+            published_sigma_sys=self.published_sigma_sys,
+            parametrization=parametrization,
+        )
+
+    @property
+    def sampled_param_names(self) -> Tuple[str, ...]:
+        if self.parametrization == "freedman_fixed":
+            return (self.param_names[0],)
+        return self.param_names
 
 
 # Published values from the two CCHP papers.
@@ -78,9 +134,10 @@ FREEDMAN_2020_MODEL = FreedmanModelConfig(
     param_names=("H0", "M_TRGB", "EBV", "beta"),
     priors=(
         PriorBox("H0", 55.0, 85.0),
-        PriorBox("M_TRGB", -5.0, -3.5, mean=-4.047, sigma=0.045),
+        PriorBox("M_TRGB", -5.0, -3.5, mean=-4.049, sigma=0.045),
+        # Freedman 2019 §4: MT814 RGB = -4.049 ± 0.022 (stat) ± 0.039 (sys)
         PriorBox("EBV", -0.10, 0.30, mean=0.07, sigma=0.03),
-        PriorBox("beta", -0.2, 0.6, mean=0.2, sigma=0.1),
+        PriorBox("beta", -0.2, 0.6, mean=0.20, sigma=0.1),  # Rizzi 2007 fixed β=0.20
     ),
     published_H0=69.8,
     published_sigma_stat=0.8,
@@ -166,9 +223,19 @@ def _unpack(theta: np.ndarray) -> Tuple[float, float, float, float]:
     return float(theta[0]), float(theta[1]), float(theta[2]), float(theta[3])
 
 
-def log_prior(theta: np.ndarray, cfg: FreedmanModelConfig) -> float:
+def log_prior(sampled_theta: np.ndarray, cfg: FreedmanModelConfig) -> float:
+    """Log-prior over the SAMPLED parameters only.
+
+    In ``freedman_fixed`` mode, only H0's prior is evaluated (the other
+    parameters are held fixed at their means, so they contribute a
+    constant to the log-posterior that can be dropped).
+    """
+    sampled_theta = np.asarray(sampled_theta, dtype=float)
+    if cfg.parametrization == "freedman_fixed":
+        contrib = cfg.priors[0].log_prior(float(sampled_theta[0]))
+        return float(contrib) if np.isfinite(contrib) else -np.inf
     total = 0.0
-    for value, prior in zip(theta, cfg.priors):
+    for value, prior in zip(sampled_theta, cfg.priors):
         contrib = prior.log_prior(float(value))
         if not np.isfinite(contrib):
             return -np.inf
@@ -289,15 +356,20 @@ def _hosts_sn_chi2_marginalized(
 
 
 def log_posterior(
-    theta: np.ndarray,
+    sampled_theta: np.ndarray,
     cfg: FreedmanModelConfig,
     inputs: FreedmanLikelihoodInputs,
 ) -> float:
-    lp = log_prior(np.asarray(theta, dtype=float), cfg)
+    sampled_theta = np.asarray(sampled_theta, dtype=float)
+    lp = log_prior(sampled_theta, cfg)
     if not np.isfinite(lp):
         return -np.inf
+    # Expand the sampled vector into the full (H0, M_TRGB, EBV, beta) for
+    # downstream likelihood evaluation — fixed-nuisance runs pad with
+    # prior means.
+    full_theta = cfg.fill_theta(sampled_theta)
     try:
-        ll = _hosts_sn_chi2_marginalized(np.asarray(theta, dtype=float), cfg, inputs)
+        ll = _hosts_sn_chi2_marginalized(full_theta, cfg, inputs)
     except (ValueError, FloatingPointError, np.linalg.LinAlgError):
         return -np.inf
     if not np.isfinite(ll):
