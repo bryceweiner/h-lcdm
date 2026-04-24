@@ -4023,6 +4023,42 @@ class DataLoader:
         self.log_message(f"Loaded SN host TRGB JWST photometry for {len(hosts)} hosts")
         return {'name': 'SN host TRGB JWST photometry (F090W/F150W)', 'hosts': hosts}
 
+    def load_freedman_2019_table1(self) -> Dict[str, Any]:
+        """Freedman 2019 CCHP VIII Table 1 — TRGB calibration sample.
+
+        Source: Freedman et al. 2019, ApJ 882, 34 (arXiv:1907.05922), Table 1.
+        Transcribed to ``data/catalogs/freedman_2019_table1.csv``.
+
+        Key column: per-host ``A_F814W`` (Galactic foreground extinction
+        in the F814W band). These are the authoritative per-host
+        extinction values Freedman used; they replace per-field SFD
+        lookup for reproduction fidelity.
+        """
+        path = Path("data") / "catalogs" / "freedman_2019_table1.csv"
+        if not path.exists():
+            raise DataUnavailableError(
+                f"Freedman 2019 Table 1 transcription missing at {path}."
+            )
+        df = pd.read_csv(path, comment='#')
+        hosts: Dict[str, Dict[str, Any]] = {}
+        for _, row in df.iterrows():
+            h = str(row['host_canon'])
+            hosts[h] = {
+                'morph_type': str(row['morph_type']),
+                'A_F814W': float(row['A_F814W']),
+                'distance_kpc': float(row['distance_kpc']),
+                'sn_name': str(row['sn_name']),
+                'source': str(row['source']),
+            }
+        self.log_message(
+            f"Loaded Freedman 2019 Table 1: {len(hosts)} hosts with per-host A_F814W."
+        )
+        return {
+            'name': 'Freedman 2019 CCHP VIII Table 1 (calibration sample)',
+            'hosts': hosts,
+            'reference': 'Freedman et al. 2019, ApJ 882, 34',
+        }
+
     def load_freedman_2019_table3(self) -> Dict[str, Any]:
         """Freedman 2019 CCHP VIII Table 3 per-galaxy TRGB distance moduli.
 
@@ -4170,6 +4206,7 @@ class DataLoader:
             'sn_host_trgb_hst_manifest': (trgb_dir / "sn_host_trgb_hst" / "manifest.csv").exists(),
             'sn_host_trgb_jwst_manifest': (trgb_dir / "sn_host_trgb_jwst" / "manifest.csv").exists(),
             'anand_trgb_catalog': (trgb_dir / "anand2022_catalog.csv").exists(),
+            'freedman_2019_table1': Path("data/catalogs/freedman_2019_table1.csv").exists(),
             'freedman_2019_table3': Path("data/catalogs/freedman_2019_table3.csv").exists(),
             'freedman_2025_table2': Path("data/catalogs/freedman_2025_table2.csv").exists(),
         }

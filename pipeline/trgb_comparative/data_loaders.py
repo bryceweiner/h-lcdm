@@ -178,6 +178,14 @@ def load_case_a(loader: DataLoader, *, strict: bool = True) -> TRGBDataBundle:
     """
     anchor = _make_anchor_from_dict(loader.load_pietrzynski_lmc_distance(), "LMC")
 
+    # Per-host A_F814W from Freedman 2019 Table 1 — authoritative foreground
+    # extinction values used by the CCHP TRGB reduction.
+    try:
+        table1 = loader.load_freedman_2019_table1()
+        a_f814w_by_host = {h: v["A_F814W"] for h, v in table1["hosts"].items()}
+    except Exception:
+        a_f814w_by_host = {}
+
     anchor_fields: Dict[str, TRGBPhotometryField] = {}
     host_fields: Dict[str, TRGBPhotometryField] = {}
     published_mu_hosts: Dict[str, Tuple[float, float]] = {}
@@ -212,10 +220,15 @@ def load_case_a(loader: DataLoader, *, strict: bool = True) -> TRGBDataBundle:
                 "F555W_err": rec.get("F555W_err"),
                 "flag": rec.get("flag"),
             }
+            # Attach Freedman 2019 Table 1 A_F814W when available.
+            host_metadata: Dict[str, float] = {}
+            if host in a_f814w_by_host:
+                host_metadata["A_F814W"] = a_f814w_by_host[host]
             host_fields[host] = _photometry_from_dict(
                 photom, field_id=host,
                 primary_mag="F814W", primary_err="F814W_err",
                 color_bands=("F555W", "F814W"),
+                metadata=host_metadata,
                 published_mu=rec["published_mu_TRGB"],
                 published_sigma=rec["published_sigma_mu"],
             )

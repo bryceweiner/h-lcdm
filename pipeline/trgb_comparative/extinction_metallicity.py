@@ -76,25 +76,40 @@ def apply_extinction_freedman_2020(
 ) -> tuple:
     """Return (mag_dereddened, ExtinctionCorrection) under Freedman 2019/2020.
 
-    Uses SFD E(B-V) with Cardelli 1989 R_V = 3.1 extinction law. Filter
-    coefficients per Schlafly & Finkbeiner 2011 Table 6.
+    Prefers ``A_F814W`` from Freedman 2019 Table 1 (published per-host
+    foreground extinction). Falls back to computing A from metadata's
+    ``EBV_SFD`` if the per-host value is not provided — that code path
+    is only reachable for hosts absent from Freedman's Table 1, and
+    should be treated as a sensitivity-variant placeholder.
+
+    Uses SFD E(B-V) with Cardelli 1989 R_V = 3.1 extinction law when
+    falling back. Filter coefficients per Schlafly & Finkbeiner 2011
+    Table 6.
     """
-    ebv = _ebv_from_field(metadata, "EBV_SFD")
     coeff = A_OVER_EBV_CCM89.get(filter_name)
     if coeff is None:
         raise ValueError(f"Unknown filter for Freedman 2020 extinction: {filter_name!r}")
-    A = coeff * ebv
-    # Freedman 2020's systematic budget on foreground extinction is
-    # dominated by SFD 14 % scatter + any DIB zero-point uncertainty.
-    sigma_A_sfd = 0.14 * A
-    sigma_A_zero = 0.01  # mag, zero-point offset budget
-    sigma_total = float(np.sqrt(sigma_A_sfd ** 2 + sigma_A_zero ** 2))
+
+    if filter_name == "F814W" and "A_F814W" in metadata:
+        # Authoritative Freedman 2019 Table 1 value.
+        A = float(metadata["A_F814W"])
+        ebv = A / coeff                          # back-derive E(B-V) for provenance
+        prescription = "freedman_2019_table1_A_F814W"
+        sigma_total = max(0.14 * A, 0.01)        # conservative 14 % stat on A + 0.01 zero-point
+    else:
+        ebv = _ebv_from_field(metadata, "EBV_SFD")
+        A = coeff * ebv
+        sigma_A_sfd = 0.14 * A
+        sigma_A_zero = 0.01
+        sigma_total = float(np.sqrt(sigma_A_sfd ** 2 + sigma_A_zero ** 2))
+        prescription = "freedman_2020_sfd_ccm89_placeholder_ebv"
+
     return mag - A, ExtinctionCorrection(
         filter_name=filter_name,
         EBV=ebv,
         A_filter=A,
         coefficient=coeff,
-        prescription="freedman_2020_sfd_ccm89",
+        prescription=prescription,
         systematic_budget=sigma_total,
     )
 

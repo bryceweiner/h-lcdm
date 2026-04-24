@@ -1,0 +1,30 @@
+# Freedman 2019 CCHP VIII Table 1 — TRGB Calibration Sample
+# Source: Freedman, Madore, Hatt, Hoyt, Jang, et al. 2019, ApJ 882, 34 (arXiv:1907.05922)
+# DOI: 10.3847/1538-4357/ab2f73
+# Transcribed: 2026-04-24 from the paper PDF (Section 2, Table 1).
+# Columns:
+#   host_canon    = canonical host galaxy name
+#   morph_type    = morphological type (NED)
+#   A_F814W       = Galactic foreground extinction in F814W (mag), Freedman's published value
+#                   (SFD-based; these are the values that enter the CCHP TRGB reduction)
+#   distance_kpc  = adopted distance used for annotation (not for the fit)
+#   sn_name       = primary calibrator SN Ia name
+#   source        = "CCHP" or "JL" per Freedman 2019 Table 1's internal partition
+#   notes         = free-text
+# Spot-check: NGC 4038 A_F814W=0.070; NGC 5584 A_F814W=0.059 match paper verbatim.
+host_canon,morph_type,A_F814W,distance_kpc,sn_name,source,notes
+M101,SAB(rs)cd,0.013,6500,2011fe,CCHP,
+NGC 3627,SAB(S)b,0.050,11100,1989B,CCHP,M66
+NGC 3368,SAB(rs)ab,0.038,11600,1998bu,CCHP,M96
+NGC 4536,SAB(rs)bc,0.027,15600,1981B,CCHP,
+NGC 4526,SAB0(s) edge-on,0.033,15800,1994D,CCHP,
+NGC 4424,SAB(s),0.031,15800,2012cg,CCHP,
+NGC 1448,SAcd edge-on,0.021,18400,2001el,CCHP,
+NGC 1365,SB(s)b,0.031,18700,2012fr,CCHP,
+NGC 1316,SAB(0)peculiar,0.031,19600,"1980N, 1981D, 2006dd",CCHP,
+NGC 1404,E1,0.017,19300,"2007on, 2011iv",CCHP,
+NGC 4038,SB(s)m pec,0.070,21700,2007sr,JL,
+NGC 5584,SAB(rs)cd,0.059,23100,2007af,JL,
+NGC 3021,SA(rs)bc,0.020,27800,1995al,JL,
+NGC 3370,SA(s)c,0.046,28500,1994ae,JL,
+NGC 1309,SA(s)bc,0.060,31600,2002fk,JL,
