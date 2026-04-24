@@ -54,23 +54,62 @@ class Stage1Config:
     )
     perturbative_threshold_mpc: float = 1.0
 
+    # Reproduction configuration
+    parametrization: str = (
+        "freedman_fixed — only H0 is sampled; M_TRGB, E(B-V), and β are held "
+        "at published central values (Freedman's frequentist-profile approach)."
+    )
+    parametrization_sensitivity: str = (
+        "bayesian_sampled — all 4 parameters (H0, M_TRGB, E(B-V), β) sampled "
+        "with Gaussian priors; retained as a sensitivity-analysis variant."
+    )
+    tip_source_case_a: str = (
+        "freedman_2019 — per-host μ_TRGB read from data/catalogs/"
+        "freedman_2019_table3.csv (Freedman 2019 Table 3 transcription, SHA-256 "
+        "verified; 15 unique hosts, 18 SN Ia calibrators)."
+    )
+    tip_source_case_b: str = (
+        "freedman_2025 — per-host μ_TRGB read from data/catalogs/"
+        "freedman_2025_table2.csv (Freedman 2025 Table 2 transcription; 10 "
+        "unique hosts with weighted TRGB+JAGB distance moduli)."
+    )
+    tip_source_sensitivity: str = (
+        "anand_2022 — Anand 2021 independent EDD reduction μ_TRGB (variant "
+        "cross-check against the Freedman-paper primary)."
+    )
+    per_host_extinction_source: str = (
+        "Freedman 2019 Table 1 per-host A_F814W values "
+        "(data/catalogs/freedman_2019_table1.csv). Fallback: placeholder "
+        "EBV_SFD for hosts not in Freedman Table 1 — sensitivity-only path."
+    )
+    hubble_flow_z_cuts: str = (
+        "0.023 ≤ z_CMB ≤ 0.15 (Freedman 2019 §6.3 Supercal subsample). "
+        "Applied to Pantheon+SH0ES non-calibrator SNe; N_flow ≈ 496."
+    )
+
     # Case A
     case_a_anchor: str = "LMC (Pietrzyński 2019 DEB); μ = 18.477 ± 0.026 (stat) ± 0.024 (sys)."
     case_a_d_local_mpc: float = 0.0496
     case_a_d_local_sigma_mpc: float = 0.0009
     case_a_sample_criteria: List[str] = field(
         default_factory=lambda: [
-            "Hosts in Freedman 2019 ApJ 882, 34 Table 1 (N=18 TRGB-calibrated SN Ia hosts).",
-            "Plus Anand 2022 catalog hosts meeting ALL of:",
-            "  (a) LMC-calibrated TRGB distance available",
-            "  (b) HST F814W photometry complete ≥1.0 mag below the tip",
-            "  (c) RGB star count ≥ 400 in the CMD selection box",
-            "  (d) at least one spec-confirmed SN Ia with a Pantheon+ entry",
+            "Hosts in Freedman 2019 ApJ 882, 34 Table 3 (15 unique TRGB hosts, "
+            "18 SN Ia calibrators). Each Table 3 host is included with its "
+            "Freedman-published μ_TRGB value.",
+            "HST photometry from the Anand 2021 EDD reduction attached where "
+            "available (10 hosts: NGC 1316, 1365, 1404, 1448, 3627, 4038, "
+            "4424, 4526, 4536, 5643); remaining 5 hosts (M101, NGC 1309, 3021, "
+            "3368, 3370, 5584) enter as 'photometry stubs' — published μ only.",
+            "NGC 4258 is excluded from Case A (anchor-galaxy contamination; "
+            "enforced by scripts/build_trgb_manifests.py CASE_A_EXCLUDED_HOSTS).",
         ]
     )
     case_a_primary_band: str = "F814W"
-    case_a_extinction: str = "SFD + CCM89 (Schlegel 1998 + Cardelli 1989)"
-    case_a_metallicity: str = "Freedman 2020 F814W color slope"
+    case_a_extinction: str = (
+        "Freedman 2019 Table 1 per-host A_F814W values (authoritative paper-"
+        "tabulated extinction). Freedman's own SFD + CCM89 R_V=3.1 values."
+    )
+    case_a_metallicity: str = "Freedman 2020 F814W color slope, β = 0.20 (Rizzi 2007), fixed."
     case_a_reproduction_tolerance_mag: float = 0.8
 
     # Case B
@@ -79,23 +118,39 @@ class Stage1Config:
     case_b_d_local_sigma_mpc: float = 0.08
     case_b_sample_criteria: List[str] = field(
         default_factory=lambda: [
-            "Hosts in CCHP 2024 JWST sample (Freedman et al. 2024, N=10 JWST NIRCam).",
-            "Plus HST archival hosts with NGC 4258-calibrated TRGB distances meeting:",
-            "  (a) NGC 4258-anchored TRGB distance available",
-            "  (b) photometry complete ≥1.0 mag below the tip",
-            "  (c) RGB star count ≥ 400",
-            "  (d) at least one spec-confirmed SN Ia with a Pantheon+ entry",
+            "Hosts in Freedman 2025 ApJ 985, 203 Table 2 (10 JWST-observed "
+            "hosts, 11 SN Ia calibrators). Each is included with its "
+            "published weighted μ_bar.",
+            "JWST raw NIRCam photometry was NOT downloaded & reduced; public "
+            "from MAST (GO-1995, 2875, 3055) but DOLPHOT-level re-reduction "
+            "is out of scope. We use Freedman 2025's published μ_TRGB values "
+            "directly (faithful 'reproduction of published' posture).",
+            "Edge-detection sensitivity variants operate on HST-era photometry "
+            "where overlap exists (NGC 1365, 1448, 4038, 4424, 4536, 5643).",
         ]
     )
-    case_b_primary_band: str = "F150W"
-    case_b_extinction: str = "SFD + CCM89 extended to JWST NIR (CCHP 2024 treatment)"
-    case_b_metallicity: str = "CCHP 2024 NIR color slope (dM/d(F090W-F150W))"
+    case_b_primary_band: str = "F150W (reported in the paper); μ_TRGB values used are the weighted TRGB+JAGB μ_bar"
+    case_b_extinction: str = (
+        "Placeholder (JWST NIRCam per-host extinction infrastructure "
+        "not in pipeline). Sensitivity-only path; primary reproduction uses "
+        "Freedman 2025 Table 2 published μ_bar directly and therefore does "
+        "not depend on our per-field extinction."
+    )
+    case_b_metallicity: str = (
+        "Inherits M_TRGB_abs = -4.049 common zero point (Freedman 2025 §14.2: "
+        "'F19 and F21 share a common TRGB absolute magnitude zero point')."
+    )
     case_b_reproduction_tolerance_mag: float = 1.22
 
     # Edge detection
-    edge_detection_primary: str = "Sobel kernel width = 2.0 bins (Freedman published choice)"
+    edge_detection_primary: str = (
+        "Published μ_TRGB (bypass). Edge detection runs on the raw photometry "
+        "for sensitivity diagnostics only; the primary path reads μ_TRGB "
+        "from the Freedman-paper table (tip_source)."
+    )
     edge_detection_sensitivity: Tuple[str, ...] = (
         "Sobel kernel width 1.0",
+        "Sobel kernel width 2.0 (Freedman published choice)",
         "Sobel kernel width 3.0",
         "Model-based (Makarov 2006-style broken power-law fit)",
         "Bayesian (Hatt 2017-style posterior over tip location)",
@@ -108,21 +163,27 @@ class Stage1Config:
     mcmc_rhat_gate: float = 1.01
     mcmc_seed: int = 42
 
-    # Prior boxes per free parameter (H0, M_TRGB, E(B-V), beta)
+    # Prior boxes per parameter. In the freedman_fixed parametrization only
+    # the H0 prior is actively sampled; the remaining parameters are held
+    # at their prior 'mean' values.
     priors_freedman_2020: Dict[str, Dict[str, float]] = field(
         default_factory=lambda: {
             "H0": {"lo": 55.0, "hi": 85.0},
-            "M_TRGB": {"lo": -5.0, "hi": -3.5, "mean": -4.047, "sigma": 0.045},
+            "M_TRGB": {"lo": -5.0, "hi": -3.5, "mean": -4.049, "sigma": 0.045},
+            # Freedman 2019 §4: MT814_RGB = -4.049 ± 0.022 (stat) ± 0.039 (sys)
             "EBV": {"lo": -0.10, "hi": 0.30, "mean": 0.07, "sigma": 0.03},
-            "beta": {"lo": -0.2, "hi": 0.6, "mean": 0.2, "sigma": 0.1},
+            "beta": {"lo": -0.2, "hi": 0.6, "mean": 0.20, "sigma": 0.1},
+            # β = 0.20 Rizzi 2007, held fixed in freedman_fixed mode.
         }
     )
     priors_freedman_2024: Dict[str, Dict[str, float]] = field(
         default_factory=lambda: {
             "H0": {"lo": 55.0, "hi": 85.0},
-            "M_TRGB": {"lo": -5.5, "hi": -4.0, "mean": -4.362, "sigma": 0.05},
+            # Freedman 2025 §14.2: "F19 and F21 share a common TRGB absolute
+            # magnitude zero point, M814W = -4.049 mag".
+            "M_TRGB": {"lo": -4.20, "hi": -3.90, "mean": -4.049, "sigma": 0.05},
             "EBV": {"lo": -0.10, "hi": 0.30, "mean": 0.07, "sigma": 0.03},
-            "beta": {"lo": -0.2, "hi": 0.6, "mean": 0.08, "sigma": 0.1},
+            "beta": {"lo": -0.2, "hi": 0.6, "mean": 0.20, "sigma": 0.1},
         }
     )
 
@@ -148,6 +209,15 @@ class Stage1Config:
         lines.append(f"- C(G): {self.clustering_coefficient_source}\n")
         lines.append(f"- d_CMB: {self.d_cmb_source}\n")
         lines.append(f"- Perturbative-regime threshold: d_local < {self.perturbative_threshold_mpc} Mpc flags breakdown.\n\n")
+
+        lines.append("## Reproduction configuration\n\n")
+        lines.append(f"- Parametrization (primary): {self.parametrization}\n")
+        lines.append(f"- Parametrization (sensitivity variant): {self.parametrization_sensitivity}\n")
+        lines.append(f"- Case A tip source: {self.tip_source_case_a}\n")
+        lines.append(f"- Case B tip source: {self.tip_source_case_b}\n")
+        lines.append(f"- Tip source sensitivity variant: {self.tip_source_sensitivity}\n")
+        lines.append(f"- Per-host extinction: {self.per_host_extinction_source}\n")
+        lines.append(f"- Hubble-flow z cuts: {self.hubble_flow_z_cuts}\n\n")
 
         lines.append("## Case A — Freedman 2019/2020 (LMC anchor)\n\n")
         lines.append(f"- Anchor: {self.case_a_anchor}\n")
