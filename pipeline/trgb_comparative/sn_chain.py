@@ -252,6 +252,8 @@ class SNChainResult:
     n_steps: int = 0
     n_burnin: int = 0
     n_data: int = 0
+    n_calibrators: int = 0
+    n_flow: int = 0
     mean_acceptance: float = 0.0
     samples: Optional[np.ndarray] = None
     published_target_H0: float = 0.0
@@ -275,6 +277,8 @@ class SNChainResult:
             "n_steps": int(self.n_steps),
             "n_burnin": int(self.n_burnin),
             "n_data": int(self.n_data),
+            "n_calibrators": int(self.n_calibrators),
+            "n_flow": int(self.n_flow),
             "mean_acceptance": float(self.mean_acceptance),
             "published_target_H0": float(self.published_target_H0),
             "published_sigma_stat": float(self.published_sigma_stat),
@@ -399,6 +403,8 @@ def run_sn_chain(
         n_steps=int(settings.n_steps),
         n_burnin=int(settings.n_burnin),
         n_data=chain.n_data(),
+        n_calibrators=chain.n_calibrators(),
+        n_flow=chain.n_flow(),
         mean_acceptance=mean_acc,
         samples=flat,
         published_target_H0=chain.published_target_H0,

@@ -137,6 +137,70 @@ def _case_section(
     return "".join(lines)
 
 
+def _render_chain_matrix_section(
+    chain_matrix: Optional[Dict[str, Dict[str, Dict[str, object]]]],
+) -> str:
+    """Render the 8-chain (4 SN systems × 2 cases) table block."""
+    if not chain_matrix:
+        return ""
+    lines: List[str] = ["## Per-SN-system MCMC chain matrix (pipeline-computed H₀)\n\n"]
+    lines.append(
+        "All values below are **pipeline-computed MCMC posteriors** on the "
+        "indicated SN photometric system and TRGB distance scale. No value is "
+        "a literature citation. Non-converged chains (R̂ ≥ 1.01) are reported "
+        "with the ``converged = No`` flag and not promoted as primary results.\n\n"
+    )
+    lines.append(
+        "| Case | System | Mode | N_cal | N_flow | H₀ (med) | σ(H₀) | R̂_max | Converged |\n"
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | :---: |\n"
+    )
+    for case_key, systems in chain_matrix.items():
+        case_label = "A (LMC)" if case_key == "case_a" else "B (NGC 4258)"
+        for sys_key, rec in systems.items():
+            if rec.get("skipped") or rec.get("failed") or "error" in rec:
+                lines.append(
+                    f"| {case_label} | {sys_key} | – | – | – | – | – | – | ERROR |\n"
+                )
+                continue
+            mode = rec.get("mode", "")
+            n_cal = rec.get("n_calibrators", rec.get("n_data", 0))
+            n_flow = rec.get("n_flow", 0)
+            if "n_flow" not in rec and "n_data" in rec and rec["n_data"]:
+                # simple chain tracks only n_data (= n_cal + n_flow)
+                n_flow = rec["n_data"] - int(n_cal) if n_cal else 0
+            h0 = rec["H0_median"]
+            sigma = rec["H0_sigma"]
+            rh = rec.get("rhat_max", rec.get("rhat_H0", float("nan")))
+            conv = "✓" if rec.get("converged") else "✗"
+            lines.append(
+                f"| {case_label} | {sys_key} | {mode} | {n_cal} | {n_flow} | "
+                f"{h0:.3f} | {sigma:.3f} | {rh:.4f} | {conv} |\n"
+            )
+    lines.append("\n")
+    # Cross-case (system-by-system) shift in MCMC H₀:
+    case_a = chain_matrix.get("case_a", {})
+    case_b = chain_matrix.get("case_b", {})
+    if case_a and case_b:
+        lines.append("### Cross-case shift per SN system\n\n")
+        lines.append(
+            "| System | Case A H₀ | Case B H₀ | Δ(B − A) | Both converged |\n"
+            "| --- | ---: | ---: | ---: | :---: |\n"
+        )
+        for sys_id in ("csp_i", "csp_ii", "supercal", "pantheon_plus"):
+            ra = case_a.get(sys_id, {}); rb = case_b.get(sys_id, {})
+            if not ra or not rb or "H0_median" not in ra or "H0_median" not in rb:
+                continue
+            ha = ra["H0_median"]; hb = rb["H0_median"]
+            delta = hb - ha
+            both_conv = ra.get("converged") and rb.get("converged")
+            lines.append(
+                f"| {sys_id} | {ha:.3f} | {hb:.3f} | {delta:+.3f} | "
+                f"{'✓' if both_conv else '✗'} |\n"
+            )
+        lines.append("\n")
+    return "".join(lines)
+
+
 def write_summary(
     case_a: Optional[FreedmanCaseResult],
     case_b: Optional[FreedmanCaseResult],
@@ -145,6 +209,7 @@ def write_summary(
     figure_paths: Dict[str, Path],
     reports_dir: Path,
     preregistration_info: Optional[Dict[str, object]] = None,
+    chain_matrix: Optional[Dict[str, Dict[str, Dict[str, object]]]] = None,
 ) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     lines: List[str] = []
@@ -171,6 +236,10 @@ def write_summary(
                     f"(SHA-256 `{info.get('sha256', 'N/A')[:16]}...`)\n"
                 )
         lines.append("\n")
+
+    # Per-SN-system chain matrix (8 chains = 4 systems × 2 cases) FIRST —
+    # this is now the primary pipeline-computed result.
+    lines.append(_render_chain_matrix_section(chain_matrix))
 
     lines.append("## Case A — Freedman 2019/2020 (LMC anchor)\n\n")
     if case_a is not None:
@@ -243,6 +312,7 @@ def write_summary(
                 "case_b": case_b.as_dict() if case_b else None,
                 "framework_a": framework_a.as_dict() if framework_a else None,
                 "framework_b": framework_b.as_dict() if framework_b else None,
+                "sn_system_chains": chain_matrix,
                 "generated": datetime.utcnow().isoformat(),
             },
             indent=2,

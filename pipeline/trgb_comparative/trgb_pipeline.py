@@ -41,6 +41,7 @@ from .preregistration import (
     verify_preregistration_exists,
 )
 from .reporter import write_summary
+from .sn_chain_factories import run_all_chains_both_cases
 from .visualization import generate_all_figures
 
 logger = logging.getLogger(__name__)
@@ -221,6 +222,41 @@ class TRGBComparativePipeline(AnalysisPipeline):
         else:
             self.log_progress("Case B skipped: no host fields available.")
 
+        # --- Per-SN-system MCMC chains (8 chains: 4 systems × 2 cases) ---
+        # This is the rigorous reproduction mandated by the CSP-based
+        # reproduction mandate: each (case, system) pair produces its own
+        # pipeline-computed MCMC posterior. CSP-I/II chains run the full
+        # Uddin 2023 8-parameter SNooPy likelihood; SuperCal and
+        # Pantheon+SH0ES chains sample H₀ against pre-standardized m_B
+        # with M_B analytically profiled.
+        self.log_progress("Running per-(case, SN-system) chains (4 systems × 2 cases = 8 chains)…")
+        chain_matrix = run_all_chains_both_cases(
+            loader, settings, chains_dir=chains_dir, log_fn=self.log_progress,
+        )
+        n_converged = 0
+        for case_id, systems in chain_matrix.items():
+            for sys_id, r in systems.items():
+                if r.get("error"):
+                    self.log_progress(
+                        f"[{case_id}/{sys_id}] FAILED/skipped: {r.get('error')}"
+                    )
+                elif r.get("converged"):
+                    n_converged += 1
+                    self.log_progress(
+                        f"[{case_id}/{sys_id}] H₀ = {r['H0_median']:.3f} ± "
+                        f"{r['H0_sigma']:.3f}  R̂={r.get('rhat_max', r.get('rhat_H0')):.4f}  "
+                        "(converged)"
+                    )
+                else:
+                    self.log_progress(
+                        f"[{case_id}/{sys_id}] H₀ = {r['H0_median']:.3f} ± "
+                        f"{r['H0_sigma']:.3f}  R̂={r.get('rhat_max', r.get('rhat_H0')):.4f}  "
+                        "(NOT CONVERGED; reported but not promoted)"
+                    )
+        self.log_progress(
+            f"Chain matrix: {n_converged} / 8 chains converged at R̂ < 1.01."
+        )
+
         # --- Framework forward predictions (always run; independent of data) ---
         self.log_progress("Computing framework forward predictions (Case A, Case B)…")
         fw = FrameworkMethodology()
@@ -263,6 +299,7 @@ class TRGBComparativePipeline(AnalysisPipeline):
             framework_b,
             figure_paths,
             self.reports_dir,
+            chain_matrix=chain_matrix,
         )
         self.log_progress(f"Report written → {report_path}")
 
@@ -272,6 +309,7 @@ class TRGBComparativePipeline(AnalysisPipeline):
                 "case_b": case_b_result.as_dict() if case_b_result else None,
                 "framework_a": framework_a.as_dict(),
                 "framework_b": framework_b.as_dict(),
+                "sn_system_chains": chain_matrix,
                 "figures": {k: str(v) for k, v in figure_paths.items()},
                 "report": str(report_path),
             },
