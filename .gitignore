@@ -196,4 +196,4 @@ results/
 #   downloaded_data/  — large raw archives, NOT tracked
 #   chains/    — MCMC .npz outputs, regenerated, NOT tracked
 trgb_data/downloaded_data/
-trgb_data/chains/
+#trgb_data/chains/
