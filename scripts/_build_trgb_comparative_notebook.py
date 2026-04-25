@@ -163,10 +163,10 @@ for k in REQUIRED_FOR_12_CHAIN_MATRIX:
         missing.append(k)
 
 # Preregistration documents (Stage 1 + Stage 2 must exist).
-docs_dir = repo_root / 'docs'
+prereg_dir = repo_root / 'trgb_data' / 'prereg'
 prereg_paths = [
-    docs_dir / 'trgb_comparative_preregistration_stage1.md',
-    docs_dir / 'trgb_comparative_preregistration_stage2.md',
+    prereg_dir / 'trgb_comparative_preregistration_stage1.md',
+    prereg_dir / 'trgb_comparative_preregistration_stage2.md',
 ]
 print()
 print('Preregistration documents:')
