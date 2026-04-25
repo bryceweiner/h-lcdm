@@ -396,11 +396,14 @@ def write_summary(
             f"(from {framework_a.H0_median:.2f} to {framework_b.H0_median:.2f}).\n"
         )
     lines.append(
-        "- The framework predicts a NEGATIVE shift when moving from LMC anchor "
-        "(in the perturbative-breakdown regime, predicted ≈ 89 km/s/Mpc) to "
-        "NGC 4258 anchor (reliable perturbative regime, predicted ≈ 76 km/s/Mpc). "
-        "Whether the observed shift matches in sign and magnitude is a test of "
-        "the framework's domain-of-applicability boundary.\n\n"
+        "- Under the post-2026-04-25 linear-form correction (formula reduced to "
+        "1 + (γ/H)·L), the framework predicts H_local ≈ 70.40 km/s/Mpc at the "
+        "LMC anchor (d_local = 0.05 Mpc) and ≈ 69.20 km/s/Mpc at the NGC 4258 "
+        "anchor (d_local = 7.58 Mpc) — a small NEGATIVE shift driven entirely "
+        "by ln(d_CMB/d_local). The |γ/H · L| ≥ 1 breakdown criterion does not "
+        "fire for either anchor (γ/H · L ≈ 0.045 at LMC, ≈ 0.027 at NGC 4258); "
+        "both predictions are firmly in the perturbative regime. Whether the "
+        "observed shift matches in sign and magnitude is the framework test.\n\n"
     )
 
     if figure_paths:
@@ -411,10 +414,12 @@ def write_summary(
 
     lines.append("## Caveats\n\n")
     lines.append(
-        "1. The framework's projection formula is perturbative in γ/H · ln(d_CMB/d_local). "
-        "For d_local < 1 Mpc (Case A / LMC anchor), the expansion breaks down; "
-        "predictions in that regime are surfaced with a breakdown flag and should "
-        "not be taken at face value.\n"
+        "1. The framework's projection formula reduces to the linear form "
+        "1 + (γ/H)·L after the 2026-04-25 correction (b parameter and C(G) "
+        "term both removed). The breakdown criterion |γ/H · L| ≥ 1 does not "
+        "fire for any realistic distance-ladder anchor (LMC γ/H · L ≈ 0.045; "
+        "NGC 4258 ≈ 0.027). The breakdown infrastructure remains in the code "
+        "as defense-in-depth but no longer flags the LMC anchor.\n"
         "2. Per-paper fidelity: each reproduction branch uses the extinction and "
         "metallicity treatments published in the corresponding Freedman paper; "
         "sensitivity variants are computed separately and do not feed into primary "

@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from pipeline.trgb_comparative.projection_formula import (
-    PERTURBATIVE_D_LOCAL_MPC,
+    PERTURBATIVE_LINEAR_THRESHOLD,
     PerturbativeBreakdownWarning,
     compute_gamma_over_H_at_z0,
     holographic_h_ratio,
@@ -34,7 +34,7 @@ from pipeline.trgb_comparative.projection_formula import (
 def test_gamma_over_H_is_runtime_computed():
     """γ/H is pulled from the live framework; should be dimensionless and ~1/282.
 
-    We allow generous tolerance (±2 % of 1/282) because the exact value
+    We allow generous tolerance (±5 % of 1/282) because the exact value
     depends on the framework's γ(z) implementation at test time.
     """
     g = compute_gamma_over_H_at_z0()
@@ -52,128 +52,161 @@ def test_gamma_over_H_is_runtime_computed():
 
 
 def test_ngc_4258_anchor_reproduces_post_correction_value():
-    """NGC 4258 d_local = 7.58 Mpc should yield H_local ≈ 75.82 km/s/Mpc.
+    """NGC 4258 d_local = 7.58 Mpc should yield H_local ≈ 69.20 km/s/Mpc.
 
-    This is a FORMULA CORRECTNESS test for the post-2026-04-25
-    correction (b parameter removed; formula reduces to
-    [1 + C(G) * L]). The expected value 75.82 follows from
-    H_CMB = 67.4, d_local = 7.58 Mpc, d_CMB = 13869.7 Mpc,
-    γ/H ≈ 1/281.7, C(G) = 27/55 (Convention A). A deviation here
-    means the formula is coded wrong — it does NOT validate the
-    framework itself.
+    This is a FORMULA CORRECTNESS test for the post-2026-04-25 linear-form
+    correction (b parameter removed AND C(G) term removed; formula reduces
+    to ``1 + (γ/H) · L``). The expected value 69.20 follows from
+    H_CMB = 67.4, d_local = 7.58 Mpc, d_CMB = 13869.7 Mpc, γ/H ≈ 1/281.7.
+    A deviation here means the formula is coded wrong — it does NOT
+    validate the framework itself.
     """
-    import warnings as _w
-    with _w.catch_warnings():
-        _w.simplefilter("ignore", PerturbativeBreakdownWarning)
-        H0_pred, res = predict_local_H0(H_cmb=67.4, d_local_mpc=7.58)
-    assert 75.0 < H0_pred < 76.5, (
-        f"expected ≈ 75.82 km/s/Mpc (post-b-correction); got {H0_pred:.3f}"
+    H0_pred, res = predict_local_H0(H_cmb=67.4, d_local_mpc=7.58)
+    assert 68.5 < H0_pred < 70.0, (
+        f"expected ≈ 69.20 km/s/Mpc (linear-form post-correction); "
+        f"got {H0_pred:.3f}"
     )
     # Tight check against the user-specified reference.
-    assert abs(H0_pred - 75.82) < 0.05, (
-        f"NGC 4258 prediction must match the 75.82 reference within 0.05; "
+    assert abs(H0_pred - 69.20) < 0.05, (
+        f"NGC 4258 prediction must match the 69.20 reference within 0.05; "
         f"got {H0_pred:.4f}"
     )
-    # Under the physics-motivated criterion |C(G)*L| ≥ 1, NGC 4258 is
-    # ALSO outside the strict perturbative regime (β·L ≈ 3.69). The
-    # prediction is still finite and reportable, but the flag is set.
-    assert res.breakdown_flag
+    # Under the linear-form |γ/H · L| ≥ 1 criterion, NGC 4258 is well
+    # inside the perturbative regime (γ/H · L ≈ 0.027 << 1) — no breakdown.
+    assert not res.breakdown_flag
     assert res.gamma_over_H > 0.0
 
 
-def test_lmc_direct_anchor_reproduces_breakdown_scale():
-    """LMC d_local = 0.05 Mpc should yield H_local ≈ 88.85 km/s/Mpc with breakdown flag.
+def test_lmc_direct_anchor_reproduces_linear_form_value():
+    """LMC d_local = 0.05 Mpc should yield H_local ≈ 70.40 km/s/Mpc.
 
-    Post-2026-04-25 correction value. The pre-correction formula gave
-    ≈ 80.94 km/s/Mpc; the corrected formula (no b parameter) gives
-    ≈ 88.85.
+    Post-correction value under the linear form. The pre-2026-04-25
+    formula gave ≈ 80.94 (with b = 0.5); the intermediate Form-1
+    correction gave ≈ 88.85; the linear-form correction collapses to
+    ≈ 70.40 because there is no longer a quadratic amplification term.
+    LMC at γ/H · L ≈ 0.045 sits within the perturbative regime under
+    the linear-form criterion.
     """
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", PerturbativeBreakdownWarning)
-        H0_pred, res = predict_local_H0(H_cmb=67.4, d_local_mpc=0.05)
-    assert 86.0 < H0_pred < 92.0, (
-        f"expected ≈ 88.85 km/s/Mpc (post-b-correction); got {H0_pred:.3f}"
+    H0_pred, res = predict_local_H0(H_cmb=67.4, d_local_mpc=0.05)
+    assert 69.5 < H0_pred < 71.5, (
+        f"expected ≈ 70.40 km/s/Mpc (linear-form post-correction); "
+        f"got {H0_pred:.3f}"
     )
-    assert res.breakdown_flag
-    assert res.breakdown_message is not None
+    assert abs(H0_pred - 70.40) < 0.05, (
+        f"LMC prediction must match the 70.40 reference within 0.05; "
+        f"got {H0_pred:.4f}"
+    )
+    # γ/H · L ≈ 0.045 — well below the |γ/H · L| ≥ 1 breakdown threshold.
+    assert not res.breakdown_flag
+    assert res.linear_term < 0.5
 
 
-def test_holographic_h_ratio_rejects_b_kwarg():
-    """The 2026-04-25 correction removed the `b` parameter entirely.
+def test_holographic_h_ratio_rejects_deprecated_kwargs():
+    """The 2026-04-25 corrections removed the `a` amplitude prefactor,
+    the `b` parameter, and the `C(G)` term entirely.
 
-    Passing it must raise TypeError so accidental retention of the
-    pre-correction call form is caught loudly rather than silently
-    ignored.
+    Passing any of `a=…`, `b=…`, `clustering_coefficient=…`, `C_graph=…`,
+    `second_order=…`, or any other unrecognised kwarg must raise
+    TypeError so accidental retention of the pre-correction call form
+    is caught loudly rather than silently ignored.
     """
-    with pytest.raises(TypeError, match=r"unexpected keyword.*b"):
-        holographic_h_ratio(d_local_mpc=7.58, b=0.5)
-    with pytest.raises(TypeError, match=r"unexpected keyword"):
-        holographic_h_ratio(d_local_mpc=7.58, B_THRESHOLD=0.5)
-    with pytest.raises(TypeError, match=r"unexpected keyword"):
-        holographic_h_ratio(d_local_mpc=7.58, b_ansatz=0.5)
+    deprecated = [
+        ("a", 1.0),
+        ("a_amplitude", 1.0),
+        ("A_PREFACTOR", 1.0),
+        ("b", 0.5),
+        ("B_THRESHOLD", 0.5),
+        ("b_ansatz", 0.5),
+        ("clustering_coefficient", 0.5),
+        ("C_graph", 0.4909),
+        ("C_GRAPH", 0.4909),
+        ("second_order", True),
+    ]
+    for name, value in deprecated:
+        with pytest.raises(TypeError, match=r"unexpected keyword"):
+            holographic_h_ratio(d_local_mpc=7.58, **{name: value})
+
     # Sanity: legitimate kwargs still work.
     res = holographic_h_ratio(d_local_mpc=7.58)
     assert res.ratio > 1.0
 
 
-def test_breakdown_warning_is_raised_for_subparsec_d_local():
-    """`PerturbativeBreakdownWarning` emits when d_local < threshold and emit_warning=True."""
+def test_breakdown_warning_does_not_fire_for_realistic_anchors():
+    """Under the linear form, |γ/H · L| ≥ 1 never triggers for
+    realistic distance-ladder anchors.
+
+    The pre-2026-04-25 implementation flagged LMC (d_local = 0.05 Mpc)
+    as breakdown via the d_local < 1 Mpc heuristic; the intermediate
+    Form-1 correction flagged BOTH LMC and NGC 4258 via |C(G)·L| ≥ 1.
+    Under the linear-form correction the small parameter is γ/H · L
+    itself, which is ≪ 1 for any TRGB-anchored measurement (LMC ≈
+    0.045; NGC 4258 ≈ 0.027). The breakdown infrastructure remains as
+    defense in depth but does not fire for any realistic anchor.
+    """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        holographic_h_ratio(d_local_mpc=0.05, emit_warning=True)
-    assert any(issubclass(w.category, PerturbativeBreakdownWarning) for w in caught)
+        res_lmc = holographic_h_ratio(d_local_mpc=0.05, emit_warning=True)
+        res_ngc = holographic_h_ratio(d_local_mpc=7.58, emit_warning=True)
+    assert not res_lmc.breakdown_flag
+    assert not res_ngc.breakdown_flag
+    assert not any(
+        issubclass(w.category, PerturbativeBreakdownWarning) for w in caught
+    )
+
+
+def test_breakdown_fires_only_at_extreme_d_local():
+    """The linear-form breakdown criterion |γ/H · L| ≥ 1 only fires for
+    astronomically small d_local.
+
+    With γ/H ≈ 1/282 and d_CMB ≈ 13870 Mpc, the |γ/H · L| = 1 contour
+    sits at L = 282, i.e. d_local = d_CMB / e^282 — far below any
+    physical anchor. We trigger it with an unphysically tiny d_local
+    just to confirm the criterion is wired correctly.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", PerturbativeBreakdownWarning)
+        # γ/H · L = 1 ⟹ L = ~282. Pick d_local such that L > 282.
+        # ln(13870 / d_local) > 282 ⟹ d_local < 13870 · e^{-282} ≈ 10^{-118}.
+        # Use 1e-120 Mpc — ridiculous but inside the regime.
+        res = holographic_h_ratio(d_local_mpc=1e-120, emit_warning=False)
+    assert res.breakdown_flag
+    assert res.breakdown_message is not None
+    assert abs(res.linear_term) >= PERTURBATIVE_LINEAR_THRESHOLD
 
 
 def test_breakdown_warning_suppressed_when_emit_warning_false():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        res = holographic_h_ratio(d_local_mpc=0.05, emit_warning=False)
-    assert not any(issubclass(w.category, PerturbativeBreakdownWarning) for w in caught)
+        # Use the extreme-d_local trigger from the test above so the flag
+        # actually fires; verify emit_warning=False suppresses stderr.
+        res = holographic_h_ratio(d_local_mpc=1e-120, emit_warning=False)
+    assert not any(
+        issubclass(w.category, PerturbativeBreakdownWarning) for w in caught
+    )
     assert res.breakdown_flag
 
 
-def test_breakdown_threshold_is_quadratic_correction_not_d_local():
-    """Breakdown criterion under Form 1 is ``|C(G)*L| ≥ 1``, NOT
-    ``d_local < 1 Mpc``.
+def test_result_struct_has_no_clustering_or_quadratic_fields():
+    """The HolographicRatioResult struct dropped clustering_coefficient
+    and quadratic_correction fields after the 2026-04-25 C(G)-removal.
 
-    The pre-2026-04-25 implementation used a ``d_local < 1 Mpc``
-    geometric heuristic that was a carryover from the previous formula
-    (with the ``b = 0.5`` offset). Under the corrected Form 1
-    ``[1 + C(G)·L]``, the only physics-motivated breakdown criterion
-    is the magnitude of the bracket's first-order Taylor truncation
-    relative to unity. Convention A puts the |C(G)·L| = 1 contour at
-    d_local ≈ 1885 Mpc, so all TRGB-anchored measurements (a few to
-    tens of Mpc) trigger the flag — including NGC 4258. The test
-    asserts the new criterion explicitly.
+    Tests that nothing in the struct preserves the deprecated quantities
+    even by accident.
     """
-    import warnings as _w
-    with _w.catch_warnings():
-        _w.simplefilter("ignore", PerturbativeBreakdownWarning)
-        # NGC 4258 (d_local = 7.58 Mpc): β·L = 3.69 > 1 → breakdown.
-        res_ngc = holographic_h_ratio(d_local_mpc=7.58)
-        assert res_ngc.quadratic_correction > 1.0
-        assert res_ngc.breakdown_flag, (
-            "NGC 4258 has |C(G)*L| ≈ 3.69 ≥ 1 — must trigger breakdown "
-            "under the physics-motivated criterion."
-        )
-
-        # A truly perturbative point: d_local ≈ 5000 Mpc → β·L < 1.
-        res_far = holographic_h_ratio(d_local_mpc=5000.0)
-        assert res_far.quadratic_correction < 1.0
-        assert not res_far.breakdown_flag, (
-            "d_local = 5000 Mpc has |C(G)*L| < 1 — must NOT trigger "
-            "breakdown."
-        )
-
-        # And a d_local in the legacy (1 Mpc < d_local < 1885 Mpc) gap
-        # that the old criterion called 'safe' but the new criterion
-        # correctly flags as breakdown:
-        res_legacy_safe = holographic_h_ratio(d_local_mpc=10.0)
-        assert res_legacy_safe.breakdown_flag, (
-            "d_local = 10 Mpc was 'safe' under the legacy d_local<1 Mpc "
-            "rule but |C(G)*L| ≈ 3.55 ≥ 1 — must trigger breakdown "
-            "under the physics-motivated criterion."
-        )
+    res = holographic_h_ratio(d_local_mpc=7.58)
+    fields = set(res.__dataclass_fields__.keys())
+    forbidden = {"clustering_coefficient", "quadratic_correction", "second_order"}
+    assert fields.isdisjoint(forbidden), (
+        f"HolographicRatioResult must not carry deprecated fields; "
+        f"found {fields & forbidden}"
+    )
+    # Required fields under the linear form.
+    expected = {
+        "ratio", "gamma_over_H", "L", "linear_term",
+        "breakdown_flag", "breakdown_message",
+        "d_local_mpc", "d_cmb_mpc",
+    }
+    assert expected.issubset(fields)
 
 
 # ---------------------------------------------------------------------------
@@ -182,11 +215,12 @@ def test_breakdown_threshold_is_quadratic_correction_not_d_local():
 
 
 def test_ratio_is_monotonic_in_log_d_cmb_over_d_local():
-    """For d_local > 1 Mpc, the ratio should increase as d_local shrinks."""
-    d_grid = np.array([20.0, 15.0, 10.0, 7.58, 5.0, 2.0, 1.1])
+    """The ratio should increase monotonically as d_local shrinks
+    (because L = ln(d_CMB/d_local) grows)."""
+    d_grid = np.array([100.0, 50.0, 20.0, 10.0, 7.58, 5.0, 2.0, 1.0, 0.1, 0.05])
     ratios = np.array([holographic_h_ratio(d_local_mpc=d).ratio for d in d_grid])
     assert np.all(np.diff(ratios) > 0), (
-        "Ratio must increase as d_local decreases (longer log argument)."
+        "Ratio must increase as d_local decreases."
     )
 
 
@@ -199,31 +233,28 @@ def test_monte_carlo_propagation_shape_and_breakdown_fraction():
     n = 1000
     H_cmb = np.random.default_rng(0).normal(67.36, 0.54, size=n)
     d_case_b = np.random.default_rng(1).normal(7.58, 0.08, size=n)
-    d_case_a = np.maximum(np.random.default_rng(2).normal(0.0496, 0.0009, size=n), 1e-6)
+    d_case_a = np.maximum(
+        np.random.default_rng(2).normal(0.0496, 0.0009, size=n), 1e-6
+    )
 
-    H0_b, per_b = propagate_projection_uncertainty(H_cmb, d_case_b, emit_warning=False)
-    H0_a, per_a = propagate_projection_uncertainty(H_cmb, d_case_a, emit_warning=False)
+    H0_b, per_b = propagate_projection_uncertainty(
+        H_cmb, d_case_b, emit_warning=False
+    )
+    H0_a, per_a = propagate_projection_uncertainty(
+        H_cmb, d_case_a, emit_warning=False
+    )
 
     assert H0_b.size == n and H0_a.size == n
     flags_b = np.array([r.breakdown_flag for r in per_b])
     flags_a = np.array([r.breakdown_flag for r in per_a])
-    # Under the physics-motivated breakdown criterion (|C(G)*L| ≥ 1),
-    # BOTH anchors trigger breakdown. LMC's β·L (≈ 6.15) is far worse
-    # than NGC 4258's (≈ 3.69), but the binary flag fires on both.
-    assert flags_b.mean() > 0.95, (
-        "Case B (NGC 4258) has |C(G)*L| ≈ 3.69 — physics-motivated "
-        "breakdown criterion fires."
-    )
-    assert flags_a.mean() > 0.95, (
-        "Case A (LMC) has |C(G)*L| ≈ 6.15 — far outside perturbative "
-        "regime; breakdown criterion fires."
-    )
-    # Post-2026-04-25 correction: NGC 4258 ≈ 75.82, LMC ≈ 88.85.
-    # The prediction values remain finite and reportable even with the
-    # breakdown flag set.
-    assert np.median(H0_b) == pytest.approx(75.8, abs=2.0)
-    assert np.median(H0_a) == pytest.approx(88.8, abs=3.0)
+    # Under the linear form, neither anchor triggers the breakdown
+    # criterion — γ/H · L ≪ 1 at both LMC and NGC 4258.
+    assert flags_b.mean() < 0.05
+    assert flags_a.mean() < 0.05
+    # Linear-form predictions: NGC 4258 ≈ 69.20, LMC ≈ 70.40.
+    assert np.median(H0_b) == pytest.approx(69.2, abs=1.0)
+    assert np.median(H0_a) == pytest.approx(70.4, abs=1.0)
 
 
-def test_breakdown_threshold_constant_is_1_mpc():
-    assert PERTURBATIVE_D_LOCAL_MPC == pytest.approx(1.0, abs=1e-9)
+def test_breakdown_threshold_constant_is_1():
+    assert PERTURBATIVE_LINEAR_THRESHOLD == pytest.approx(1.0, abs=1e-9)

@@ -532,18 +532,19 @@ class TRGBComparativePipeline(AnalysisPipeline):
                 "framework_ngc4258_median": float(case_b.H0_median),
                 "framework_lmc_breakdown_fraction": float(case_a.breakdown_fraction),
                 "framework_ngc4258_breakdown_fraction": float(case_b.breakdown_fraction),
-                # Post-2026-04-25 correction: under the physics-motivated
-                # |C(G)*L| ≥ 1 breakdown criterion, BOTH anchors trigger
-                # breakdown (LMC β·L ≈ 6.15, NGC 4258 β·L ≈ 3.69). The
-                # validate-passed check now requires both to flag and
-                # verifies the post-correction H₀ medians (88.85 / 75.82).
-                "framework_lmc_breakdown_should_be_1": bool(case_a.breakdown_fraction > 0.95),
-                "framework_ngc4258_breakdown_should_be_1": bool(case_b.breakdown_fraction > 0.95),
+                # Post-2026-04-25 C(G)-removal correction: the formula reduced
+                # to the linear form 1 + (γ/H)·L, with breakdown criterion
+                # |γ/H · L| ≥ 1. Under this form, NEITHER anchor triggers
+                # breakdown — γ/H · L ≈ 0.045 at LMC and ≈ 0.027 at NGC 4258,
+                # both well below 1. Predicted H₀ medians: LMC ≈ 70.40,
+                # NGC 4258 ≈ 69.20.
+                "framework_lmc_breakdown_should_be_0": bool(case_a.breakdown_fraction < 0.05),
+                "framework_ngc4258_breakdown_should_be_0": bool(case_b.breakdown_fraction < 0.05),
                 "passed": bool(
-                    case_a.breakdown_fraction > 0.95
-                    and case_b.breakdown_fraction > 0.95
-                    and 85.0 < case_a.H0_median < 95.0
-                    and 73.0 < case_b.H0_median < 78.0
+                    case_a.breakdown_fraction < 0.05
+                    and case_b.breakdown_fraction < 0.05
+                    and 69.0 < case_a.H0_median < 71.5
+                    and 68.0 < case_b.H0_median < 70.5
                 ),
             }
         }

@@ -45,21 +45,24 @@ class Stage1Config:
         "— runtime computation, no hardcoded constant."
     )
     clustering_coefficient_source: str = (
-        "e8_heterotic.get_e8_clustering_coefficient(adjacency_convention='A') "
-        "— canonical root-system graph (⟨α,β⟩ = +1) clustering coefficient, "
-        "27/55 ≈ 0.4909. Sourced from the external e8-heterotic-network "
-        "package (github.com/bryceweiner/e8-heterotic-network), Convention A. "
-        "Supersedes the previous local hlcdm.e8 value of 25/32 = 0.78125, "
-        "which was a literature claim that did not match the canonical "
-        "adjacency graph; that quantity remains available for reference as "
-        "e8_heterotic.E8_CLUSTERING_LITERATURE_FRACTION but is no longer "
-        "used by the projection formula."
+        "Not used. The 2026-04-25 C(G)-removal correction reduced the "
+        "projection formula to the linear form 1 + (γ/H) · L, with no "
+        "C(G) term. The clustering coefficient C(G) and its source "
+        "(e8-heterotic-network package, Convention A, 27/55 ≈ 0.4909) "
+        "remain documented in docs/correction_log.md for historical "
+        "reference but enter the H₀ projection nowhere. The ML pipeline "
+        "(pipeline/ml/) continues to use Convention A clustering for "
+        "pattern-detection diagnostics, which are unrelated to the H₀ "
+        "projection here."
     )
     d_cmb_source: str = (
         "HLCDM_PARAMS.D_CMB_PLANCK_2018 = 13869.7 Mpc "
         "(Planck 2018 VI, A&A 641 A6, Table 2)."
     )
-    perturbative_threshold_mpc: float = 1.0
+    # Linear-form breakdown criterion: |γ/H · L| ≥ 1. With γ/H ≈ 1/282 and
+    # d_CMB ≈ 13870 Mpc, this only fires for d_local < 13870 · e^{-282}, i.e.
+    # well below any physical anchor; retained as defense-in-depth.
+    perturbative_linear_threshold: float = 1.0
 
     # Reproduction configuration
     parametrization: str = (
@@ -235,9 +238,14 @@ class Stage1Config:
 
         lines.append("## Framework inputs (runtime-computed, not cached)\n\n")
         lines.append(f"- γ/H at z=0: {self.gamma_over_H_source}\n")
-        lines.append(f"- C(G): {self.clustering_coefficient_source}\n")
+        lines.append(f"- C(G) (historical, NOT used): {self.clustering_coefficient_source}\n")
         lines.append(f"- d_CMB: {self.d_cmb_source}\n")
-        lines.append(f"- Perturbative-regime threshold: d_local < {self.perturbative_threshold_mpc} Mpc flags breakdown.\n\n")
+        lines.append(
+            f"- Perturbative-regime breakdown criterion: |γ/H · L| ≥ "
+            f"{self.perturbative_linear_threshold}. "
+            "Does not fire for any realistic distance-ladder anchor under "
+            "the linear form (LMC γ/H · L ≈ 0.045; NGC 4258 ≈ 0.027).\n\n"
+        )
 
         lines.append("## Reproduction configuration\n\n")
         lines.append(f"- Parametrization (primary): {self.parametrization}\n")

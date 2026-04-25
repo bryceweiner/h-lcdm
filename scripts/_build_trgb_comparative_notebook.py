@@ -602,11 +602,12 @@ tension between the MCMC posterior and the framework's forward
 prediction for the corresponding anchor:
 
 - Case A chains compare against the LMC-anchor framework prediction
-  (≈ 88.85 km/s/Mpc post-2026-04-25 b-removal correction) — flagged
-  unreliable due to perturbative breakdown.
+  (≈ 70.40 km/s/Mpc).
 - Case B (both augmented and JWST-only) chains compare against the
-  NGC 4258-anchor framework prediction (≈ 75.82 km/s/Mpc post-correction)
-  — reliable perturbative regime.
+  NGC 4258-anchor framework prediction (≈ 69.20 km/s/Mpc).
+
+Both anchors sit firmly in the perturbative regime
+(γ/H · L ≈ 0.045 at LMC; ≈ 0.027 at NGC 4258).
 
 Tension is reported in σ-units (statistical only):
 
@@ -617,8 +618,8 @@ Tension is reported in σ-units (statistical only):
 CELLS.append(code("""
 def _framework_for(case):
     if case == 'case_a':
-        return framework_a, True   # breakdown flagged
-    return framework_b, False
+        return framework_a, bool(framework_a.breakdown_flag_any)
+    return framework_b, bool(framework_b.breakdown_flag_any)
 
 tension_rows = []
 for case in CASES:
@@ -658,10 +659,8 @@ print('Framework-vs-MCMC tension per chain (statistical only):')
 print()
 print(fmt.to_string(index=False))
 print()
-print('Note: Case A chains carry the perturbative-breakdown flag '
-      '(d_local = 0.0496 Mpc < 1 Mpc threshold). The framework\\'s')
-print('predicted H₀ ≈ 89 km/s/Mpc in that regime should NOT be taken '
-      'at face value — the perturbative expansion does not hold.')
+print('Note: γ/H · L ≈ 0.045 at LMC, ≈ 0.027 at NGC 4258 — both well '
+      'below the |γ/H · L| ≥ 1 perturbative-breakdown criterion.')
 """))
 
 

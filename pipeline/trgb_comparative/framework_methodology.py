@@ -95,9 +95,6 @@ class FrameworkMethodology:
                 "d_local_mpc": float(d_local_mpc),
                 "sigma_d_local_mpc": float(sigma_d_local_mpc),
                 "gamma_over_H": float(per_draw[0].gamma_over_H) if per_draw else float("nan"),
-                "clustering_coefficient": (
-                    float(per_draw[0].clustering_coefficient) if per_draw else float("nan")
-                ),
                 "d_cmb_mpc": float(per_draw[0].d_cmb_mpc) if per_draw else float("nan"),
             },
         )
