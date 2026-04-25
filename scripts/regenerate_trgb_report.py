@@ -103,9 +103,16 @@ def main() -> int:
 
     print(f"Loading cached results from {json_path}")
     payload = json.loads(json_path.read_text())
-    # Pipeline wraps under "results" / "main"; unwrap.
+    # Pipeline double-wraps: top-level `results` from main.py, inner `main`
+    # from main.py's run_pipeline_analysis, and innermost `main` from
+    # TRGBComparativePipeline.run() which returns `{"main": {...}, "settings": {...}}`.
+    # Unwrap until we find the chain matrix keys.
     container = payload.get("results", payload)
     main_block = container.get("main", container)
+    # If the next layer also has only ("main", "settings"), descend once more.
+    if (isinstance(main_block, dict) and set(main_block.keys()) <= {"main", "settings"}
+            and "main" in main_block):
+        main_block = main_block["main"]
 
     case_a = _stub_freedman_case(main_block.get("case_a"))
     case_b = _stub_freedman_case(main_block.get("case_b"))

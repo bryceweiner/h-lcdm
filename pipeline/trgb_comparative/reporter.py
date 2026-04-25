@@ -427,16 +427,32 @@ def write_summary(
     report_path = reports_dir / "trgb_comparative_analysis_report.md"
     report_path.write_text("".join(lines))
 
-    # JSON companion.
+    # JSON companion. Guard ``as_dict()`` calls so that callers passing
+    # plain dicts / SimpleNamespace stubs (e.g. the regen script) succeed.
+    def _to_jsonable(obj):
+        if obj is None:
+            return None
+        as_dict = getattr(obj, "as_dict", None)
+        if callable(as_dict):
+            return as_dict()
+        if isinstance(obj, dict):
+            return obj
+        try:
+            return dict(vars(obj))
+        except Exception:
+            return None
+
     json_path = reports_dir / "trgb_comparative_summary.json"
     json_path.write_text(
         json.dumps(
             {
-                "case_a": case_a.as_dict() if case_a else None,
-                "case_b": case_b.as_dict() if case_b else None,
-                "framework_a": framework_a.as_dict() if framework_a else None,
-                "framework_b": framework_b.as_dict() if framework_b else None,
+                "case_a": _to_jsonable(case_a),
+                "case_b": _to_jsonable(case_b),
+                "framework_a": _to_jsonable(framework_a),
+                "framework_b": _to_jsonable(framework_b),
                 "sn_system_chains": chain_matrix,
+                "full_calibrator_chains": full_calibrator_matrix,
+                "uddin_positive_control": uddin_positive_control,
                 "generated": datetime.utcnow().isoformat(),
             },
             indent=2,
