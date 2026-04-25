@@ -188,6 +188,7 @@ docs/
 .env
 nbodykit/
 e8_cache/
+nbody_cache/
 results/
 
 # trgb_data/: TRGB-pipeline data tree.
