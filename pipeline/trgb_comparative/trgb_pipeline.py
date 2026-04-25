@@ -40,6 +40,7 @@ from .preregistration import (
     generate_stage2,
     verify_preregistration_exists,
 )
+from .data_acquisition_narrative import write_data_acquisition_narrative
 from .full_calibrator_factories import (
     CoverageReport,
     all_chains_full,
@@ -464,6 +465,12 @@ class TRGBComparativePipeline(AnalysisPipeline):
             loader, self.reports_dir / "data_tables.tex",
             log_fn=self.log_progress,
         )
+
+        self.log_progress("Writing peer-review data acquisition narrative…")
+        data_narrative_path = write_data_acquisition_narrative(
+            loader, self.reports_dir / "data_acquisition_narrative.md",
+            log_fn=self.log_progress,
+        )
         self.log_progress(f"Report written → {report_path}")
 
         results_dict: Dict[str, Any] = {
@@ -478,6 +485,7 @@ class TRGBComparativePipeline(AnalysisPipeline):
                 "figures": {k: str(v) for k, v in figure_paths.items()},
                 "report": str(report_path),
                 "latex_data_tables": str(latex_tables_path),
+                "data_acquisition_narrative": str(data_narrative_path),
             },
             "settings": {
                 "n_walkers": settings.n_walkers,
