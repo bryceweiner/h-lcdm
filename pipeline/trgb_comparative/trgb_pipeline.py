@@ -47,6 +47,7 @@ from .full_calibrator_factories import (
 )
 from .latex_tables import write_latex_data_tables
 from .reporter import write_summary
+from .manuscript_figures import generate_manuscript_figures
 from .twelve_chain_matrix import write_twelve_chain_matrix
 from .sn_chain_factories import _run_one as _run_chain_plan
 from .sn_chain_factories import run_all_chains_both_cases
@@ -443,23 +444,15 @@ class TRGBComparativePipeline(AnalysisPipeline):
         )
 
         # --- Figures + markdown report ---
-        self.log_progress("Rendering figures…")
+        self.log_progress("Rendering diagnostic figures…")
         figure_paths = generate_all_figures(
             case_a_result, case_b_result, framework_a, framework_b, self.figures_dir
         )
 
-        self.log_progress("Writing markdown summary…")
-        report_path = write_summary(
-            case_a_result,
-            case_b_result,
-            framework_a,
-            framework_b,
-            figure_paths,
-            self.reports_dir,
-            chain_matrix=chain_matrix,
-            full_calibrator_matrix=full_cal_matrix,
-            uddin_positive_control=positive_control,
-        )
+        # Manuscript figures need the 12-chain CSV; that's written below
+        # in this method, so we generate manuscript figures after the CSV
+        # is in place. Defer the markdown summary until then so it can
+        # reference both legacy and manuscript figure sets.
 
         self.log_progress("Writing publication-ready LaTeX data tables…")
         latex_tables_path = write_latex_data_tables(
@@ -483,6 +476,32 @@ class TRGBComparativePipeline(AnalysisPipeline):
             Path("results") / "12_chain_matrix.csv",
             log_fn=self.log_progress,
         )
+
+        # Manuscript figures — communicate the empirical findings to
+        # readers unfamiliar with the pipeline. Saved to a tracked,
+        # persistent location (`figures/manuscript/`) outside `results/`.
+        self.log_progress("Rendering manuscript figures…")
+        manuscript_figures = generate_manuscript_figures(
+            chain_matrix_csv=twelve_chain_csv_path,
+            framework_a=framework_a, framework_b=framework_b,
+            out_dir=Path("figures") / "manuscript",
+        )
+        for name, (pdf_path, png_path) in manuscript_figures.items():
+            self.log_progress(f"  {name} → {pdf_path}, {png_path}")
+
+        self.log_progress("Writing markdown summary…")
+        report_path = write_summary(
+            case_a_result,
+            case_b_result,
+            framework_a,
+            framework_b,
+            figure_paths,
+            self.reports_dir,
+            chain_matrix=chain_matrix,
+            full_calibrator_matrix=full_cal_matrix,
+            uddin_positive_control=positive_control,
+            manuscript_figures=manuscript_figures,
+        )
         self.log_progress(f"Report written → {report_path}")
 
         results_dict: Dict[str, Any] = {
@@ -499,6 +518,10 @@ class TRGBComparativePipeline(AnalysisPipeline):
                 "latex_data_tables": str(latex_tables_path),
                 "data_acquisition_narrative": str(data_narrative_path),
                 "twelve_chain_matrix_csv": str(twelve_chain_csv_path),
+                "manuscript_figures": {
+                    name: {"pdf": str(p[0]), "png": str(p[1])}
+                    for name, p in manuscript_figures.items()
+                },
             },
             "settings": {
                 "n_walkers": settings.n_walkers,

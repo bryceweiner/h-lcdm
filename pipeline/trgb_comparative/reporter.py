@@ -321,6 +321,7 @@ def write_summary(
     chain_matrix: Optional[Dict[str, Dict[str, Dict[str, object]]]] = None,
     full_calibrator_matrix: Optional[Dict[str, Dict[str, Dict[str, object]]]] = None,
     uddin_positive_control: Optional[Dict[str, object]] = None,
+    manuscript_figures: Optional[Dict[str, "tuple"]] = None,
 ) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     lines: List[str] = []
@@ -406,8 +407,63 @@ def write_summary(
         "observed shift matches in sign and magnitude is the framework test.\n\n"
     )
 
+    # Manuscript figures — the headline communications. Listed first;
+    # the diagnostic / supplementary figures follow.
+    _MANUSCRIPT_FIG_DESCRIPTIONS = {
+        "fig1_framework_vs_chains": (
+            "Figure 1 — Framework prediction vs. all 12 chains. "
+            "Headline: framework predicts ≈ 70 km/s/Mpc, conservative-TRGB "
+            "chains cluster at the prediction, SH0ES sits clearly above, "
+            "Planck below."
+        ),
+        "fig2_cross_anchor_shift": (
+            "Figure 2 — Cross-anchor shift (LMC → NGC 4258) per "
+            "photometric system, against the framework prediction "
+            "(≈ −1.21 km/s/Mpc). CSP-II and SuperCal cluster on the "
+            "prediction; Pantheon+ outlier annotated as SH0ES Cepheid "
+            "contamination."
+        ),
+        "fig3_tension_matrix": (
+            "Figure 3 — σ-tension matrix. 3 × 4 grid colored by tension "
+            "magnitude, diverging at 1σ. 8 of 12 cells fall in the "
+            "agreement region."
+        ),
+        "fig4_prediction_vs_distance": (
+            "Figure 4 — Linear-form framework prediction H_local(d_local) "
+            "across log d_local ∈ [0.01, 100] Mpc, with LMC and NGC 4258 "
+            "reproduction chains overlaid at their anchor distances."
+        ),
+    }
+    if manuscript_figures:
+        lines.append("## Manuscript figures\n\n")
+        lines.append(
+            "Headline figures intended for the manuscript and external "
+            "review. Saved to `figures/manuscript/` as PDF (journal "
+            "submission) and PNG (markdown preview).\n\n"
+        )
+        for fig_id, desc in _MANUSCRIPT_FIG_DESCRIPTIONS.items():
+            paths = manuscript_figures.get(fig_id)
+            if not paths:
+                continue
+            pdf_path, png_path = paths
+            lines.append(f"- **{fig_id}** — {desc}\n")
+            lines.append(
+                f"  - PDF: [{Path(pdf_path).name}]"
+                f"(../../../figures/manuscript/{Path(pdf_path).name})\n"
+            )
+            lines.append(
+                f"  - PNG: [{Path(png_path).name}]"
+                f"(../../../figures/manuscript/{Path(png_path).name})\n"
+            )
+        lines.append("\n")
+
     if figure_paths:
-        lines.append("## Figures\n\n")
+        lines.append("## Diagnostic figures (supplementary)\n\n")
+        lines.append(
+            "Pipeline-internal figures used to verify the analysis ran "
+            "correctly. These are not the manuscript's primary "
+            "communications; see *Manuscript figures* above.\n\n"
+        )
         for name, p in figure_paths.items():
             lines.append(f"- `{name}`: [{p.name}]({p.name})\n")
         lines.append("\n")
