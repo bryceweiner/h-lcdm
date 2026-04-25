@@ -44,6 +44,7 @@ from .full_calibrator_factories import (
     CoverageReport,
     all_chains_full,
 )
+from .latex_tables import write_latex_data_tables
 from .reporter import write_summary
 from .sn_chain_factories import _run_one as _run_chain_plan
 from .sn_chain_factories import run_all_chains_both_cases
@@ -457,6 +458,12 @@ class TRGBComparativePipeline(AnalysisPipeline):
             full_calibrator_matrix=full_cal_matrix,
             uddin_positive_control=positive_control,
         )
+
+        self.log_progress("Writing publication-ready LaTeX data tables…")
+        latex_tables_path = write_latex_data_tables(
+            loader, self.reports_dir / "data_tables.tex",
+            log_fn=self.log_progress,
+        )
         self.log_progress(f"Report written → {report_path}")
 
         results_dict: Dict[str, Any] = {
@@ -470,6 +477,7 @@ class TRGBComparativePipeline(AnalysisPipeline):
                 "uddin_positive_control": positive_control,
                 "figures": {k: str(v) for k, v in figure_paths.items()},
                 "report": str(report_path),
+                "latex_data_tables": str(latex_tables_path),
             },
             "settings": {
                 "n_walkers": settings.n_walkers,
