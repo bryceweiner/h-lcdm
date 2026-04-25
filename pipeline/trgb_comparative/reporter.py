@@ -397,8 +397,8 @@ def write_summary(
         )
     lines.append(
         "- The framework predicts a NEGATIVE shift when moving from LMC anchor "
-        "(in the perturbative-breakdown regime, predicted ≈ 81 km/s/Mpc) to "
-        "NGC 4258 anchor (reliable perturbative regime, predicted ≈ 73 km/s/Mpc). "
+        "(in the perturbative-breakdown regime, predicted ≈ 89 km/s/Mpc) to "
+        "NGC 4258 anchor (reliable perturbative regime, predicted ≈ 76 km/s/Mpc). "
         "Whether the observed shift matches in sign and magnitude is a test of "
         "the framework's domain-of-applicability boundary.\n\n"
     )

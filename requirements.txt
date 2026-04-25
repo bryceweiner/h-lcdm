@@ -36,6 +36,11 @@ astroquery>=0.4.0
 # VAST VoidFinder
 vast @ git+https://github.com/DESI-UR/VAST.git
 
+# E8×E8 heterotic root-system mathematics (Convention A — canonical
+# root-system graph, ⟨α,β⟩ = +1). The H-ΛCDM projection formula's
+# C(G) is sourced from this package's get_e8_clustering_coefficient().
+e8-heterotic-network @ git+https://github.com/bryceweiner/e8-heterotic-network.git
+
 # Bayesian inference
 emcee>=3.1.0
 dynesty>=2.0.0

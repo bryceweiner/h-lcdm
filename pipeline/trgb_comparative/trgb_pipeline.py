@@ -47,6 +47,7 @@ from .full_calibrator_factories import (
 )
 from .latex_tables import write_latex_data_tables
 from .reporter import write_summary
+from .twelve_chain_matrix import write_twelve_chain_matrix
 from .sn_chain_factories import _run_one as _run_chain_plan
 from .sn_chain_factories import run_all_chains_both_cases
 from .uddin_csp_chain import (
@@ -471,6 +472,17 @@ class TRGBComparativePipeline(AnalysisPipeline):
             loader, self.reports_dir / "data_acquisition_narrative.md",
             log_fn=self.log_progress,
         )
+
+        # 12-chain reproduction matrix CSV (per the resolution plan
+        # `results/12_chain_matrix.csv`). Always regenerated from the
+        # current full_cal_matrix + framework predictions; no special-
+        # case code path.
+        self.log_progress("Writing 12-chain reproduction matrix CSV…")
+        twelve_chain_csv_path = write_twelve_chain_matrix(
+            full_cal_matrix, framework_a, framework_b,
+            Path("results") / "12_chain_matrix.csv",
+            log_fn=self.log_progress,
+        )
         self.log_progress(f"Report written → {report_path}")
 
         results_dict: Dict[str, Any] = {
@@ -486,6 +498,7 @@ class TRGBComparativePipeline(AnalysisPipeline):
                 "report": str(report_path),
                 "latex_data_tables": str(latex_tables_path),
                 "data_acquisition_narrative": str(data_narrative_path),
+                "twelve_chain_matrix_csv": str(twelve_chain_csv_path),
             },
             "settings": {
                 "n_walkers": settings.n_walkers,
@@ -519,13 +532,18 @@ class TRGBComparativePipeline(AnalysisPipeline):
                 "framework_ngc4258_median": float(case_b.H0_median),
                 "framework_lmc_breakdown_fraction": float(case_a.breakdown_fraction),
                 "framework_ngc4258_breakdown_fraction": float(case_b.breakdown_fraction),
+                # Post-2026-04-25 correction: under the physics-motivated
+                # |C(G)*L| ≥ 1 breakdown criterion, BOTH anchors trigger
+                # breakdown (LMC β·L ≈ 6.15, NGC 4258 β·L ≈ 3.69). The
+                # validate-passed check now requires both to flag and
+                # verifies the post-correction H₀ medians (88.85 / 75.82).
                 "framework_lmc_breakdown_should_be_1": bool(case_a.breakdown_fraction > 0.95),
-                "framework_ngc4258_breakdown_should_be_0": bool(case_b.breakdown_fraction < 0.05),
+                "framework_ngc4258_breakdown_should_be_1": bool(case_b.breakdown_fraction > 0.95),
                 "passed": bool(
                     case_a.breakdown_fraction > 0.95
-                    and case_b.breakdown_fraction < 0.05
-                    and 75.0 < case_a.H0_median < 90.0
-                    and 70.0 < case_b.H0_median < 76.0
+                    and case_b.breakdown_fraction > 0.95
+                    and 85.0 < case_a.H0_median < 95.0
+                    and 73.0 < case_b.H0_median < 78.0
                 ),
             }
         }

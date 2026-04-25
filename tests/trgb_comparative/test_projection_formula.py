@@ -51,28 +51,69 @@ def test_gamma_over_H_is_runtime_computed():
 # ---------------------------------------------------------------------------
 
 
-def test_ngc_4258_anchor_reproduces_sh0es_scale():
-    """NGC 4258 d_local = 7.58 Mpc should yield H_local ≈ 73 km/s/Mpc.
+def test_ngc_4258_anchor_reproduces_post_correction_value():
+    """NGC 4258 d_local = 7.58 Mpc should yield H_local ≈ 75.82 km/s/Mpc.
 
-    This is a FORMULA CORRECTNESS test: the projection formula was
-    constructed so that the 7.58 Mpc geometric anchor (SH0ES scale) maps
-    to ≈ 73 km/s/Mpc given H_CMB ≈ 67.4. A deviation here means the
-    formula is coded wrong — it does NOT validate the framework itself.
+    This is a FORMULA CORRECTNESS test for the post-2026-04-25
+    correction (b parameter removed; formula reduces to
+    [1 + C(G) * L]). The expected value 75.82 follows from
+    H_CMB = 67.4, d_local = 7.58 Mpc, d_CMB = 13869.7 Mpc,
+    γ/H ≈ 1/281.7, C(G) = 27/55 (Convention A). A deviation here
+    means the formula is coded wrong — it does NOT validate the
+    framework itself.
     """
-    H0_pred, res = predict_local_H0(H_cmb=67.4, d_local_mpc=7.58)
-    assert 71.0 < H0_pred < 75.0, f"expected approximately 73 km/s/Mpc; got {H0_pred:.3f}"
-    assert not res.breakdown_flag
+    import warnings as _w
+    with _w.catch_warnings():
+        _w.simplefilter("ignore", PerturbativeBreakdownWarning)
+        H0_pred, res = predict_local_H0(H_cmb=67.4, d_local_mpc=7.58)
+    assert 75.0 < H0_pred < 76.5, (
+        f"expected ≈ 75.82 km/s/Mpc (post-b-correction); got {H0_pred:.3f}"
+    )
+    # Tight check against the user-specified reference.
+    assert abs(H0_pred - 75.82) < 0.05, (
+        f"NGC 4258 prediction must match the 75.82 reference within 0.05; "
+        f"got {H0_pred:.4f}"
+    )
+    # Under the physics-motivated criterion |C(G)*L| ≥ 1, NGC 4258 is
+    # ALSO outside the strict perturbative regime (β·L ≈ 3.69). The
+    # prediction is still finite and reportable, but the flag is set.
+    assert res.breakdown_flag
     assert res.gamma_over_H > 0.0
 
 
 def test_lmc_direct_anchor_reproduces_breakdown_scale():
-    """LMC d_local = 0.05 Mpc should yield H_local ≈ 81 km/s/Mpc with breakdown flag."""
+    """LMC d_local = 0.05 Mpc should yield H_local ≈ 88.85 km/s/Mpc with breakdown flag.
+
+    Post-2026-04-25 correction value. The pre-correction formula gave
+    ≈ 80.94 km/s/Mpc; the corrected formula (no b parameter) gives
+    ≈ 88.85.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", PerturbativeBreakdownWarning)
         H0_pred, res = predict_local_H0(H_cmb=67.4, d_local_mpc=0.05)
-    assert 78.0 < H0_pred < 85.0, f"expected approximately 81 km/s/Mpc; got {H0_pred:.3f}"
+    assert 86.0 < H0_pred < 92.0, (
+        f"expected ≈ 88.85 km/s/Mpc (post-b-correction); got {H0_pred:.3f}"
+    )
     assert res.breakdown_flag
     assert res.breakdown_message is not None
+
+
+def test_holographic_h_ratio_rejects_b_kwarg():
+    """The 2026-04-25 correction removed the `b` parameter entirely.
+
+    Passing it must raise TypeError so accidental retention of the
+    pre-correction call form is caught loudly rather than silently
+    ignored.
+    """
+    with pytest.raises(TypeError, match=r"unexpected keyword.*b"):
+        holographic_h_ratio(d_local_mpc=7.58, b=0.5)
+    with pytest.raises(TypeError, match=r"unexpected keyword"):
+        holographic_h_ratio(d_local_mpc=7.58, B_THRESHOLD=0.5)
+    with pytest.raises(TypeError, match=r"unexpected keyword"):
+        holographic_h_ratio(d_local_mpc=7.58, b_ansatz=0.5)
+    # Sanity: legitimate kwargs still work.
+    res = holographic_h_ratio(d_local_mpc=7.58)
+    assert res.ratio > 1.0
 
 
 def test_breakdown_warning_is_raised_for_subparsec_d_local():
@@ -91,12 +132,48 @@ def test_breakdown_warning_suppressed_when_emit_warning_false():
     assert res.breakdown_flag
 
 
-def test_breakdown_threshold_is_d_local_not_quadratic_correction():
-    """The threshold is d_local < 1 Mpc, not |quadratic_correction| > 0.5."""
-    # NGC 4258: |quadratic_correction| is actually > 0.5 (~2), but d_local >> 1 Mpc → no breakdown.
-    res = holographic_h_ratio(d_local_mpc=7.58)
-    assert abs(res.quadratic_correction) > 0.5
-    assert not res.breakdown_flag
+def test_breakdown_threshold_is_quadratic_correction_not_d_local():
+    """Breakdown criterion under Form 1 is ``|C(G)*L| ≥ 1``, NOT
+    ``d_local < 1 Mpc``.
+
+    The pre-2026-04-25 implementation used a ``d_local < 1 Mpc``
+    geometric heuristic that was a carryover from the previous formula
+    (with the ``b = 0.5`` offset). Under the corrected Form 1
+    ``[1 + C(G)·L]``, the only physics-motivated breakdown criterion
+    is the magnitude of the bracket's first-order Taylor truncation
+    relative to unity. Convention A puts the |C(G)·L| = 1 contour at
+    d_local ≈ 1885 Mpc, so all TRGB-anchored measurements (a few to
+    tens of Mpc) trigger the flag — including NGC 4258. The test
+    asserts the new criterion explicitly.
+    """
+    import warnings as _w
+    with _w.catch_warnings():
+        _w.simplefilter("ignore", PerturbativeBreakdownWarning)
+        # NGC 4258 (d_local = 7.58 Mpc): β·L = 3.69 > 1 → breakdown.
+        res_ngc = holographic_h_ratio(d_local_mpc=7.58)
+        assert res_ngc.quadratic_correction > 1.0
+        assert res_ngc.breakdown_flag, (
+            "NGC 4258 has |C(G)*L| ≈ 3.69 ≥ 1 — must trigger breakdown "
+            "under the physics-motivated criterion."
+        )
+
+        # A truly perturbative point: d_local ≈ 5000 Mpc → β·L < 1.
+        res_far = holographic_h_ratio(d_local_mpc=5000.0)
+        assert res_far.quadratic_correction < 1.0
+        assert not res_far.breakdown_flag, (
+            "d_local = 5000 Mpc has |C(G)*L| < 1 — must NOT trigger "
+            "breakdown."
+        )
+
+        # And a d_local in the legacy (1 Mpc < d_local < 1885 Mpc) gap
+        # that the old criterion called 'safe' but the new criterion
+        # correctly flags as breakdown:
+        res_legacy_safe = holographic_h_ratio(d_local_mpc=10.0)
+        assert res_legacy_safe.breakdown_flag, (
+            "d_local = 10 Mpc was 'safe' under the legacy d_local<1 Mpc "
+            "rule but |C(G)*L| ≈ 3.55 ≥ 1 — must trigger breakdown "
+            "under the physics-motivated criterion."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -130,10 +207,22 @@ def test_monte_carlo_propagation_shape_and_breakdown_fraction():
     assert H0_b.size == n and H0_a.size == n
     flags_b = np.array([r.breakdown_flag for r in per_b])
     flags_a = np.array([r.breakdown_flag for r in per_a])
-    assert flags_b.mean() < 0.05, "Case B (NGC 4258) should be in perturbative regime."
-    assert flags_a.mean() > 0.95, "Case A (LMC) should be flagged as breakdown."
-    assert np.median(H0_b) == pytest.approx(73.0, abs=3.0)
-    assert np.median(H0_a) == pytest.approx(81.0, abs=3.0)
+    # Under the physics-motivated breakdown criterion (|C(G)*L| ≥ 1),
+    # BOTH anchors trigger breakdown. LMC's β·L (≈ 6.15) is far worse
+    # than NGC 4258's (≈ 3.69), but the binary flag fires on both.
+    assert flags_b.mean() > 0.95, (
+        "Case B (NGC 4258) has |C(G)*L| ≈ 3.69 — physics-motivated "
+        "breakdown criterion fires."
+    )
+    assert flags_a.mean() > 0.95, (
+        "Case A (LMC) has |C(G)*L| ≈ 6.15 — far outside perturbative "
+        "regime; breakdown criterion fires."
+    )
+    # Post-2026-04-25 correction: NGC 4258 ≈ 75.82, LMC ≈ 88.85.
+    # The prediction values remain finite and reportable even with the
+    # breakdown flag set.
+    assert np.median(H0_b) == pytest.approx(75.8, abs=2.0)
+    assert np.median(H0_a) == pytest.approx(88.8, abs=3.0)
 
 
 def test_breakdown_threshold_constant_is_1_mpc():

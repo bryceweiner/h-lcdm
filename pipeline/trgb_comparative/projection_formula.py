@@ -4,7 +4,7 @@ Holographic projection formula for H_local / H_CMB.
 This is the framework's forward-prediction centerpiece for the TRGB comparative
 analysis:
 
-    H_local / H_CMB  =  1 + (γ/H)·L · [1 + (C(G) - 0.5)·L]
+    H_local / H_CMB  =  1 + (γ/H)·L · [1 + C(G)·L]
     where            L = ln(d_CMB / d_local)
 
 `γ/H` is **computed at runtime** from ``HLCDMCosmology.gamma_at_redshift(0.0)``
@@ -13,9 +13,24 @@ hardcoded constant — the nominal ~1/282 is an evaluation result, not a
 definition, and caching it would silently disconnect downstream code from any
 refinement of γ.
 
-``C(G) = 25/32`` is taken from the existing ``E8Cache`` module. ``d_CMB`` is
-the Planck 2018 comoving distance to last scattering, now a named constant
-on ``HLCDM_PARAMS``.
+``C(G)`` is the clustering coefficient of the E8×E8 root-system adjacency
+graph under **Convention A** (canonical root-system graph: edges where
+⟨α,β⟩ = +1). It is sourced live from
+:func:`e8_heterotic.get_e8_clustering_coefficient`, which evaluates to
+27/55 ≈ 0.4909 for Convention A.
+
+**2026-04-25 correction**: an earlier version of this module evaluated
+the second-order correction as ``(C(G) - 0.5) * L``, treating ``b = 0.5``
+as a forward-only ansatz. ``b`` had no first-principles derivation and
+has been removed entirely (not set to zero — removed). The corrected
+formula is ``[1 + C(G) * L]``. See ``docs/correction_log.md`` and
+``results/preregistration_addendum.md`` for the full audit trail. At
+NGC 4258 (d_local = 7.58 Mpc) the corrected formula predicts H_local
+≈ 75.82 km/s/Mpc; at LMC (d_local = 0.05 Mpc) ≈ 88.85 km/s/Mpc, both
+shifted upward from the pre-correction values.
+
+``d_CMB`` is the Planck 2018 comoving distance to last scattering, a
+named constant on ``HLCDM_PARAMS``.
 
 The return value of :func:`holographic_h_ratio` is a structured
 :class:`HolographicRatioResult` rather than a bare float, so callers can log
@@ -41,11 +56,37 @@ from hlcdm.parameters import HLCDM_PARAMS
 # ---------------------------------------------------------------------------
 
 
-#: Threshold on d_local (Mpc) below which the framework's derivation of the
-#: holographic projection formula is considered non-perturbative. Defined at
-#: 1 Mpc: the LMC at 0.05 Mpc sits deep below this, NGC 4258 at 7.58 Mpc
-#: sits safely above. Structural anchors for SH0ES-like methods (≳ few Mpc)
-#: are all in the perturbative regime; direct LMC anchoring is not.
+#: Threshold on |C(G) * L| above which the projection formula's truncated
+#: perturbative expansion (kept to first order inside the bracket
+#: ``[1 + C(G) * L]``) is no longer self-consistent: the next-order
+#: term in the expansion has magnitude ≥ the leading term it corrects.
+#:
+#: This is the **physics-motivated breakdown criterion** for Form 1:
+#:
+#:     ratio = 1 + (γ/H) · L · [1 + C(G) · L]
+#:
+#: where the bracket is a first-order Taylor truncation in the small
+#: parameter ``β·L = C(G)·L``. Truncation is justified when ``|β·L| < 1``.
+#: When ``|β·L| ≥ 1``, the dropped ``(β·L)²`` term has magnitude ≥
+#: ``β·L`` itself and the truncation is no longer perturbatively valid.
+#:
+#: **Replaces the legacy ``d_local < 1 Mpc`` heuristic** that was
+#: carried over from the pre-2026-04-25 formula. That heuristic was a
+#: geometric scale criterion, not a property of Form 1's expansion;
+#: under the corrected formula it has no first-principles standing.
+#:
+#: With C(G) = 27/55 (Convention A) and d_CMB = 13869.7 Mpc, the
+#: |β·L| = 1 contour sits at d_local ≈ 1885 Mpc — i.e., the strict
+#: perturbative regime is essentially the whole observable universe;
+#: TRGB-anchored measurements (d_local ≈ a few to tens of Mpc) all sit
+#: outside it. The flag is therefore a `caution` annotation rather
+#: than an `invalid prediction` annotation; the formula's evaluation
+#: remains finite and the prediction value is still reported.
+PERTURBATIVE_BETA_L_THRESHOLD: float = 1.0
+
+#: Legacy alias retained so external callers that imported the old
+#: ``d_local < 1 Mpc`` constant continue to import without raising
+#: ImportError. NOT used by the breakdown check anymore.
 PERTURBATIVE_D_LOCAL_MPC: float = 1.0
 
 
@@ -75,8 +116,8 @@ class HolographicRatioResult:
     gamma_over_H: float
     clustering_coefficient: float
     L: float
-    linear_term: float
-    quadratic_correction: float
+    linear_term: float                  # (γ/H) * L
+    quadratic_correction: float         # C(G) * L (post-2026-04-25 correction)
     breakdown_flag: bool
     breakdown_message: Optional[str]
     d_local_mpc: float
@@ -107,30 +148,29 @@ def compute_gamma_over_H_at_z0(cosmology: Optional[HLCDMCosmology] = None) -> fl
     return float(gamma_0 / H_0)
 
 
+#: Adjacency convention for the E8×E8 root-system graph.
+#: Convention A is the canonical root-system graph (⟨α,β⟩ = +1 for edges).
+#: Other conventions in the e8-heterotic-network package: 'B' (⟨α,β⟩ ≠ 0),
+#: 'C' (|⟨α,β⟩| = 1), 'D' (⟨α,β⟩ = -1). Convention A clustering
+#: coefficient is 27/55 ≈ 0.4909.
+E8_ADJACENCY_CONVENTION: str = "A"
+
+
 def _e8_clustering_coefficient() -> float:
-    """Return C(G) = 25/32 from the E8×E8 heterotic construction.
+    """Return C(G) for the E8×E8 root-system graph under Convention A.
 
-    We prefer the live value from ``hlcdm.e8.e8_cache.E8Cache`` so this module
-    tracks any refinement there. The expensive network construction is
-    avoided — we pull the cached theoretical value directly. If the module
-    cannot be imported for any reason (e.g., test environments where the
-    ``networkx`` dependency is absent), fall back to the mathematical
-    definition 25/32 = 0.78125.
+    Sourced live from
+    :func:`e8_heterotic.get_e8_clustering_coefficient`, the canonical
+    adjacency-graph clustering coefficient under Convention A
+    (⟨α,β⟩ = +1 for edges). Convention A evaluates to 27/55 ≈ 0.4909.
+
+    The previous local ``hlcdm.e8.e8_cache.E8Cache`` returned 25/32 =
+    0.78125 (a literature claim, not an actual computation on the
+    canonical adjacency graph) and has been removed; the migration to
+    the external ``e8-heterotic-network`` package corrects this.
     """
-    try:
-        from hlcdm.e8.e8_cache import E8Cache  # lazy: heavy import
-
-        cache = E8Cache()
-        value = cache.get_clustering_coefficient()
-        # Guard against the empirical-from-graph value; the theoretical value
-        # is what the formula uses. If ``get_clustering_coefficient`` ever
-        # returns a graph-measured number that drifts from 25/32, fall back
-        # to the mathematical definition.
-        if abs(value - 25.0 / 32.0) > 1e-6:
-            return 25.0 / 32.0
-        return float(value)
-    except Exception:  # pragma: no cover - defensive fallback
-        return 25.0 / 32.0
+    from e8_heterotic import get_e8_clustering_coefficient
+    return float(get_e8_clustering_coefficient(E8_ADJACENCY_CONVENTION))
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +186,17 @@ def holographic_h_ratio(
     gamma_over_H: Optional[float] = None,
     second_order: bool = True,
     emit_warning: bool = True,
+    **_rejected_kwargs,
 ) -> HolographicRatioResult:
     """Evaluate the holographic projection formula for H_local / H_CMB.
+
+    The formula is::
+
+        H_local / H_CMB  =  1 + (γ/H) · L · [1 + C(G) · L]
+        where            L = ln(d_CMB / d_local)
+
+    No ``b`` parameter is accepted. Passing ``b=...`` (or any other
+    unrecognised keyword) raises :class:`TypeError`.
 
     Parameters
     ----------
@@ -162,20 +211,36 @@ def holographic_h_ratio(
         Optional ``HLCDMCosmology`` instance. If omitted, a fresh one is
         created; γ/H is recomputed at call time.
     clustering_coefficient:
-        Optional override for C(G). Default: live value from ``E8Cache``
-        (which should always equal 25/32).
+        Optional override for C(G). Default: live value from
+        :func:`e8_heterotic.get_e8_clustering_coefficient` under
+        Convention A (canonical root-system graph), which evaluates to
+        27/55 ≈ 0.4909.
     gamma_over_H:
         Optional override for γ/H. Intended for tests and sensitivity
         analyses. In production, leave ``None`` so the formula pulls from
         the framework cosmology at call time.
     second_order:
-        Include the ``(C(G) - 0.5) * L`` correction. Default True.
+        Include the ``C(G) * L`` correction. Default True. With
+        ``second_order=False`` the formula reduces to
+        ``1 + (γ/H) · L``.
     emit_warning:
-        Raise ``PerturbativeBreakdownWarning`` when the second-order
-        correction magnitude exceeds 0.5. Default True. Monte Carlo drivers
-        that evaluate the formula many times typically pass False and rely on
-        the ``breakdown_flag`` in the return value.
+        Raise ``PerturbativeBreakdownWarning`` when ``d_local < 1 Mpc``
+        (the perturbative-derivation domain boundary). Default True. Monte
+        Carlo drivers that evaluate the formula many times typically pass
+        False and rely on the ``breakdown_flag`` in the return value.
     """
+    # Reject deprecated `b` (and any other unrecognised) kwargs explicitly.
+    # The 2026-04-25 correction removed the `(C(G) - b) * L` form; passing
+    # `b=…` is a code-archaeology error and is rejected loudly rather than
+    # silently ignored.
+    if _rejected_kwargs:
+        raise TypeError(
+            f"holographic_h_ratio() received unexpected keyword arguments: "
+            f"{sorted(_rejected_kwargs)}. The pre-2026-04-25 `b` parameter "
+            "was removed from the formula (see docs/correction_log.md); "
+            "pass only the documented arguments."
+        )
+
     if d_local_mpc <= 0.0:
         raise ValueError(f"d_local_mpc must be positive; got {d_local_mpc}")
 
@@ -191,21 +256,35 @@ def holographic_h_ratio(
 
     L = math.log(d_cmb_mpc / d_local_mpc)
     linear_term = gamma_over_H * L
-    quadratic_correction = (clustering_coefficient - 0.5) * L
+    # Second-order correction is C(G) * L (post-2026-04-25; pre-correction
+    # form was (C(G) - 0.5) * L).
+    quadratic_correction = clustering_coefficient * L
 
     if second_order:
         ratio = 1.0 + linear_term * (1.0 + quadratic_correction)
     else:
         ratio = 1.0 + linear_term
 
-    breakdown_flag = d_local_mpc < PERTURBATIVE_D_LOCAL_MPC
+    # Physics-motivated breakdown criterion under Form 1: the bracket's
+    # first-order Taylor truncation `[1 + β·L]` is self-consistent only
+    # when |β·L| < 1. When |β·L| ≥ 1 the dropped (β·L)² term has
+    # magnitude ≥ the kept (β·L) term, so the truncation is no longer
+    # perturbatively justified.
+    beta_L_magnitude = abs(quadratic_correction)        # |C(G) · L|
+    breakdown_flag = beta_L_magnitude >= PERTURBATIVE_BETA_L_THRESHOLD
     breakdown_message: Optional[str] = None
     if breakdown_flag:
         breakdown_message = (
             "Perturbative expansion breakdown: "
-            f"d_local = {d_local_mpc} Mpc < {PERTURBATIVE_D_LOCAL_MPC} Mpc threshold; "
-            f"framework's perturbative derivation does not hold. "
-            f"|(C(G) - 0.5) * L| = {abs(quadratic_correction):.3f}."
+            f"|C(G) * L| = {beta_L_magnitude:.3f} ≥ "
+            f"{PERTURBATIVE_BETA_L_THRESHOLD} threshold "
+            f"(d_local = {d_local_mpc} Mpc, L = {L:.3f}). "
+            "The first-order Taylor truncation in β = C(G) is no longer "
+            "self-consistent; the dropped (β·L)² term is comparable to "
+            "or larger than the kept (β·L) term. The prediction is "
+            "still finite and reported as a number, but should be "
+            "treated as outside the strict perturbative validity region "
+            "of Form 1."
         )
         if emit_warning:
             warnings.warn(breakdown_message, PerturbativeBreakdownWarning, stacklevel=2)

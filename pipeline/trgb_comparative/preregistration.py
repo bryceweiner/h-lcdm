@@ -45,8 +45,15 @@ class Stage1Config:
         "— runtime computation, no hardcoded constant."
     )
     clustering_coefficient_source: str = (
-        "hlcdm.e8.e8_cache.E8Cache.get_clustering_coefficient() "
-        "— theoretical value 25/32 = 0.78125."
+        "e8_heterotic.get_e8_clustering_coefficient(adjacency_convention='A') "
+        "— canonical root-system graph (⟨α,β⟩ = +1) clustering coefficient, "
+        "27/55 ≈ 0.4909. Sourced from the external e8-heterotic-network "
+        "package (github.com/bryceweiner/e8-heterotic-network), Convention A. "
+        "Supersedes the previous local hlcdm.e8 value of 25/32 = 0.78125, "
+        "which was a literature claim that did not match the canonical "
+        "adjacency graph; that quantity remains available for reference as "
+        "e8_heterotic.E8_CLUSTERING_LITERATURE_FRACTION but is no longer "
+        "used by the projection formula."
     )
     d_cmb_source: str = (
         "HLCDM_PARAMS.D_CMB_PLANCK_2018 = 13869.7 Mpc "

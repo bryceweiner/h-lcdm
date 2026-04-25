@@ -66,9 +66,84 @@ from .feature_extraction import FeatureExtractor
 from .checkpoint_manager import CheckpointManager
 from data.loader import DataLoader, DataUnavailableError
 from data.mock_generator import MockDatasetGenerator
-from hlcdm.e8.e8_heterotic_core import E8HeteroticSystem
 from hlcdm.cosmology import HLCDMCosmology
 from hlcdm.parameters import HLCDM_PARAMS
+
+
+class _E8SystemAdapter:
+    """Thin compatibility shim around the external ``e8-heterotic-network``
+    package, exposing the legacy API the ML pipeline expects.
+
+    The legacy local ``hlcdm.e8.e8_heterotic_core.E8HeteroticSystem`` was
+    deleted; the canonical E8×E8 mathematics now lives in
+    https://github.com/bryceweiner/e8-heterotic-network.
+
+    Adjacency-graph quantities use **Convention A** (canonical
+    root-system graph: edges where ⟨α,β⟩ = +1). This is the package
+    default and the discipline-correct choice for the ML pipeline's
+    pattern-detection use-case.
+    """
+
+    ADJACENCY_CONVENTION: str = "A"
+
+    def __init__(self, precision: str = "double", validate: bool = True) -> None:
+        # `precision` and `validate` are accepted for legacy-call compatibility;
+        # the new package always validates internally and uses np.float64.
+        from e8_heterotic import E8XE8_EMBEDDING_DIM, E8XE8_ROOTS  # constants
+        self._embedding_dim = E8XE8_EMBEDDING_DIM
+        self._n_roots = E8XE8_ROOTS
+
+    def construct_single_e8(self, seed: int = 42):
+        """Return the 240-root E8 system. ``seed`` is accepted but
+        unused — E8 root construction is deterministic in the new
+        package."""
+        from e8_heterotic import construct_e8_roots
+        return construct_e8_roots()
+
+    def construct_heterotic_system(self):
+        """Return the 480-root E8×E8 heterotic root system."""
+        from e8_heterotic import construct_e8xe8_roots
+        return construct_e8xe8_roots()
+
+    def get_network_properties(self) -> dict:
+        """Network-topology metrics under Convention A."""
+        from e8_heterotic import (
+            get_e8_clustering_coefficient,
+            count_triangles_and_wedges,
+            degree_distribution,
+        )
+        cc = float(get_e8_clustering_coefficient(self.ADJACENCY_CONVENTION))
+        triangles, wedges = count_triangles_and_wedges(
+            "e8xe8", self.ADJACENCY_CONVENTION,
+        )
+        degrees = degree_distribution("e8xe8", self.ADJACENCY_CONVENTION)
+        return {
+            "clustering_coefficient": cc,
+            "adjacency_convention": self.ADJACENCY_CONVENTION,
+            "dimension": self._embedding_dim,
+            "n_nodes": self._n_roots,
+            "n_edges": int(degrees.sum() // 2),
+            "n_triangles": int(triangles),
+            "n_wedges": int(wedges),
+            "connectivity_type": "heterotic",
+        }
+
+
+# Public name retained so existing code paths and patches keep working.
+E8HeteroticSystem = _E8SystemAdapter
+
+
+def _e8_clustering_convention_a() -> float:
+    """Live Convention A clustering coefficient (27/55 ≈ 0.4909).
+
+    Used as the theoretical-fallback value when the heterotic network
+    construction is unavailable. The previous local hlcdm.e8 package
+    returned 25/32 = 0.78125 — a literature claim that does not match
+    the canonical adjacency graph; the migration to the external
+    e8-heterotic-network package corrects this.
+    """
+    from e8_heterotic import get_e8_clustering_coefficient
+    return float(get_e8_clustering_coefficient(_E8SystemAdapter.ADJACENCY_CONVENTION))
 
 
 class MLPipeline(AnalysisPipeline):
@@ -3019,7 +3094,7 @@ class MLPipeline(AnalysisPipeline):
         if heterotic_system is None:
             # Use theoretical predictions
             return {
-                'clustering_coefficient': 25.0 / 32.0,  # Theoretical value
+                'clustering_coefficient': _e8_clustering_convention_a(),  # Convention A live value
                 'network_dimension': 496,
                 'connectivity': 'heterotic',
                 'topology_type': 'E8×E8'
@@ -3030,7 +3105,7 @@ class MLPipeline(AnalysisPipeline):
             network_props = self.e8_system.get_network_properties()
             
             return {
-                'clustering_coefficient': float(network_props.get('clustering_coefficient', 25.0/32.0)),
+                'clustering_coefficient': float(network_props.get('clustering_coefficient', _e8_clustering_convention_a())),
                 'network_dimension': int(network_props.get('dimension', 496)),
                 'connectivity': network_props.get('connectivity_type', 'heterotic'),
                 'topology_type': 'E8×E8',
@@ -3040,7 +3115,7 @@ class MLPipeline(AnalysisPipeline):
         except Exception:
             # Fallback to theoretical values
             return {
-                'clustering_coefficient': 25.0 / 32.0,
+                'clustering_coefficient': _e8_clustering_convention_a(),
                 'network_dimension': 496,
                 'connectivity': 'heterotic',
                 'topology_type': 'E8×E8'
@@ -3071,7 +3146,7 @@ class MLPipeline(AnalysisPipeline):
         
         # Network topology test
         clustering_coeff = network_analysis.get('clustering_coefficient', 0)
-        theoretical_clustering = 25.0 / 32.0  # E8×E8 theoretical value
+        theoretical_clustering = _e8_clustering_convention_a()  # Convention A canonical value
         
         clustering_residual = abs(clustering_coeff - theoretical_clustering)
         clustering_tolerance = 0.01  # 1% tolerance
@@ -3111,7 +3186,7 @@ class MLPipeline(AnalysisPipeline):
             network_props = self.e8_system.get_network_properties()
         except Exception:
             network_props = {
-                'clustering_coefficient': 25.0 / 32.0,
+                'clustering_coefficient': _e8_clustering_convention_a(),
                 'dimension': 496,
                 'connectivity_type': 'heterotic'
             }
@@ -3133,7 +3208,7 @@ class MLPipeline(AnalysisPipeline):
     def _extract_network_parameters(self, network_props: Dict[str, Any]) -> Dict[str, Any]:
         """Extract network topology parameters."""
         return {
-            'clustering_coefficient': network_props.get('clustering_coefficient', 25.0/32.0),
+            'clustering_coefficient': network_props.get('clustering_coefficient', _e8_clustering_convention_a()),
             'dimension': network_props.get('dimension', 496),
             'connectivity': network_props.get('connectivity_type', 'heterotic'),
             'n_nodes': network_props.get('n_nodes', 496),
@@ -3143,7 +3218,7 @@ class MLPipeline(AnalysisPipeline):
     def _compare_network_theory(self, network_params: Dict[str, Any]) -> Dict[str, Any]:
         """Compare network parameters with theoretical predictions."""
         clustering_obs = network_params.get('clustering_coefficient', 0)
-        clustering_theory = 25.0 / 32.0
+        clustering_theory = _e8_clustering_convention_a()
         
         residual = abs(clustering_obs - clustering_theory)
         relative_error = residual / clustering_theory if clustering_theory > 0 else 0
