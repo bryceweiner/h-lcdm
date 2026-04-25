@@ -91,7 +91,7 @@ def _f2019_calibrators(loader: DataLoader) -> List[CalibratorSpec]:
     # The transcribed dict from the loader keys hosts; we need per-SN.
     # Re-read the CSV for per-row access.
     from pathlib import Path
-    df = pd.read_csv(Path("data") / "catalogs" / "freedman_2019_table3.csv",
+    df = pd.read_csv(Path("trgb_data") / "catalogs" / "freedman_2019_table3.csv",
                      comment='#')
     for _, row in df.iterrows():
         mu = _f(row.get('mu_TRGB'))
@@ -131,7 +131,7 @@ def _f2025_jwst_only_calibrators(loader: DataLoader) -> List[CalibratorSpec]:
     out: List[CalibratorSpec] = []
     # Loader returns hosts dict; we need per-SN. Re-read the CSV.
     from pathlib import Path
-    df = pd.read_csv(Path("data") / "catalogs" / "freedman_2025_table2.csv",
+    df = pd.read_csv(Path("trgb_data") / "catalogs" / "freedman_2025_table2.csv",
                      comment='#')
     for _, row in df.iterrows():
         out.append(CalibratorSpec(
@@ -182,7 +182,7 @@ def build_uddin_inputs_full(
     sub-sample to use (`'CSPI'` or `'CSPII'`).
     """
     # Load Uddin's full B_all sample for SNooPy params per SN.
-    base = loader.downloaded_data_dir / 'uddin_h0csp'
+    base = loader.trgb_downloaded_dir / 'uddin_h0csp'
     flow_path = base / 'B_all_noj21.csv'
     udf_full = pd.read_csv(flow_path, sep=r'\s+')
     udf_full['sn_clean'] = udf_full['sn'].astype(str).str.replace('SN', '', regex=False)
@@ -339,7 +339,7 @@ def build_supercal_inputs_full(
     SNe are reported in the CoverageReport as missing.
     """
     from pathlib import Path
-    f19 = pd.read_csv(Path("data") / "catalogs" / "freedman_2019_table3.csv",
+    f19 = pd.read_csv(Path("trgb_data") / "catalogs" / "freedman_2019_table3.csv",
                       comment='#')
     f19['sn_clean'] = f19['SN'].astype(str)
     f19_lookup = {row['sn_clean']: row for _, row in f19.iterrows()}

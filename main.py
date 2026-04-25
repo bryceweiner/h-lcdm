@@ -190,7 +190,7 @@ def parse_arguments():
         '--trgb-comparative-preregister-stage1',
         action='store_true',
         dest='trgb_preregister_stage1',
-        help='Generate docs/trgb_comparative_preregistration_stage1.md (pre-data).'
+        help='Generate trgb_data/prereg/trgb_comparative_preregistration_stage1.md (pre-data).'
     )
     parser.add_argument(
         '--trgb-comparative-load-data',
@@ -202,7 +202,7 @@ def parse_arguments():
         '--trgb-comparative-preregister-stage2',
         action='store_true',
         dest='trgb_preregister_stage2',
-        help='Generate docs/trgb_comparative_preregistration_stage2.md (post-data).'
+        help='Generate trgb_data/prereg/trgb_comparative_preregistration_stage2.md (post-data).'
     )
     parser.add_argument(
         '--compute-backend',

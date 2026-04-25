@@ -347,7 +347,7 @@ def _section_trgb_calibrators(loader) -> str:
         "distances), and Freedman 2025 Table~3 (the augmented HST+JWST TRGB sample "
         "from which the published $H_0=70.39$ derives). The pipeline transcribes "
         "all three verbatim into machine-readable CSVs under "
-        "\\texttt{data/catalogs/}; the SHA-256 of each transcription is reported "
+        "\\texttt{trgb_data/catalogs/}; the SHA-256 of each transcription is reported "
         "alongside.\n\n"
     )
 
@@ -376,7 +376,7 @@ Table~1. Used by the pipeline's CCHP TRGB photometry reduction.
     # Freedman 2019 Table 3 — full TRGB calibrator set
     try:
         from pathlib import Path
-        df = pd.read_csv(Path("data/catalogs/freedman_2019_table3.csv"), comment="#")
+        df = pd.read_csv(Path("trgb_data/catalogs/freedman_2019_table3.csv"), comment="#")
         lines.append(_hdr("Freedman 2019 Table 3: TRGB calibrator distances and SN Ia magnitudes", 2))
         lines.append(r"""\begin{deluxetable*}{llcccccccc}
 \tablecaption{TRGB and Cepheid distance moduli plus standardized SN~Ia peak
@@ -414,7 +414,7 @@ mean the corresponding measurement does not exist for that SN.}
     # Freedman 2025 Table 2 — JWST 11-SN
     try:
         from pathlib import Path
-        df = pd.read_csv(Path("data/catalogs/freedman_2025_table2.csv"), comment="#")
+        df = pd.read_csv(Path("trgb_data/catalogs/freedman_2025_table2.csv"), comment="#")
         lines.append(_hdr("Freedman 2025 Table 2: JWST-only TRGB+JAGB averaged distance moduli", 2))
         lines.append(r"""\begin{deluxetable*}{llccccccc}
 \tablecaption{JWST-only TRGB and JAGB distance moduli (NGC~4258 anchor)
@@ -449,7 +449,7 @@ and SN~2017cbv at the same TRGB/JAGB distances.}
     # Freedman 2025 Table 3 — augmented HST+JWST 24-SN
     try:
         from pathlib import Path
-        df = pd.read_csv(Path("data/catalogs/freedman_2025_table3.csv"), comment="#")
+        df = pd.read_csv(Path("trgb_data/catalogs/freedman_2025_table3.csv"), comment="#")
         df_aug = df[df["in_augmented"] == 1].reset_index(drop=True)
         lines.append(_hdr("Freedman 2025 Table 3: augmented HST+JWST TRGB sample (primary $H_0$ sample)", 2))
         lines.append(r"""\begin{deluxetable*}{llcccccccc}

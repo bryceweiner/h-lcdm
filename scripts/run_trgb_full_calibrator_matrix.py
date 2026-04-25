@@ -10,7 +10,7 @@ without the rest of the pipeline overhead.
 
 Outputs (preserves any previous chain files):
 
-    results/trgb_comparative/chains/
+    trgb_data/chains/
       case_a_<system>_full.npz                 # 4 files
       case_b_<system>_full.npz                 # 4 files
       case_b_jwst_only_<system>_full.npz       # 4 files (sensitivity)
@@ -241,7 +241,10 @@ def main() -> int:
     p.add_argument("--n-burnin", type=int, default=5000)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output-dir", type=Path,
-                   default=Path("results/trgb_comparative"))
+                   default=Path("results/trgb_comparative"),
+                   help="Reports go to <output-dir>/reports/. Chains are "
+                        "always written to trgb_data/chains/ regardless "
+                        "of this flag (matches main pipeline).")
     p.add_argument("--skip-jwst-only-sensitivity", action="store_true")
     p.add_argument("--skip-uddin-positive-control", action="store_true")
     p.add_argument("--progress", action="store_true", default=False)
@@ -252,7 +255,10 @@ def main() -> int:
         n_walkers=args.n_walkers, n_steps=args.n_steps, n_burnin=args.n_burnin,
         seed=args.seed, progress=args.progress,
     )
-    chains_dir = args.output_dir / "chains"
+    # Chains live in trgb_data/chains/ alongside the rest of the
+    # TRGB-pipeline data; reports remain under the user-chosen
+    # --output-dir so per-invocation artefacts stay grouped.
+    chains_dir = Path("trgb_data/chains")
     reports_dir = args.output_dir / "reports"
     chains_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)

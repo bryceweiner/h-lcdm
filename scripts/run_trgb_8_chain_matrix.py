@@ -3,8 +3,8 @@
 
 Production-quality settings (Uddin 2023 8-parameter chains need more steps
 than the default expansion_enhancement MCMCSettings). Each chain is
-saved to ``results/trgb_comparative/chains/<case>_<system>.npz`` and a
-consolidated JSON + markdown report is written under
+saved to ``trgb_data/chains/<case>_<system>.npz`` and a consolidated
+JSON + markdown report is written under
 ``results/trgb_comparative/reports/``.
 
 Usage
@@ -179,7 +179,9 @@ def main() -> int:
         seed=args.seed, progress=args.progress,
     )
 
-    chains_dir = args.output_dir / "chains"
+    # Chains live in trgb_data/chains/ alongside the rest of the
+    # TRGB-pipeline data; reports remain under --output-dir.
+    chains_dir = Path("trgb_data/chains")
     reports_dir = args.output_dir / "reports"
     chains_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)

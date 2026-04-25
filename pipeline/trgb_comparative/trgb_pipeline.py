@@ -4,16 +4,18 @@ TRGBComparativePipeline — top-level orchestrator.
 Subcommands routed from ``main.py``:
 
 - ``preregister_stage1``: write
-  ``docs/trgb_comparative_preregistration_stage1.md`` (pre-data).
+  ``trgb_data/prereg/trgb_comparative_preregistration_stage1.md``
+  (pre-data freeze of methodology).
 - ``load_data``: download archival photometry and build the data bundles.
 - ``preregister_stage2``: resolve the preregistered selection rules against
   the loaded data; write
-  ``docs/trgb_comparative_preregistration_stage2.md``.
+  ``trgb_data/prereg/trgb_comparative_preregistration_stage2.md``.
 - ``run``: execute both Freedman reproductions (emcee MCMC) and the
   framework forward predictions; generate figures and markdown report.
+  ``run`` regenerates both stage documents at the start of the run so a
+  full pipeline invocation never depends on stale prereg artefacts.
 
-Both cases always run; unconditional reporting. The analysis refuses to
-run the MCMC until both preregistration stages exist.
+Both cases always run; unconditional reporting.
 """
 
 from __future__ import annotations
@@ -70,7 +72,10 @@ class TRGBComparativePipeline(AnalysisPipeline):
                              "Freedman 2024 (NGC 4258) CCHP TRGB measurements with "
                              "H-ΛCDM framework forward predictions.")
         self.checkpoint_manager = CheckpointManager(self.base_output_dir)
-        self.docs_dir = Path("docs")
+        # Pre-registration documents land in `trgb_data/prereg/` so they
+        # sit alongside the analysis catalog data and stay separate from
+        # code documentation in `docs/`.
+        self.prereg_dir = Path("trgb_data/prereg")
 
     # ------------------------------------------------------------------
     # Subcommand: Preregister Stage 1
@@ -81,7 +86,7 @@ class TRGBComparativePipeline(AnalysisPipeline):
         if context:
             if "compute_backend" in context:
                 cfg.compute_backend = str(context["compute_backend"])
-        path = generate_stage1(self.docs_dir, cfg)
+        path = generate_stage1(self.prereg_dir, cfg)
         self.log_progress(f"Stage 1 preregistration written → {path}")
         return {"stage1_path": str(path)}
 
@@ -117,7 +122,7 @@ class TRGBComparativePipeline(AnalysisPipeline):
         except DataUnavailableError as exc:
             self.log_progress(f"Case B data partial: {exc}")
 
-        path = generate_stage2(self.docs_dir, config=cfg)
+        path = generate_stage2(self.prereg_dir, config=cfg)
         self.log_progress(f"Stage 2 preregistration written → {path}")
         return {"stage2_path": str(path)}
 
@@ -272,15 +277,26 @@ class TRGBComparativePipeline(AnalysisPipeline):
         # at present. CSP-I/II MCMC chains are scheduled for Steps 7/8 of
         # the resolution task.
 
+        # Pre-registration: regenerate both stage documents at the start
+        # of the run so the artefacts always reflect the current
+        # methodology code. Stage 1 is purely deterministic from the
+        # config dataclass; Stage 2 resolves selection criteria against
+        # the loaded data bundles. Both land in `trgb_data/prereg/`.
+        self.log_progress(
+            "Generating pre-registration documents in "
+            f"{self.prereg_dir}…"
+        )
+        stage1_result = self.preregister_stage1(
+            {"compute_backend": ctx.get("compute_backend", "auto")}
+        )
+        stage2_result = self.preregister_stage2(
+            {"loader_git_commit": ctx.get("loader_git_commit", "")}
+        )
         if enforce_preregistration:
-            try:
-                stage1, stage2 = verify_preregistration_exists(self.docs_dir)
-                self.log_progress(
-                    f"Preregistration OK: stage1={stage1.name}, stage2={stage2.name}"
-                )
-            except FileNotFoundError as exc:
-                self.log_progress(f"ABORT: {exc}")
-                raise
+            stage1, stage2 = verify_preregistration_exists(self.prereg_dir)
+            self.log_progress(
+                f"Pre-registration OK: stage1={stage1.name}, stage2={stage2.name}"
+            )
 
         settings = MCMCSettings.short() if short else MCMCSettings()
 
@@ -310,7 +326,8 @@ class TRGBComparativePipeline(AnalysisPipeline):
             bundle_b = None
             self.log_progress(f"Case B data missing (strict_data=False): {exc}")
 
-        chains_dir = self.base_output_dir / "chains"
+        chains_dir = Path("trgb_data/chains")
+        chains_dir.mkdir(parents=True, exist_ok=True)
 
         # --- Hoyt 2025 SN Ia calibration tables (per-system H₀ reference values) ---
         try:
@@ -594,7 +611,8 @@ class TRGBComparativePipeline(AnalysisPipeline):
         short = bool(ctx.get("short", False))
         settings = MCMCSettings.short() if short else MCMCSettings()
         loader = DataLoader(log_file=self.log_file)
-        chains_dir = self.base_output_dir / "chains"
+        chains_dir = Path("trgb_data/chains")
+        chains_dir.mkdir(parents=True, exist_ok=True)
 
         self.log_progress(
             "[validate_extended] (1/3) legacy intersection 8-chain matrix "

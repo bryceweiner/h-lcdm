@@ -189,3 +189,11 @@ docs/
 nbodykit/
 e8_cache/
 results/
+
+# trgb_data/: TRGB-pipeline data tree.
+#   catalogs/  — published table transcriptions (TRACKED)
+#   prereg/    — preregistration documents (TRACKED)
+#   downloaded_data/  — large raw archives, NOT tracked
+#   chains/    — MCMC .npz outputs, regenerated, NOT tracked
+trgb_data/downloaded_data/
+trgb_data/chains/

@@ -129,7 +129,7 @@ def _freedman_2019_table3_by_sn(loader: DataLoader) -> Dict[str, Dict[str, float
     """Per-SN calibrator records from Freedman 2019 Table 3."""
     import pandas as pd
     from pathlib import Path
-    p = Path("data") / "catalogs" / "freedman_2019_table3.csv"
+    p = Path("trgb_data") / "catalogs" / "freedman_2019_table3.csv"
     if not p.exists():
         raise DataUnavailableError(f"Freedman 2019 Table 3 CSV missing at {p}")
     df = pd.read_csv(p, comment="#")

@@ -7,11 +7,11 @@ Handles two DOLPHOT .phot.WEB formats found in the EDD archive:
   B) "named filter" columns (43+ cols; `m_F555W`, `m_F814W`)
 
 Writes:
-  downloaded_data/trgb/sn_host_trgb_hst/{host}.csv  — F814W, F555W, errors, flag
-  downloaded_data/trgb/sn_host_trgb_hst/manifest.csv  — host, published μ_TRGB, σ, reference
+  trgb_data/downloaded_data/trgb/sn_host_trgb_hst/{host}.csv  — F814W, F555W, errors, flag
+  trgb_data/downloaded_data/trgb/sn_host_trgb_hst/manifest.csv  — host, published μ_TRGB, σ, reference
 
 Run from repo root. Requires cached raw photometry under
-  downloaded_data/trgb/sn_host_trgb_hst/raw/{host}.phot.WEB
+  trgb_data/downloaded_data/trgb/sn_host_trgb_hst/raw/{host}.phot.WEB
 and a parsed EDD summary at /tmp/edd_parsed.json (produced by the download step).
 """
 
@@ -26,8 +26,8 @@ import numpy as np
 import pandas as pd
 
 
-RAW_DIR = Path("downloaded_data/trgb/sn_host_trgb_hst/raw")
-OUT_DIR = Path("downloaded_data/trgb/sn_host_trgb_hst")
+RAW_DIR = Path("trgb_data/downloaded_data/trgb/sn_host_trgb_hst/raw")
+OUT_DIR = Path("trgb_data/downloaded_data/trgb/sn_host_trgb_hst")
 
 # Hosts that must NEVER appear in the Case A manifest: NGC 4258 is the
 # Case B anchor galaxy (per Reid 2019 maser distance). Including it as a

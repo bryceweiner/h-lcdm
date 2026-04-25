@@ -482,7 +482,7 @@ def write_summary(
         "numbers.\n"
         "3. All methodological choices (samples, edge detection parameters, priors) "
         "were frozen in a two-stage preregistration document before any H₀ value "
-        "was computed. See `docs/trgb_comparative_preregistration_stage{1,2}.md`.\n"
+        "was computed. See `trgb_data/prereg/trgb_comparative_preregistration_stage{1,2}.md`.\n"
     )
 
     report_path = reports_dir / "trgb_comparative_analysis_report.md"

@@ -10,9 +10,11 @@ Stage 2 is generated AFTER data loading but BEFORE analysis. It freezes
 the resolved host lists, the specific numerical values that required data
 loading to determine, and SHA-256 checksums of every archive used.
 
-Both documents are committed to the repo at
-``docs/trgb_comparative_preregistration_stage{1,2}.md``. The main pipeline
-refuses to run the analysis unless both exist.
+Both documents are written to ``trgb_data/prereg/`` (a tracked,
+persistent location separate from code in ``docs/``). The main pipeline
+regenerates them at the start of each run; the standalone
+``--trgb-comparative-preregister-stage{1,2}`` CLI flags remain for
+incremental workflows.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
-DOCS_DIR_DEFAULT = Path("docs")
+PREREG_DIR_DEFAULT = Path("trgb_data/prereg")
 STAGE1_FILENAME = "trgb_comparative_preregistration_stage1.md"
 STAGE2_FILENAME = "trgb_comparative_preregistration_stage2.md"
 
@@ -74,12 +76,12 @@ class Stage1Config:
         "with Gaussian priors; retained as a sensitivity-analysis variant."
     )
     tip_source_case_a: str = (
-        "freedman_2019 — per-host μ_TRGB read from data/catalogs/"
+        "freedman_2019 — per-host μ_TRGB read from trgb_data/catalogs/"
         "freedman_2019_table3.csv (Freedman 2019 Table 3 transcription, SHA-256 "
         "verified; 15 unique hosts, 18 SN Ia calibrators)."
     )
     tip_source_case_b: str = (
-        "freedman_2025 — per-host μ_TRGB read from data/catalogs/"
+        "freedman_2025 — per-host μ_TRGB read from trgb_data/catalogs/"
         "freedman_2025_table2.csv (Freedman 2025 Table 2 transcription; 10 "
         "unique hosts with weighted TRGB+JAGB distance moduli)."
     )
@@ -89,7 +91,7 @@ class Stage1Config:
     )
     per_host_extinction_source: str = (
         "Freedman 2019 Table 1 per-host A_F814W values "
-        "(data/catalogs/freedman_2019_table1.csv). Fallback: placeholder "
+        "(trgb_data/catalogs/freedman_2019_table1.csv). Fallback: placeholder "
         "EBV_SFD for hosts not in Freedman Table 1 — sensitivity-only path."
     )
     hubble_flow_z_cuts: str = (
@@ -337,16 +339,16 @@ class Stage1Config:
 
 
 def generate_stage1(
-    docs_dir: Path | str = DOCS_DIR_DEFAULT,
+    prereg_dir: Path | str = PREREG_DIR_DEFAULT,
     config: Optional[Stage1Config] = None,
 ) -> Path:
     """Write the Stage 1 preregistration document."""
-    docs_dir = Path(docs_dir)
-    docs_dir.mkdir(parents=True, exist_ok=True)
+    prereg_dir = Path(prereg_dir)
+    prereg_dir.mkdir(parents=True, exist_ok=True)
     cfg = config or Stage1Config()
     if not cfg.generated:
         cfg.generated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    path = docs_dir / STAGE1_FILENAME
+    path = prereg_dir / STAGE1_FILENAME
     path.write_text(cfg.render_markdown())
     return path
 
@@ -407,7 +409,7 @@ def _sha256_of_file(path: Path) -> str:
 
 
 def generate_stage2(
-    docs_dir: Path | str = DOCS_DIR_DEFAULT,
+    prereg_dir: Path | str = PREREG_DIR_DEFAULT,
     stage1_path: Optional[Path] = None,
     config: Optional[Stage2Config] = None,
 ) -> Path:
@@ -416,9 +418,9 @@ def generate_stage2(
     The Stage 1 document SHA-256 is recorded in Stage 2 so downstream can
     verify Stage 1 has not changed between stages.
     """
-    docs_dir = Path(docs_dir)
-    docs_dir.mkdir(parents=True, exist_ok=True)
-    stage1_path = stage1_path or (docs_dir / STAGE1_FILENAME)
+    prereg_dir = Path(prereg_dir)
+    prereg_dir.mkdir(parents=True, exist_ok=True)
+    stage1_path = stage1_path or (prereg_dir / STAGE1_FILENAME)
     if not stage1_path.exists():
         raise FileNotFoundError(
             f"Stage 1 preregistration not found at {stage1_path}; "
@@ -428,25 +430,28 @@ def generate_stage2(
     cfg = config or Stage2Config()
     if not cfg.generated:
         cfg.generated = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    path = docs_dir / STAGE2_FILENAME
+    path = prereg_dir / STAGE2_FILENAME
     path.write_text(cfg.render_markdown(stage1_sha))
     return path
 
 
-def verify_preregistration_exists(docs_dir: Path | str = DOCS_DIR_DEFAULT) -> Tuple[Path, Path]:
+def verify_preregistration_exists(prereg_dir: Path | str = PREREG_DIR_DEFAULT) -> Tuple[Path, Path]:
     """Raise FileNotFoundError unless both stage documents exist."""
-    docs_dir = Path(docs_dir)
-    stage1 = docs_dir / STAGE1_FILENAME
-    stage2 = docs_dir / STAGE2_FILENAME
+    prereg_dir = Path(prereg_dir)
+    stage1 = prereg_dir / STAGE1_FILENAME
+    stage2 = prereg_dir / STAGE2_FILENAME
     if not stage1.exists():
         raise FileNotFoundError(
             f"Stage 1 preregistration missing at {stage1}. "
-            "Run `python main.py --trgb-comparative-preregister-stage1` first."
+            "Run `python main.py --trgb-comparative-preregister-stage1` "
+            "first (or `--trgb-comparative` for the full pipeline, which "
+            "regenerates both stage documents at the start of the run)."
         )
     if not stage2.exists():
         raise FileNotFoundError(
             f"Stage 2 preregistration missing at {stage2}. "
-            "Run `python main.py --trgb-comparative-preregister-stage2` after data loading."
+            "Run `python main.py --trgb-comparative-preregister-stage2` "
+            "after data loading (or `--trgb-comparative` for the full run)."
         )
     return stage1, stage2
 

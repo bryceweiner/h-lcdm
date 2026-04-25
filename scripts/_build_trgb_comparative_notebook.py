@@ -74,8 +74,16 @@ they stand as independent observational cosmology. The framework cells
 operate on the same data via forward prediction only.
 
 **Preregistration**: all methodological choices are frozen in
-`docs/trgb_comparative_preregistration_stage{1,2}.md`. This notebook
-does not change any of them.
+`trgb_data/prereg/trgb_comparative_preregistration_stage{1,2}.md`.
+The main pipeline regenerates them at the start of each run; this
+notebook does not change any of them.
+
+**Data and chain locations**:
+- Catalog CSVs: `trgb_data/catalogs/`
+- Raw downloaded photometry: `trgb_data/downloaded_data/`
+- MCMC chain outputs: `trgb_data/chains/`
+- 12-chain reproduction matrix CSV: `results/12_chain_matrix.csv`
+- Manuscript figures: `figures/manuscript/`
 """))
 
 
@@ -419,7 +427,8 @@ from pipeline.trgb_comparative.full_calibrator_factories import all_chains_full
 from pipeline.trgb_comparative.sn_chain_factories import _run_one as _run_chain_plan
 
 # Chain output goes here (these files persist between cells if you re-run).
-chains_dir = repo_root / 'results' / 'trgb_comparative' / 'chains'
+# Matches the main pipeline's location at trgb_data/chains/.
+chains_dir = repo_root / 'trgb_data' / 'chains'
 chains_dir.mkdir(parents=True, exist_ok=True)
 
 CASES = ('case_a', 'case_b', 'case_b_jwst_only')

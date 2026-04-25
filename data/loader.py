@@ -86,10 +86,16 @@ class DataLoader:
         """
         self.downloaded_data_dir = Path(downloaded_data_dir)
         self.processed_data_dir = Path(processed_data_dir)
-        
+        # TRGB-specific raw data lives outside the shared downloaded_data
+        # tree so it can be tracked and relocated independently of the
+        # broader cosmology data caches. Routes to
+        # ``trgb_data/downloaded_data/{trgb,uddin_h0csp}/``.
+        self.trgb_downloaded_dir = Path("trgb_data/downloaded_data")
+
         # Create directories
         self.downloaded_data_dir.mkdir(parents=True, exist_ok=True)
         self.processed_data_dir.mkdir(parents=True, exist_ok=True)
+        self.trgb_downloaded_dir.mkdir(parents=True, exist_ok=True)
         
         self.use_cache = use_cache
         
@@ -3902,7 +3908,7 @@ class DataLoader:
         The data release is hosted on the Carnegie CCHP archive; the exact
         table URLs are captured in the preregistration Stage 1 document. This
         loader expects the cached CSV to live at
-        ``downloaded_data/trgb/lmc_hatt2018_halo_photometry.csv`` with
+        ``trgb_data/downloaded_data/trgb/lmc_hatt2018_halo_photometry.csv`` with
         columns ``ra, dec, F814W, F814W_err, F555W, F555W_err, field_id,
         flag`` (``flag`` = 0 for stars passing Hatt 2018 quality cuts).
 
@@ -3911,7 +3917,7 @@ class DataLoader:
         silently synthesize data. Real data provisioning is the Stage 2
         preregistration responsibility.
         """
-        cache_dir = self.downloaded_data_dir / "trgb"
+        cache_dir = self.trgb_downloaded_dir / "trgb"
         cache_dir.mkdir(parents=True, exist_ok=True)
         path = cache_dir / "lmc_hatt2018_halo_photometry.csv"
 
@@ -3943,15 +3949,15 @@ class DataLoader:
         """HST photometry of SN Ia host galaxies used by Freedman 2019/2020.
 
         Expects a per-host CSV at
-        ``downloaded_data/trgb/sn_host_trgb_hst/{host}.csv``, each with
+        ``trgb_data/downloaded_data/trgb/sn_host_trgb_hst/{host}.csv``, each with
         columns ``F814W, F814W_err, F555W, F555W_err, flag``, plus a host
-        manifest at ``downloaded_data/trgb/sn_host_trgb_hst/manifest.csv``
+        manifest at ``trgb_data/downloaded_data/trgb/sn_host_trgb_hst/manifest.csv``
         with columns ``host, published_mu_TRGB, published_sigma_mu,
         reference``.
 
         Raises :class:`DataUnavailableError` when the manifest is missing.
         """
-        base = self.downloaded_data_dir / "trgb" / "sn_host_trgb_hst"
+        base = self.trgb_downloaded_dir / "trgb" / "sn_host_trgb_hst"
         manifest_path = base / "manifest.csv"
         if not manifest_path.exists():
             raise DataUnavailableError(
@@ -3988,11 +3994,11 @@ class DataLoader:
         """JWST NIRCam photometry of SN Ia host galaxies used by CCHP 2024.
 
         Expects a per-host CSV at
-        ``downloaded_data/trgb/sn_host_trgb_jwst/{host}.csv`` with columns
+        ``trgb_data/downloaded_data/trgb/sn_host_trgb_jwst/{host}.csv`` with columns
         ``F090W, F090W_err, F150W, F150W_err, flag``, plus a manifest at
-        ``downloaded_data/trgb/sn_host_trgb_jwst/manifest.csv``.
+        ``trgb_data/downloaded_data/trgb/sn_host_trgb_jwst/manifest.csv``.
         """
-        base = self.downloaded_data_dir / "trgb" / "sn_host_trgb_jwst"
+        base = self.trgb_downloaded_dir / "trgb" / "sn_host_trgb_jwst"
         manifest_path = base / "manifest.csv"
         if not manifest_path.exists():
             raise DataUnavailableError(
@@ -4096,7 +4102,7 @@ class DataLoader:
         """Hoyt 2025 SN Ia magnitude-system recalibration reference + augmented values.
 
         Source: Hoyt et al. 2025 (arXiv:2503.11769) Tables 6 and 7.
-        Transcribed at ``data/catalogs/hoyt_2025_tables.csv``.
+        Transcribed at ``trgb_data/catalogs/hoyt_2025_tables.csv``.
 
         This provides, per SN Ia magnitude system (CSP-I, CSP-II, SuperCal,
         Pantheon+), the published reference M_B and H₀ plus the
@@ -4117,7 +4123,7 @@ class DataLoader:
                 ...},
              'reference': 'Hoyt et al. 2025, arXiv:2503.11769'}
         """
-        path = Path("data") / "catalogs" / "hoyt_2025_tables.csv"
+        path = Path("trgb_data") / "catalogs" / "hoyt_2025_tables.csv"
         if not path.exists():
             raise DataUnavailableError(
                 f"Hoyt 2025 Table 6/7 transcription missing at {path}."
@@ -4167,14 +4173,14 @@ class DataLoader:
         """Freedman 2019 CCHP VIII Table 1 — TRGB calibration sample.
 
         Source: Freedman et al. 2019, ApJ 882, 34 (arXiv:1907.05922), Table 1.
-        Transcribed to ``data/catalogs/freedman_2019_table1.csv``.
+        Transcribed to ``trgb_data/catalogs/freedman_2019_table1.csv``.
 
         Key column: per-host ``A_F814W`` (Galactic foreground extinction
         in the F814W band). These are the authoritative per-host
         extinction values Freedman used; they replace per-field SFD
         lookup for reproduction fidelity.
         """
-        path = Path("data") / "catalogs" / "freedman_2019_table1.csv"
+        path = Path("trgb_data") / "catalogs" / "freedman_2019_table1.csv"
         if not path.exists():
             raise DataUnavailableError(
                 f"Freedman 2019 Table 1 transcription missing at {path}."
@@ -4203,7 +4209,7 @@ class DataLoader:
         """Freedman 2019 CCHP VIII Table 3 per-galaxy TRGB distance moduli.
 
         Source: Freedman et al. 2019, ApJ 882, 34 (arXiv:1907.05922), Table 3.
-        Transcribed to ``downloaded_data/trgb/freedman_2019_table3.csv`` with
+        Transcribed to ``trgb_data/downloaded_data/trgb/freedman_2019_table3.csv`` with
         the CCHP-reduced and Jang&Lee-reduced tip measurements that entered
         the Freedman 2019 H₀ = 69.8 ± 0.8 ± 1.7 km/s/Mpc determination.
 
@@ -4213,7 +4219,7 @@ class DataLoader:
         into a single host-level entry with the host's mu_TRGB and sigma_T
         (they are identical in Table 3 for a given host).
         """
-        path = Path("data") / "catalogs" / "freedman_2019_table3.csv"
+        path = Path("trgb_data") / "catalogs" / "freedman_2019_table3.csv"
         if not path.exists():
             raise DataUnavailableError(
                 f"Freedman 2019 Table 3 transcription missing at {path}. "
@@ -4311,7 +4317,7 @@ class DataLoader:
         Returns a dict with the full Hubble flow sample plus the 18-host
         TRGB calibrator set, both keyed as numpy arrays.
         """
-        base = self.downloaded_data_dir / "uddin_h0csp"
+        base = self.trgb_downloaded_dir / "uddin_h0csp"
         flow_path = base / "B_all_noj21.csv"
         cal_path = base / "calibrators_trgb_f19.csv"
         if not flow_path.exists() or flow_path.stat().st_size == 0:
@@ -4404,7 +4410,7 @@ class DataLoader:
         downstream code has a published-target reference without re-running
         the 8-parameter MCMC from scratch.
         """
-        base = self.downloaded_data_dir / "uddin_h0csp"
+        base = self.trgb_downloaded_dir / "uddin_h0csp"
         path = base / "B_trgb_update3.csv"
         if not path.exists() or path.stat().st_size == 0:
             raise DataUnavailableError(
@@ -4485,7 +4491,7 @@ class DataLoader:
         Source: Freedman et al. 2025, ApJ 985, 203 (arXiv:2408.06153v3),
         Table 3 (LaTeX label `tab:cchptrgbtot`). Transcribed from the
         arXiv source `Ho2024.tex` lines 492-524 to
-        ``data/catalogs/freedman_2025_table3.csv``.
+        ``trgb_data/catalogs/freedman_2025_table3.csv``.
 
         This table is the **augmented HST+JWST TRGB calibrator sample**
         (24 SNe Ia in 20 unique hosts, after excluding SN 2021pit which
@@ -4502,7 +4508,7 @@ class DataLoader:
         F19,F21 distance moduli plus the inverse-variance-weighted
         ``mu_TRGB_CCHP`` combined value used in the H₀ derivation.
         """
-        path = Path("data") / "catalogs" / "freedman_2025_table3.csv"
+        path = Path("trgb_data") / "catalogs" / "freedman_2025_table3.csv"
         if not path.exists():
             raise DataUnavailableError(
                 f"Freedman 2025 Table 3 transcription missing at {path}."
@@ -4556,11 +4562,11 @@ class DataLoader:
         """Freedman 2025 CCHP JWST Table 2 per-galaxy TRGB/JAGB distances.
 
         Source: Freedman et al. 2025, ApJ 985, 203 (arXiv:2408.06153), Table 2.
-        Transcribed to ``downloaded_data/trgb/freedman_2025_table2.csv``.
+        Transcribed to ``trgb_data/downloaded_data/trgb/freedman_2025_table2.csv``.
         Final TRGB-only H₀ = 70.39 ± 1.22 (stat) ± 1.33 (sys) km/s/Mpc
         from NGC 4258 (Reid 2019 maser) as the geometric anchor.
         """
-        path = Path("data") / "catalogs" / "freedman_2025_table2.csv"
+        path = Path("trgb_data") / "catalogs" / "freedman_2025_table2.csv"
         if not path.exists():
             raise DataUnavailableError(
                 f"Freedman 2025 Table 2 transcription missing at {path}."
@@ -4606,10 +4612,10 @@ class DataLoader:
         """Anand et al. 2021/2022 public TRGB distance catalog.
 
         Expects a CSV at
-        ``downloaded_data/trgb/anand2022_catalog.csv`` with columns
+        ``trgb_data/downloaded_data/trgb/anand2022_catalog.csv`` with columns
         ``host, mu_TRGB, sigma_mu, method, anchor, reference``.
         """
-        path = self.downloaded_data_dir / "trgb" / "anand2022_catalog.csv"
+        path = self.trgb_downloaded_dir / "trgb" / "anand2022_catalog.csv"
         if not path.exists() or path.stat().st_size == 0:
             raise DataUnavailableError(
                 f"Anand TRGB catalog not found at {path}. Source: "
@@ -4630,7 +4636,7 @@ class DataLoader:
 
     def check_data_availability(self) -> Dict[str, bool]:
         """Check availability of key datasets."""
-        trgb_dir = self.downloaded_data_dir / "trgb"
+        trgb_dir = self.trgb_downloaded_dir / "trgb"
         datasets = {
             'act_dr6': (self.downloaded_data_dir / "act_dr6_fg_subtracted_EE.dat").exists(),
             'planck_2018': (self.downloaded_data_dir / "planck_2018_EE_spectrum.dat").exists(),
@@ -4644,13 +4650,13 @@ class DataLoader:
             'sn_host_trgb_hst_manifest': (trgb_dir / "sn_host_trgb_hst" / "manifest.csv").exists(),
             'sn_host_trgb_jwst_manifest': (trgb_dir / "sn_host_trgb_jwst" / "manifest.csv").exists(),
             'anand_trgb_catalog': (trgb_dir / "anand2022_catalog.csv").exists(),
-            'freedman_2019_table1': Path("data/catalogs/freedman_2019_table1.csv").exists(),
-            'freedman_2019_table3': Path("data/catalogs/freedman_2019_table3.csv").exists(),
-            'freedman_2025_table2': Path("data/catalogs/freedman_2025_table2.csv").exists(),
-            'freedman_2025_table3': Path("data/catalogs/freedman_2025_table3.csv").exists(),
-            'hoyt_2025_tables': Path("data/catalogs/hoyt_2025_tables.csv").exists(),
+            'freedman_2019_table1': Path("trgb_data/catalogs/freedman_2019_table1.csv").exists(),
+            'freedman_2019_table3': Path("trgb_data/catalogs/freedman_2019_table3.csv").exists(),
+            'freedman_2025_table2': Path("trgb_data/catalogs/freedman_2025_table2.csv").exists(),
+            'freedman_2025_table3': Path("trgb_data/catalogs/freedman_2025_table3.csv").exists(),
+            'hoyt_2025_tables': Path("trgb_data/catalogs/hoyt_2025_tables.csv").exists(),
             'pantheon_2018': (self.downloaded_data_dir / "pantheon_2018" / "lcparam_full_long.txt").exists(),
-            'uddin_h0csp_flow': (self.downloaded_data_dir / "uddin_h0csp" / "B_all_noj21.csv").exists(),
-            'uddin_h0csp_calibrators_trgb_f19': (self.downloaded_data_dir / "uddin_h0csp" / "calibrators_trgb_f19.csv").exists(),
+            'uddin_h0csp_flow': (self.trgb_downloaded_dir / "uddin_h0csp" / "B_all_noj21.csv").exists(),
+            'uddin_h0csp_calibrators_trgb_f19': (self.trgb_downloaded_dir / "uddin_h0csp" / "calibrators_trgb_f19.csv").exists(),
         }
         return datasets
