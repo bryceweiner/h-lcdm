@@ -417,12 +417,31 @@ def build_pantheon_plus_inputs_full(
     loader: DataLoader,
     cal_specs: List[CalibratorSpec],
 ) -> Tuple[SNChainData, CoverageReport]:
-    """Pantheon+SH0ES calibrators: IS_CALIBRATOR rows ∩ cal_specs.
+    """Pantheon+SH0ES calibrators: rows matching cal_specs by CID.
 
-    Coverage gap: only those SNe in `cal_specs` that appear as
-    IS_CALIBRATOR rows in Pantheon+SH0ES.dat (cross-matched by CID
-    via the existing SN_TO_HOST mapping inverse) enter the chain.
-    Pantheon+ does not include some F19 hosts (e.g., NGC 1316, NGC 1404).
+    Match policy (post-2026-04-25 host-coverage audit):
+
+    - We do **not** require Pantheon+SH0ES's `IS_CALIBRATOR=1` flag,
+      because that flag means "has an R22 Cepheid distance" — which is
+      orthogonal to "has a TRGB distance from F2019/F2025 Table 3".
+      Several Freedman TRGB-anchored SNe (e.g., 1980N, 1981D, 2006dd in
+      NGC 1316; 2007on, 2011iv in NGC 1404) appear in Pantheon+SH0ES.dat
+      with valid `m_b_corr` but `IS_CALIBRATOR=0` because their hosts
+      have no R22 Cepheid distance. For our TRGB-anchored analysis we
+      need the photometric magnitude only, not the Cepheid pairing —
+      so we match by CID against the requested cal_specs list.
+    - CID matching uses both the canonical SN name and the
+      Pantheon+SH0ES survey-suffixed variants (e.g., "1994DRichmond"
+      → "1994D"). When a row's CID strips of trailing alphanumerics down
+      to a known calibrator name, it's a match.
+    - When multiple Pantheon+SH0ES rows match a single calibrator
+      (different surveys for the same SN), the lowest-`m_b_corr_err_DIAG`
+      row wins (most precise photometry).
+
+    Genuine absences (Category A in the host-coverage audit):
+    SN 1989B (NGC 3627) and SN 1998bu (NGC 3368) are not in Pantheon+
+    at all. They're reported as missing and the chain runs on the
+    smaller sample without them.
     """
     pp = loader.load_pantheon_plus()
     cid = np.asarray(pp['CID']).astype(str)
@@ -433,53 +452,96 @@ def build_pantheon_plus_inputs_full(
     mB_synth = mu_obs + M_B_ref_sh0es
     sigma_mB_synth = np.sqrt(np.diag(pp['cov']))
 
-    # Pantheon+ uses CID matching the SN name (no "SN" prefix in CIDs).
-    pp_cal_lookup: Dict[str, int] = {}
-    for i in np.where(is_cal)[0]:
-        sn_clean = _canon_sn(str(cid[i]))
-        # Pantheon+ may have multiple rows per SN (different surveys) — keep first.
-        pp_cal_lookup.setdefault(sn_clean, int(i))
+    # Build CID lookup: every Pantheon+ row, keyed by canonical SN name
+    # (with survey-suffix tolerance).
+    def _strip_suffix(s: str) -> str:
+        """Strip trailing photometry-source suffixes from a Pantheon+ CID.
+
+        Pantheon+SH0ES CIDs occasionally carry a photometry-source suffix
+        (e.g. '1994DRichmond' = SN 1994D from Richmond et al. 1995;
+        '2005df_ANU' = SN 2005df from ANU; '2008fv_comb' = combined
+        photometry). The base IAU designation is YYYY followed by either
+        a single uppercase letter (early-year sequence: 1994A, 1994B, ...)
+        or 1-3 lowercase letters (late-year sequence: 2007af, 2017cbv, ...);
+        anything after that is a suffix.
+        """
+        import re
+        s = _canon_sn(s)
+        # Year + single uppercase letter, optional suffix:
+        m = re.match(r'^(\d{4}[A-Z])(?:[A-Za-z_].*)?$', s)
+        if m:
+            return m.group(1)
+        # Year + 2-3 lowercase letters, optional suffix:
+        m = re.match(r'^(\d{4}[a-z]{2,3})(?:[_A-Za-z].*)?$', s)
+        if m:
+            return m.group(1)
+        return s
+
+    pp_lookup: Dict[str, List[int]] = {}
+    for i, name in enumerate(cid):
+        canonical = _strip_suffix(str(name))
+        pp_lookup.setdefault(canonical, []).append(int(i))
+
+    sigma_mB_diag = np.asarray(pp.get('m_b_corr_err_DIAG',
+                                       np.sqrt(np.diag(pp['cov']))),
+                                dtype=float) if 'm_b_corr_err_DIAG' in pp else sigma_mB_synth
 
     matched_sn, matched_host, matched_mB, matched_sigma_mB = [], [], [], []
     matched_mu, matched_sigma_mu = [], []
+    matched_pp_indices: List[int] = []
     missing: List[str] = []
     for spec in cal_specs:
-        idx = pp_cal_lookup.get(spec.sn_name)
-        if idx is None:
+        candidates = pp_lookup.get(spec.sn_name, [])
+        if not candidates:
             missing.append(spec.sn_name)
             continue
+        # Pick the row with the smallest sigma_mB (most precise photometry).
+        best = min(candidates, key=lambda i: float(sigma_mB_synth[i]))
+        idx = best
         matched_sn.append(spec.sn_name)
         matched_host.append(spec.host_canon)
         matched_mB.append(float(mB_synth[idx]))
         matched_sigma_mB.append(float(sigma_mB_synth[idx]))
         matched_mu.append(spec.mu_TRGB)
         matched_sigma_mu.append(spec.sigma_mu_TRGB)
+        matched_pp_indices.append(idx)
 
     coverage = CoverageReport(
         case='?', system='pantheon_plus',
         requested_cal_count=len(cal_specs),
         matched_cal_count=len(matched_sn),
         missing_sn_names=missing,
-        notes=("Pantheon+SH0ES IS_CALIBRATOR rows do not include some "
-               "Freedman hosts (e.g., NGC 1316, NGC 1404); those SNe "
-               "are reported as missing rather than dropped silently."),
+        notes=("Pantheon+SH0ES rows matched by CID against the requested "
+               "calibrator sample (with survey-suffix tolerance, e.g. "
+               "'1994DRichmond' → '1994D'). The Pantheon+ `IS_CALIBRATOR` "
+               "flag is intentionally NOT required: it tracks 'has R22 "
+               "Cepheid distance' which is orthogonal to our TRGB-anchored "
+               "analysis. SNe genuinely absent from Pantheon+SH0ES.dat "
+               "(e.g., 1989B, 1998bu) are reported as missing."),
     )
 
     if len(matched_sn) < 3:
         raise DataUnavailableError(
             f"Pantheon+ full-cal chain: only {len(matched_sn)} of "
-            f"{len(cal_specs)} calibrators are Pantheon+ IS_CALIBRATOR rows."
+            f"{len(cal_specs)} calibrators matched Pantheon+ rows."
         )
 
-    flow_mask = ~is_cal
+    # Hubble-flow block: exclude any row used as a calibrator (by Pantheon+'s
+    # own IS_CALIBRATOR flag OR by name match against our calibrator list).
+    matched_idx_set = set(matched_pp_indices) if matched_pp_indices else set()
+    matched_cid_set = {_strip_suffix(s) for s in matched_sn}
+    flow_keep = np.ones(len(cid), dtype=bool)
+    flow_keep &= ~is_cal                                   # drop Pantheon+ calibrators
+    cid_canonical = np.asarray([_strip_suffix(str(c)) for c in cid])
+    flow_keep &= ~np.isin(cid_canonical, list(matched_cid_set))  # drop our newly-promoted calibrators
     zcmb, mBf, sigmaf, snf = _apply_hubble_flow_cut(
-        z_hd[flow_mask], mB_synth[flow_mask], sigma_mB_synth[flow_mask],
-        cid[flow_mask],
+        z_hd[flow_keep], mB_synth[flow_keep], sigma_mB_synth[flow_keep],
+        cid[flow_keep],
     )
 
     data = SNChainData(
         case='?', system='pantheon_plus',
-        system_label='Pantheon+SH0ES full-cal (IS_CALIBRATOR ∩ Freedman sample)',
+        system_label='Pantheon+SH0ES full-cal (CID-matched against Freedman sample, audit-corrected)',
         calibrator_sn_names=np.asarray(matched_sn),
         calibrator_hosts=np.asarray(matched_host),
         calibrator_mB=np.asarray(matched_mB, dtype=float),
