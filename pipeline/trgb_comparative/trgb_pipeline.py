@@ -40,8 +40,17 @@ from .preregistration import (
     generate_stage2,
     verify_preregistration_exists,
 )
+from .full_calibrator_factories import (
+    CoverageReport,
+    all_chains_full,
+)
 from .reporter import write_summary
+from .sn_chain_factories import _run_one as _run_chain_plan
 from .sn_chain_factories import run_all_chains_both_cases
+from .uddin_csp_chain import (
+    build_uddin_inputs_from_loader_dataset,
+    run_uddin_csp_chain,
+)
 from .visualization import generate_all_figures
 
 logger = logging.getLogger(__name__)
@@ -107,6 +116,132 @@ class TRGBComparativePipeline(AnalysisPipeline):
         path = generate_stage2(self.docs_dir, config=cfg)
         self.log_progress(f"Stage 2 preregistration written → {path}")
         return {"stage2_path": str(path)}
+
+    # ------------------------------------------------------------------
+    # Full-calibrator chain matrix (audit Recommendation 1) +
+    # Uddin 2023 positive-control test (audit Recommendation 3)
+    # ------------------------------------------------------------------
+
+    def run_full_calibrator_matrix(
+        self,
+        loader: DataLoader,
+        settings: MCMCSettings,
+        chains_dir: Path,
+        *,
+        include_jwst_only_sensitivity: bool = True,
+    ) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """Run the full-Freedman-calibrator-sample chain matrix.
+
+        Produces eight primary chains (Case A 4 systems + Case B primary 4
+        systems on the F2025 24-SN augmented sample) and four Case-B JWST-
+        only sensitivity chains (F2025 11-SN Table 2 subset). Each chain
+        operates on the full Freedman calibrator sample appropriate to its
+        case rather than the legacy Uddin-intersection subset.
+
+        Output filenames carry a ``_full`` suffix to preserve the previous
+        intersection chains alongside.
+
+        Returns ``{case: {system: result_dict}}`` where ``result_dict``
+        carries the chain's H₀ posterior plus calibrator coverage notes
+        (``n_calibrators_requested``, ``n_calibrators_matched``,
+        ``missing_sn_names``, ``coverage_notes``).
+        """
+        plans = all_chains_full(
+            loader, include_jwst_only_sensitivity=include_jwst_only_sensitivity
+        )
+        out: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for case, systems in plans.items():
+            out[case] = {}
+            for system, (plan, cov) in systems.items():
+                if plan is None:
+                    out[case][system] = {
+                        "case": case, "system": system,
+                        "error": cov.notes, "skipped": True,
+                    }
+                    continue
+                chain_path = chains_dir / f"{case}_{system}_full.npz"
+                self.log_progress(
+                    f"[{case}/{system}] full-cal: requested="
+                    f"{cov.requested_cal_count} matched={cov.matched_cal_count} "
+                    f"→ running chain"
+                )
+                try:
+                    result = _run_chain_plan(
+                        plan, settings, chain_out_path=chain_path,
+                        log_fn=self.log_progress,
+                    )
+                    rdict = result.as_dict()
+                    rdict["mode"] = plan.mode
+                    rdict["n_calibrators_requested"] = cov.requested_cal_count
+                    rdict["n_calibrators_matched"] = cov.matched_cal_count
+                    rdict["missing_sn_names"] = list(cov.missing_sn_names)
+                    rdict["coverage_notes"] = cov.notes
+                    out[case][system] = rdict
+                except Exception as exc:
+                    self.log_progress(
+                        f"[{case}/{system}] FAILED — {type(exc).__name__}: {exc}"
+                    )
+                    out[case][system] = {
+                        "case": case, "system": system,
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "failed": True,
+                        "n_calibrators_requested": cov.requested_cal_count,
+                        "n_calibrators_matched": cov.matched_cal_count,
+                    }
+        return out
+
+    def run_uddin_positive_control(
+        self, loader: DataLoader, settings: MCMCSettings, chain_path: Path,
+    ) -> Dict[str, Any]:
+        """Reproduce Uddin 2023 H₀ = 70.242 ± 0.724 as a positive control.
+
+        Validates the 8-parameter SNooPy likelihood implementation. Runs
+        the full Uddin `B_trgb_update3.csv` sample (no calibrator
+        intersection) under the same likelihood used by the Case A/B CSP
+        chains. Acceptance: ``|Δ vs 70.242| ≤ 1.0`` AND ``R̂_max < 1.01``.
+        """
+        uddin = loader.load_uddin_h0csp_trgb_dataset()
+        inputs = build_uddin_inputs_from_loader_dataset(
+            uddin, flow_sample_filter='both',
+        )
+        self.log_progress(
+            f"[positive-control] Uddin combined sample: "
+            f"n_cal={inputs.n_cal}, n_flow={inputs.n_flow}"
+        )
+        res = run_uddin_csp_chain(
+            inputs, settings,
+            case='positive_control',
+            system='uddin_2023_full',
+            system_label='Uddin 2023 H0CSP positive control (full CSP-I+CSP-II)',
+            published_target_H0=70.242, published_sigma_stat=0.724,
+            notes=("Uddin 2023 ApJ 970, 72 8-parameter SNooPy MCMC on full "
+                   "B_trgb_update3.csv (CSP-I+CSP-II combined). Target H0 = "
+                   "70.242 ± 0.724 km/s/Mpc."),
+            chain_out_path=chain_path,
+            log_fn=self.log_progress,
+        )
+        delta = res.H0_median - 70.242
+        passed = abs(delta) <= 1.0 and res.converged
+        self.log_progress(
+            f"[positive-control] H0 = {res.H0_median:.3f} ± {res.H0_sigma:.3f}  "
+            f"Δ = {delta:+.3f}  R̂_max = {res.rhat_max:.4f}  "
+            f"PASS = {passed}"
+        )
+        return {
+            "H0_median": float(res.H0_median),
+            "H0_sigma": float(res.H0_sigma),
+            "rhat_max": float(res.rhat_max),
+            "converged": bool(res.converged),
+            "target_H0": 70.242, "target_sigma": 0.724,
+            "delta": float(delta),
+            "pass": bool(passed),
+            "n_calibrators": int(res.n_calibrators),
+            "n_flow": int(res.n_flow),
+            "n_walkers": int(res.n_walkers),
+            "n_steps": int(res.n_steps),
+            "n_burnin": int(res.n_burnin),
+            "credible_intervals": {k: list(v) for k, v in res.credible_intervals.items()},
+        }
 
     # ------------------------------------------------------------------
     # Subcommand: Full run
@@ -222,17 +357,36 @@ class TRGBComparativePipeline(AnalysisPipeline):
         else:
             self.log_progress("Case B skipped: no host fields available.")
 
-        # --- Per-SN-system MCMC chains (8 chains: 4 systems × 2 cases) ---
-        # This is the rigorous reproduction mandated by the CSP-based
-        # reproduction mandate: each (case, system) pair produces its own
-        # pipeline-computed MCMC posterior. CSP-I/II chains run the full
-        # Uddin 2023 8-parameter SNooPy likelihood; SuperCal and
-        # Pantheon+SH0ES chains sample H₀ against pre-standardized m_B
-        # with M_B analytically profiled.
-        self.log_progress("Running per-(case, SN-system) chains (4 systems × 2 cases = 8 chains)…")
+        # --- Per-SN-system MCMC chains: legacy intersection + full-calibrator runs ---
+        # Two chain matrices are produced:
+        # 1. Legacy intersection-based chains (Uddin TRGB-cal subset only) — preserved
+        #    at `case_*_*.npz` for sensitivity comparison.
+        # 2. **Full-calibrator chains** (audit Recommendation 1) — operate on the
+        #    full Freedman calibrator sample appropriate to each case (F2019 18 SN
+        #    for Case A; F2025 24-SN augmented HST+JWST for Case B; plus an
+        #    11-SN F2025 Table 2 JWST-only sensitivity variant). Output filenames
+        #    carry a `_full` suffix and these are the primary results going forward.
+        self.log_progress("Running legacy per-(case, SN-system) intersection chains (4 systems × 2 cases = 8 chains)…")
         chain_matrix = run_all_chains_both_cases(
             loader, settings, chains_dir=chains_dir, log_fn=self.log_progress,
         )
+
+        self.log_progress("Running FULL-CALIBRATOR per-(case, SN-system) chains (12 chains incl. JWST-only sensitivity)…")
+        full_cal_matrix = self.run_full_calibrator_matrix(
+            loader, settings, chains_dir,
+            include_jwst_only_sensitivity=True,
+        )
+
+        self.log_progress("Running Uddin 2023 positive-control test (target H₀ = 70.242)…")
+        try:
+            positive_control = self.run_uddin_positive_control(
+                loader, settings, chains_dir / "uddin_positive_control.npz",
+            )
+        except Exception as exc:
+            self.log_progress(f"[positive-control] FAILED: {exc}")
+            positive_control = {
+                "error": f"{type(exc).__name__}: {exc}", "pass": False,
+            }
         n_converged = 0
         for case_id, systems in chain_matrix.items():
             for sys_id, r in systems.items():
@@ -310,6 +464,8 @@ class TRGBComparativePipeline(AnalysisPipeline):
                 "framework_a": framework_a.as_dict(),
                 "framework_b": framework_b.as_dict(),
                 "sn_system_chains": chain_matrix,
+                "full_calibrator_chains": full_cal_matrix,
+                "uddin_positive_control": positive_control,
                 "figures": {k: str(v) for k, v in figure_paths.items()},
                 "report": str(report_path),
             },
@@ -359,53 +515,105 @@ class TRGBComparativePipeline(AnalysisPipeline):
     def validate_extended(self, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Extended validation.
 
-        Runs the 8 per-(case, SN-system) MCMC chains as an independent
-        check against the latest pipeline code, then cross-checks that
-        every chain meets the Gelman-Rubin R̂ < 1.01 gate. Runtime is
-        dominated by the Uddin 8-parameter CSP chains (~45 s each on
-        Apple silicon; ~6 min end-to-end for the full 8-chain matrix).
+        Runs three independent reproduction checks:
+
+        1. **Legacy intersection 8-chain matrix** (sensitivity baseline) —
+           Uddin TRGB-cal subset only.
+        2. **Full-calibrator 12-chain matrix** (audit Recommendation 1) —
+           full Freedman 2019 / 2025 calibrator samples; primary results
+           going forward. Includes Case-B JWST-only sensitivity variants.
+        3. **Uddin 2023 positive-control test** (audit Recommendation 3) —
+           reproduces Uddin's published H₀ = 70.242 ± 0.724 to validate
+           the 8-parameter SNooPy likelihood implementation.
+
+        The validation passes only if (a) every full-calibrator chain
+        meets the R̂ < 1.01 gate AND (b) the positive control passes
+        (|Δ| ≤ 1.0 km/s/Mpc and converged).
         """
         ctx = context or {}
         short = bool(ctx.get("short", False))
         settings = MCMCSettings.short() if short else MCMCSettings()
         loader = DataLoader(log_file=self.log_file)
         chains_dir = self.base_output_dir / "chains"
+
         self.log_progress(
-            "[validate_extended] running 8-chain matrix "
+            "[validate_extended] (1/3) legacy intersection 8-chain matrix "
             f"(walkers={settings.n_walkers}, steps={settings.n_steps}, "
             f"burn-in={settings.n_burnin}) …"
         )
-        chain_matrix = run_all_chains_both_cases(
+        legacy_matrix = run_all_chains_both_cases(
             loader, settings, chains_dir=chains_dir, log_fn=self.log_progress,
         )
-        n_converged = 0
-        n_total = 0
-        per_chain: Dict[str, Any] = {}
-        for case_id, systems in chain_matrix.items():
-            for sys_id, rec in systems.items():
-                n_total += 1
-                key = f"{case_id}_{sys_id}"
-                if rec.get("error") or rec.get("skipped") or rec.get("failed"):
-                    per_chain[key] = {"error": rec.get("error", "skipped")}
-                    continue
-                conv = bool(rec.get("converged", False))
-                if conv:
-                    n_converged += 1
-                per_chain[key] = {
-                    "H0_median": float(rec["H0_median"]),
-                    "H0_sigma": float(rec["H0_sigma"]),
-                    "rhat_max": float(rec.get("rhat_max", rec.get("rhat_H0", float("nan")))),
-                    "converged": conv,
-                    "n_calibrators": int(rec.get("n_calibrators", 0)),
-                    "n_flow": int(rec.get("n_flow", 0)),
-                }
+
+        self.log_progress(
+            "[validate_extended] (2/3) FULL-CALIBRATOR 12-chain matrix "
+            "(F2019 18-SN / F2025 24-SN augmented / F2025 11-SN JWST-only) …"
+        )
+        full_cal_matrix = self.run_full_calibrator_matrix(
+            loader, settings, chains_dir,
+            include_jwst_only_sensitivity=True,
+        )
+
+        self.log_progress(
+            "[validate_extended] (3/3) Uddin 2023 positive-control test "
+            "(target H₀ = 70.242 ± 0.724 km/s/Mpc) …"
+        )
+        try:
+            positive_control = self.run_uddin_positive_control(
+                loader, settings, chains_dir / "uddin_positive_control.npz",
+            )
+        except Exception as exc:
+            self.log_progress(f"[positive-control] FAILED: {exc}")
+            positive_control = {
+                "error": f"{type(exc).__name__}: {exc}", "pass": False,
+            }
+
+        # Compute aggregate convergence + pass criteria
+        def _summarize(matrix: Dict[str, Dict[str, Dict[str, Any]]]) -> Dict[str, Any]:
+            n_conv = 0; n_total = 0
+            per: Dict[str, Any] = {}
+            for case_id, systems in matrix.items():
+                for sys_id, rec in systems.items():
+                    n_total += 1
+                    key = f"{case_id}_{sys_id}"
+                    if rec.get("error") or rec.get("skipped") or rec.get("failed"):
+                        per[key] = {"error": rec.get("error", "skipped")}
+                        continue
+                    conv = bool(rec.get("converged", False))
+                    if conv:
+                        n_conv += 1
+                    per[key] = {
+                        "H0_median": float(rec.get("H0_median", float("nan"))),
+                        "H0_sigma": float(rec.get("H0_sigma", float("nan"))),
+                        "rhat_max": float(rec.get("rhat_max",
+                                                  rec.get("rhat_H0", float("nan")))),
+                        "converged": conv,
+                        "n_calibrators_requested": int(rec.get("n_calibrators_requested", 0)),
+                        "n_calibrators_matched": int(rec.get(
+                            "n_calibrators_matched", rec.get("n_calibrators", 0))),
+                        "n_flow": int(rec.get("n_flow", 0)),
+                        "missing_sn_names": list(rec.get("missing_sn_names", [])),
+                    }
+            return {"per_chain": per, "n_converged": n_conv, "n_total": n_total}
+
+        legacy_summary = _summarize(legacy_matrix)
+        full_cal_summary = _summarize(full_cal_matrix)
+
+        passed = (
+            full_cal_summary["n_converged"] == full_cal_summary["n_total"]
+            and bool(positive_control.get("pass", False))
+        )
+
         return {
             "validation_extended": {
-                "chain_matrix": chain_matrix,
-                "per_chain": per_chain,
-                "n_converged": n_converged,
-                "n_total": n_total,
-                "passed": bool(n_converged == n_total),
+                "legacy_intersection_matrix": legacy_matrix,
+                "full_calibrator_matrix": full_cal_matrix,
+                "uddin_positive_control": positive_control,
+                "legacy_summary": legacy_summary,
+                "full_calibrator_summary": full_cal_summary,
+                "n_converged_full_cal": full_cal_summary["n_converged"],
+                "n_total_full_cal": full_cal_summary["n_total"],
+                "passed": bool(passed),
                 "convergence_gate": 1.01,
                 "settings": {
                     "n_walkers": settings.n_walkers,

@@ -4479,6 +4479,79 @@ class DataLoader:
             },
         }
 
+    def load_freedman_2025_table3(self) -> Dict[str, Any]:
+        """Freedman 2025 CCHP Table 3 — augmented HST+JWST TRGB calibrator sample.
+
+        Source: Freedman et al. 2025, ApJ 985, 203 (arXiv:2408.06153v3),
+        Table 3 (LaTeX label `tab:cchptrgbtot`). Transcribed from the
+        arXiv source `Ho2024.tex` lines 492-524 to
+        ``data/catalogs/freedman_2025_table3.csv``.
+
+        This table is the **augmented HST+JWST TRGB calibrator sample**
+        (24 SNe Ia in 20 unique hosts, after excluding SN 2021pit which
+        lacks a CSP-standardized peak magnitude). The published TRGB
+        H₀ = 70.39 ± 1.22 (stat) ± 1.33 (sys) is derived from this sample
+        per Table 4 / `tab:hovalues`:
+            "70.39  TRGB + CSP B band ; 24 SN calibrators, z>0.01"
+
+        Distinct from :py:meth:`load_freedman_2025_table2`, which is the
+        JWST-only 11-SN subset (Table 2 / `tab:distances`); that subset
+        produces H₀ = 68.81 ± 1.80 per Table 4.
+
+        Returns the per-SN augmented sample with both the JWST and
+        F19,F21 distance moduli plus the inverse-variance-weighted
+        ``mu_TRGB_CCHP`` combined value used in the H₀ derivation.
+        """
+        path = Path("data") / "catalogs" / "freedman_2025_table3.csv"
+        if not path.exists():
+            raise DataUnavailableError(
+                f"Freedman 2025 Table 3 transcription missing at {path}."
+            )
+        df = pd.read_csv(path, comment='#')
+        # Coerce numeric columns ("..." in source becomes NaN).
+        num_cols = ['mu_TRGB_JWST', 'sigma_TRGB_JWST', 'mu_TRGB_F19F21',
+                    'sigma_TRGB_F19F21', 'mu_TRGB_CCHP', 'sigma_TRGB_CCHP',
+                    'mu_Ceph_R22', 'sigma_Ceph_R22']
+        for c in num_cols:
+            df[c] = pd.to_numeric(df[c], errors='coerce')
+        augmented_df = df[df['in_augmented'] == 1].reset_index(drop=True)
+        jwst_only_df = df[df['mu_TRGB_JWST'].notna()].reset_index(drop=True)
+
+        def _pack(d: pd.DataFrame) -> Dict[str, np.ndarray]:
+            return {
+                'SN_name': d['SN'].astype(str).to_numpy(),
+                'host': d['Galaxy'].astype(str).to_numpy(),
+                'host_canon': d['host_canon'].astype(str).to_numpy(),
+                'mu_TRGB_JWST': d['mu_TRGB_JWST'].to_numpy(dtype=float),
+                'sigma_TRGB_JWST': d['sigma_TRGB_JWST'].to_numpy(dtype=float),
+                'mu_TRGB_F19F21': d['mu_TRGB_F19F21'].to_numpy(dtype=float),
+                'sigma_TRGB_F19F21': d['sigma_TRGB_F19F21'].to_numpy(dtype=float),
+                'mu_TRGB_CCHP': d['mu_TRGB_CCHP'].to_numpy(dtype=float),
+                'sigma_TRGB_CCHP': d['sigma_TRGB_CCHP'].to_numpy(dtype=float),
+                'mu_Ceph_R22': d['mu_Ceph_R22'].to_numpy(dtype=float),
+                'sigma_Ceph_R22': d['sigma_Ceph_R22'].to_numpy(dtype=float),
+            }
+
+        self.log_message(
+            f"Loaded Freedman 2025 Table 3 (augmented): {len(augmented_df)} SNe "
+            f"in {augmented_df['host_canon'].nunique()} unique hosts; "
+            f"JWST-only subset: {len(jwst_only_df)} SNe in "
+            f"{jwst_only_df['host_canon'].nunique()} hosts."
+        )
+        return {
+            'name': 'Freedman 2025 CCHP Table 3 (augmented HST+JWST TRGB)',
+            'reference': 'Freedman et al. 2025, ApJ 985, 203, Table 3',
+            'augmented': _pack(augmented_df),
+            'jwst_only': _pack(jwst_only_df),
+            'H0_published_augmented': 70.39,
+            'H0_sigma_stat_augmented': 1.22,
+            'H0_sigma_sys_augmented': 1.33,
+            'H0_published_jwst_only': 68.81,
+            'H0_sigma_stat_jwst_only': 1.80,
+            'N_augmented_SNe': int(len(augmented_df)),
+            'N_jwst_only_SNe': int(len(jwst_only_df)),
+        }
+
     def load_freedman_2025_table2(self) -> Dict[str, Any]:
         """Freedman 2025 CCHP JWST Table 2 per-galaxy TRGB/JAGB distances.
 
@@ -4574,6 +4647,7 @@ class DataLoader:
             'freedman_2019_table1': Path("data/catalogs/freedman_2019_table1.csv").exists(),
             'freedman_2019_table3': Path("data/catalogs/freedman_2019_table3.csv").exists(),
             'freedman_2025_table2': Path("data/catalogs/freedman_2025_table2.csv").exists(),
+            'freedman_2025_table3': Path("data/catalogs/freedman_2025_table3.csv").exists(),
             'hoyt_2025_tables': Path("data/catalogs/hoyt_2025_tables.csv").exists(),
             'pantheon_2018': (self.downloaded_data_dir / "pantheon_2018" / "lcparam_full_long.txt").exists(),
             'uddin_h0csp_flow': (self.downloaded_data_dir / "uddin_h0csp" / "B_all_noj21.csv").exists(),

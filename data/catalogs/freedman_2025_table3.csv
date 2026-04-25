@@ -1,0 +1,56 @@
+# Freedman 2025 CCHP Status Report Table 3 — CCHP HST+JWST TRGB and R22 Cepheid Distances (FULL augmented sample)
+# Source: Freedman, Madore, Hoyt, Owens, Lee, et al. 2025, ApJ 985, 203 (arXiv:2408.06153v3), Table 3 (label tab:cchptrgbtot).
+# Transcribed 2026-04-25 from the arXiv LaTeX source `Ho2024.tex` lines 492-524.
+#
+# CONTEXT (verified from Section 9, Table 4 / tab:hovalues):
+#   The published TRGB H₀ = 70.39 ± 1.22 (stat) ± 1.33 (sys) km/s/Mpc IS DERIVED from this
+#   24-SN augmented HST+JWST calibrator sample (column ``mu_TRGB_CCHP``), NOT from
+#   Table 2's 11-SN JWST-only subset. Table 4 explicitly lists:
+#     "70.39 +1.23 -1.21  TRGB + CSP B band ; 24 SN calibrators, z>0.01 ; 291 distant SN  pymc"
+#   The 11-SN JWST-only subset gives H₀ = 68.81 ± 1.80 (Table 4 line at z>0.01).
+#
+# Columns:
+#   SN              SN Ia calibrator name (no "SN" prefix)
+#   Galaxy          host galaxy abbreviation (e.g. N1316)
+#   mu_TRGB_JWST    JWST F115W TRGB distance modulus (mag); empty if not measured
+#   sigma_TRGB_JWST 1σ on mu_TRGB_JWST; empty if absent
+#   mu_TRGB_F19F21  HST TRGB distance modulus from Freedman 2019 (F19) / Freedman 2021 (F21); empty if absent
+#   sigma_TRGB_F19F21  1σ on mu_TRGB_F19F21
+#   mu_TRGB_CCHP    Combined CCHP HST+JWST TRGB distance modulus (the AUGMENTED quantity used in §9)
+#   sigma_TRGB_CCHP 1σ on mu_TRGB_CCHP
+#   mu_Ceph_R22     Cepheid distance modulus from Riess et al. 2022; empty if absent
+#   sigma_Ceph_R22  1σ on mu_Ceph_R22
+#   has_F090W_TRGB  1 if a TRGB distance from F090W archival data exists (footnote a)
+#   in_augmented    1 if SN is in the 24-SN augmented analysis sample (excludes 2021pit per §9)
+#   host_canon      canonical host name
+#
+# Spot-checks against §9 / Table 4:
+#   24 SNe with in_augmented=1, in 17 unique hosts.
+#   The "11 SN calibrators, JWST distances only" subset = SNe whose mu_TRGB_JWST is non-empty
+#   ({2011fe, 2012fr, 2015F, 2011by, 2007sr, 2012cg, 1981B, 1990N, 2013aa, 2017cbv, 2013dy} = 11 SNe).
+SN,Galaxy,mu_TRGB_JWST,sigma_TRGB_JWST,mu_TRGB_F19F21,sigma_TRGB_F19F21,mu_TRGB_CCHP,sigma_TRGB_CCHP,mu_Ceph_R22,sigma_Ceph_R22,has_F090W_TRGB,in_augmented,host_canon
+2011fe,M101,29.151,0.042,29.078,0.04,29.113,0.029,29.194,0.039,0,1,M101
+2002fk,N1309,,,32.499,0.07,32.499,0.070,32.546,0.060,0,1,NGC 1309
+2006dd,N1316,,,31.460,0.04,31.460,0.040,,,0,1,NGC 1316
+1980N,N1316,,,31.460,0.04,31.460,0.040,,,0,1,NGC 1316
+1981D,N1316,,,31.460,0.04,31.460,0.040,,,0,1,NGC 1316
+2012fr,N1365,31.366,0.069,31.360,0.05,31.362,0.040,31.379,0.057,0,1,NGC 1365
+2011iv,N1404,,,31.360,0.06,31.360,0.060,,,0,1,NGC 1404
+2007on,N1404,,,31.360,0.06,31.360,0.060,,,0,1,NGC 1404
+2001el,N1448,,,31.320,0.06,31.321,0.038,31.290,0.037,1,1,NGC 1448
+2021pit,N1448,,,,,31.321,0.038,31.290,0.037,1,0,NGC 1448
+2015F,N2442,31.646,0.097,,,31.646,0.097,31.457,0.065,0,1,NGC 2442
+1995al,N3021,,,32.221,0.05,32.221,0.050,32.475,0.160,0,1,NGC 3021
+1998bu,N3368,,,30.313,0.04,30.313,0.040,,,0,1,NGC 3368
+1994ae,N3370,,,32.273,0.05,32.273,0.050,32.123,0.052,0,1,NGC 3370
+1989B,N3627,,,30.221,0.04,30.221,0.040,,,0,1,NGC 3627
+2011by,N3972,31.747,0.068,,,31.747,0.068,31.644,0.090,0,1,NGC 3972
+2007sr,N4038,31.645,0.078,31.681,0.05,31.671,0.042,31.615,0.117,0,1,NGC 4038
+2012cg,N4424,30.926,0.030,31.000,0.06,30.941,0.027,30.856,0.130,0,1,NGC 4424
+1994D,N4526,,,30.998,0.07,30.998,0.070,,,0,1,NGC 4526
+1981B,N4536,30.923,0.052,30.964,0.05,30.944,0.036,30.838,0.051,0,1,NGC 4536
+1990N,N4639,31.774,0.073,,,31.774,0.073,31.818,0.085,0,1,NGC 4639
+2007af,N5584,,,31.822,0.10,31.845,0.047,31.775,0.053,1,1,NGC 5584
+2013aa,N5643,30.643,0.071,30.475,0.08,30.583,0.039,30.570,0.050,1,1,NGC 5643
+2017cbv,N5643,30.643,0.071,30.475,0.08,30.583,0.039,30.570,0.050,1,1,NGC 5643
+2013dy,N7250,31.629,0.047,,,31.629,0.047,31.628,0.126,0,1,NGC 7250
