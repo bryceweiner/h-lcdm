@@ -1,6 +1,6 @@
 # TRGB Comparative Analysis — Preregistration Stage 1
 
-*Generated: 2026-04-25T14:54:08Z*
+*Generated: 2026-04-25T15:26:12Z*
 
 **Stage 1 is frozen BEFORE any data loading.** Every methodological choice documented below is committed to the repository in this form.
 
