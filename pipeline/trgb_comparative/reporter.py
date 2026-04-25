@@ -201,6 +201,115 @@ def _render_chain_matrix_section(
     return "".join(lines)
 
 
+def _render_full_calibrator_section(
+    full_cal: Optional[Dict[str, Dict[str, Dict[str, object]]]],
+) -> str:
+    """Render the full-Freedman-calibrator-sample chain matrix table block.
+
+    Distinct from the legacy intersection chain matrix: every entry here
+    operates on the full Freedman calibrator sample appropriate to its
+    case. Output filenames carry a `_full` suffix.
+    """
+    if not full_cal:
+        return ""
+    lines: List[str] = ["## Full-calibrator-sample MCMC chain matrix (audit Recommendation 1)\n\n"]
+    lines.append(
+        "These are the **primary pipeline-computed reproductions going "
+        "forward**. Every chain operates on the full Freedman calibrator "
+        "sample appropriate to its case, with explicit per-chain coverage "
+        "reported (`Cal req/got` ratio = requested calibrator count / "
+        "calibrators with valid SNooPy parameters in this photometric "
+        "system).\n\n"
+        "Targets: Case A → 69.8 (F2019 18-SN); Case B (primary) → 70.39 "
+        "(F2025 24-SN augmented HST+JWST); Case B JWST-only sensitivity → "
+        "68.81 (F2025 11-SN Table 2 TRGB+JAGB).\n\n"
+    )
+    lines.append(
+        "| Case | System | Cal req/got | N_flow | Mode | H₀ (med) | σ(H₀) | "
+        "R̂_max | Conv | Target | Δ(MCMC−tgt) | Within ±stat? |\n"
+        "| --- | --- | ---: | ---: | --- | ---: | ---: | ---: | :---: | "
+        "---: | ---: | :---: |\n"
+    )
+    for case_key, systems in full_cal.items():
+        for sys_key in ("csp_i", "csp_ii", "supercal", "pantheon_plus"):
+            rec = systems.get(sys_key, {})
+            if not rec or "H0_median" not in rec:
+                continue
+            req = rec.get("n_calibrators_requested", "?")
+            got = rec.get("n_calibrators_matched", "?")
+            tgt = float(rec.get("published_target_H0", 0.0))
+            tol = float(rec.get("published_sigma_stat", 0.0))
+            delta = float(rec["H0_median"]) - tgt
+            within = "✓" if abs(delta) <= tol else "✗"
+            mode = rec.get("mode", "?")
+            rh = float(rec.get("rhat_max", rec.get("rhat_H0", float("nan"))))
+            conv = "✓" if rec.get("converged") else "✗"
+            lines.append(
+                f"| {case_key} | {sys_key} | {req}/{got} | "
+                f"{rec.get('n_flow', '?')} | {mode} | "
+                f"{float(rec['H0_median']):.3f} | {float(rec['H0_sigma']):.3f} | "
+                f"{rh:.4f} | {conv} | {tgt:.2f} | {delta:+.3f} | {within} |\n"
+            )
+    lines.append("\n")
+    # Cross-case shift per system, full-cal numbers
+    lines.append("### Cross-case shift per system (full-cal)\n\n")
+    lines.append(
+        "| System | A H₀ | B aug H₀ | B JWST H₀ | Δ(B aug − A) | "
+        "Δ(B JWST − A) |\n| --- | ---: | ---: | ---: | ---: | ---: |\n"
+    )
+    import math as _math
+    for sys_id in ("csp_i", "csp_ii", "supercal", "pantheon_plus"):
+        ra = full_cal.get("case_a", {}).get(sys_id, {})
+        rb = full_cal.get("case_b", {}).get(sys_id, {})
+        rj = full_cal.get("case_b_jwst_only", {}).get(sys_id, {})
+        if "H0_median" not in ra:
+            continue
+        ha = float(ra["H0_median"])
+        hb = float(rb.get("H0_median", float("nan")))
+        hj = float(rj.get("H0_median", float("nan"))) if rj else float("nan")
+        d_aug = (hb - ha) if not _math.isnan(hb) else float("nan")
+        d_jw = (hj - ha) if not _math.isnan(hj) else float("nan")
+        lines.append(
+            f"| {sys_id} | {ha:.3f} | {hb:.3f} | "
+            f"{(f'{hj:.3f}' if not _math.isnan(hj) else '–')} | "
+            f"{d_aug:+.3f} | "
+            f"{(f'{d_jw:+.3f}' if not _math.isnan(d_jw) else '–')} |\n"
+        )
+    lines.append("\n")
+    return "".join(lines)
+
+
+def _render_positive_control_section(pc: Optional[Dict[str, object]]) -> str:
+    if not pc:
+        return ""
+    lines: List[str] = ["## Uddin 2023 positive-control test (audit Recommendation 3)\n\n"]
+    if pc.get("error"):
+        lines.append(f"**FAILED with error**: `{pc.get('error')}`\n\n")
+        return "".join(lines)
+    target = pc.get("target_H0", 70.242)
+    H0 = float(pc.get("H0_median", float("nan")))
+    sigma = float(pc.get("H0_sigma", float("nan")))
+    delta = float(pc.get("delta", float("nan")))
+    rhat = float(pc.get("rhat_max", float("nan")))
+    converged = bool(pc.get("converged", False))
+    passed = bool(pc.get("pass", False))
+    lines.append(
+        f"- Target: H₀ = {target} ± {pc.get('target_sigma', 0.724)} km/s/Mpc "
+        "(Uddin 2023, ApJ 970 72 published TRGB result)\n"
+        f"- Pipeline: H₀ = **{H0:.3f}** ± **{sigma:.3f}** km/s/Mpc\n"
+        f"- Δ vs target: **{delta:+.3f}** km/s/Mpc\n"
+        f"- R̂_max: **{rhat:.4f}** ({'CONVERGED' if converged else 'NOT CONVERGED'})\n"
+        f"- Acceptance (|Δ| ≤ 1.0 AND R̂_max < 1.01): **{'PASS' if passed else 'FAIL'}**\n\n"
+    )
+    if not passed:
+        lines.append(
+            "**HALT**: positive-control failed. CSP chain outputs above "
+            "MUST NOT be quoted as reproductions until the 8-parameter "
+            "SNooPy likelihood is fixed and this test passes.\n\n"
+        )
+    return "".join(lines)
+
+
 def write_summary(
     case_a: Optional[FreedmanCaseResult],
     case_b: Optional[FreedmanCaseResult],
@@ -210,6 +319,8 @@ def write_summary(
     reports_dir: Path,
     preregistration_info: Optional[Dict[str, object]] = None,
     chain_matrix: Optional[Dict[str, Dict[str, Dict[str, object]]]] = None,
+    full_calibrator_matrix: Optional[Dict[str, Dict[str, Dict[str, object]]]] = None,
+    uddin_positive_control: Optional[Dict[str, object]] = None,
 ) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     lines: List[str] = []
@@ -237,9 +348,22 @@ def write_summary(
                 )
         lines.append("\n")
 
-    # Per-SN-system chain matrix (8 chains = 4 systems × 2 cases) FIRST —
-    # this is now the primary pipeline-computed result.
-    lines.append(_render_chain_matrix_section(chain_matrix))
+    # Full-calibrator chain matrix FIRST — primary pipeline-computed
+    # results going forward (audit Recommendation 1).
+    lines.append(_render_full_calibrator_section(full_calibrator_matrix))
+
+    # Uddin 2023 positive-control validation (audit Recommendation 3).
+    lines.append(_render_positive_control_section(uddin_positive_control))
+
+    # Legacy intersection chain matrix retained as a sensitivity baseline.
+    if chain_matrix:
+        lines.append("## Legacy intersection chain matrix (sensitivity baseline)\n\n")
+        lines.append(
+            "These chains use the previous Uddin-intersection calibrator "
+            "logic. Preserved for comparison; the full-calibrator chains "
+            "above are the primary results.\n\n"
+        )
+        lines.append(_render_chain_matrix_section(chain_matrix))
 
     lines.append("## Case A — Freedman 2019/2020 (LMC anchor)\n\n")
     if case_a is not None:

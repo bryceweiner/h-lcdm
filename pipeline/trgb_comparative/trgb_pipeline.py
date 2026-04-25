@@ -454,6 +454,8 @@ class TRGBComparativePipeline(AnalysisPipeline):
             figure_paths,
             self.reports_dir,
             chain_matrix=chain_matrix,
+            full_calibrator_matrix=full_cal_matrix,
+            uddin_positive_control=positive_control,
         )
         self.log_progress(f"Report written → {report_path}")
 
